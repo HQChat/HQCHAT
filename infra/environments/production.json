@@ -1,7 +1,9 @@
 {
   "name": "production",
   "domain": "hqchat.app",
-  "siteDomains": ["www.hqchat.app"],
+  "siteDomains": [
+    "www.hqchat.app"
+  ],
   "apiHost": "api.hqchat.app",
   "hqnHost": "mqtt.hqchat.app",
   "region": "lon1",
@@ -21,7 +23,7 @@
   "cache": {
     "url": "https://cache.hqchat.app",
     "bucket": "hqchat-nix-cache",
-    "publicKey": "hqcat-cache-1:dmAeHPrDW7ZxsaWxhxAIeSiX70ylFSFc4Qnv2iVgPDA="
+    "publicKey": "hqchat-cache-production:pS4VQagsa2fofDsSylKHdPxyOqP4ILal+/2kZ73cX9o="
   },
   "stateBucket": "hqchat-tfstate",
   "apns": {
