@@ -1,0 +1,34 @@
+{
+  "name": "rescue",
+  "domain": "rescue.hqchat.app",
+  "siteDomains": [],
+  "hqnHost": "mqtt-rescue.hqchat.app",
+  "region": "lon1",
+  "vpcRange": "10.120.0.0/20",
+  "sizes": {
+    "app": "s-1vcpu-2gb",
+    "mqtt": "s-2vcpu-2gb",
+    "database": "db-s-1vcpu-1gb",
+    "emqxVolumeGb": 10
+  },
+  "cloudflare": {
+    "accountId": "3af5c2d5a6075c173c3df5d9f59a2e48",
+    "zone": "hqchat.app",
+    "site": false,
+    "zoneSettings": false
+  },
+  "cache": {
+    "url": "https://cache.hqchat.app",
+    "bucket": "hqchat-nix-cache",
+    "publicKey": "hqcat-cache-1:dmAeHPrDW7ZxsaWxhxAIeSiX70ylFSFc4Qnv2iVgPDA="
+  },
+  "stateBucket": "hqchat-tfstate",
+  "apns": {
+    "keyId": "YVY2BZQC84",
+    "teamId": "2K837KD8A7",
+    "topicIos": "martin.rougeron.DissQus-iOS",
+    "topicMacos": "martin.rougeron.DissQus"
+  },
+  "sentryDsn": "https://96c230b3ec97c3e5f802d333c549b083@o4505907327926272.ingest.us.sentry.io/4511834379649024",
+  "donations": null
+}

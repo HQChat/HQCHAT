@@ -1,0 +1,30 @@
+name: HQC upstream
+
+on:
+  schedule:
+    - cron: "0 6 1 * *" # monthly: a drift alert is not urgent
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Compare the pinned HQC commit with upstream
+        run: |
+          set -euo pipefail
+          eval "$(grep -E '^(REPO|REF|PINNED_COMMIT)=' native/hqc/HQC_UPSTREAM.txt)"
+          upstream="$(git ls-remote "$REPO" "$REF" | awk '{print $1}')"
+          [ -n "$upstream" ] || { echo "::error::cannot resolve $REPO $REF"; exit 1; }
+          {
+            echo "### HQC upstream"
+            echo "- pinned: \`$PINNED_COMMIT\`"
+            echo "- upstream $REF: \`$upstream\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$upstream" != "$PINNED_COMMIT" ]; then
+            echo "::notice::HQC upstream $REF is at $upstream; pinned $PINNED_COMMIT (native/hqc/HQC_UPSTREAM.txt)"
+          fi

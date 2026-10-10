@@ -1,0 +1,41 @@
+{
+  "name": "hqchat-server",
+  "version": "3.0.0",
+  "description": "The server half of hqchat: HQC-KEM handshake, per-topic ACL, push bridge. It never sees a message.",
+  "scripts": {
+    "server": "tsx src/server/main.ts",
+    "bot": "tsx src/bot/bot.ts",
+    "gateway": "tsx src/gateway/main.ts",
+    "migrate": "tsx src/server/db/migrate.ts",
+    "check-push": "tsx scripts/check-push.ts",
+    "reports": "tsx scripts/reports.ts",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "node --import tsx --test test/unit/*.test.ts",
+    "test:integration": "node --import tsx --test --test-concurrency=1 test/integration/*.test.ts",
+    "test:scenarios": "node --import tsx --test --test-force-exit --test-timeout=120000 test/scenarios/accounts.test.ts test/scenarios/messaging.test.ts test/scenarios/hqn.test.ts",
+    "test:load": "node --import tsx --test --test-force-exit --test-timeout=300000 test/scenarios/load.test.ts",
+    "coverage": "node --import tsx --test --experimental-test-coverage --test-coverage-include=src/** test/unit/*.test.ts test/integration/*.test.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/HQChat/HQCHAT.git",
+    "directory": "services/server"
+  },
+  "license": "AGPL-3.0-only",
+  "dependencies": {
+    "@sentry/node": "^10.75.3",
+    "koffi": "^2.15.0",
+    "mqtt": "^5.15.2",
+    "pg": "^8.13.1",
+    "stripe": "^17.5.0",
+    "tsx": "^4.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.3",
+    "@types/pg": "^8.11.10",
+    "typescript": "^5.9.3"
+  },
+  "overrides": {
+    "qs": "^6.16.0"
+  }
+}

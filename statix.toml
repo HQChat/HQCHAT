@@ -1,0 +1,2 @@
+# NixOS modules conventionally repeat dotted keys (systemd.services.a, systemd.timers.b).
+disabled = ["repeated_keys"]

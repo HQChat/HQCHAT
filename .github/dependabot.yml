@@ -1,0 +1,48 @@
+# Dependency updates, which nothing was watching.
+#
+# The GitHub Actions ecosystem is listed FIRST and is the one that matters most
+# here: every action is pinned by commit SHA now (a moved tag is a supply-chain
+# compromise, and `@v4` is a moving target by design), and a SHA pin does not
+# expire — it silently stops receiving security fixes instead. Dependabot is what
+# turns that into a pull request rather than into nothing.
+#
+# The comment after each SHA is the tag it came from; Dependabot reads it and
+# keeps it in step when it bumps the pin.
+# Monthly and capped: each Dependabot PR runs CI, and Actions minutes are
+# billed on this private repo.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "ci"
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: /services/server
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "deps"
+    groups:
+      # One PR for the routine bumps; anything with an advisory comes on its own
+      # so it is reviewed on its own.
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: npm
+    directory: /apps/site
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 1
+    commit-message:
+      prefix: "deps"
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]

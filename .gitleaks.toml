@@ -1,0 +1,37 @@
+# Allowlisted fixtures: credential-shaped strings that exist so the redaction
+# and key-handling paths can be tested. None is a credential anyone holds.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Test fixtures for the redaction and key-handling paths"
+paths = [
+  # Keys generated for the throwaway VMs of the two-VM stack test.
+  '''infra/nixos/tests/stack\.nix''',
+
+  # Credential shapes the scrubbers must recognise, in both implementations.
+  '''services/server/test/fuzz/scrub-differential\.ts''',
+  '''services/server/test/unit/scrub\.test\.ts''',
+  '''apps/apple/tests/RedactionTests\.swift''',
+
+  # EC keys generated at test time.
+  '''services/server/test/unit/apns-send\.test\.ts''',
+  '''services/server/test/unit/apns-config\.test\.ts''',
+
+  # Derived key material between two fixture identities (scripts/gen-*.ts).
+  '''services/server/test/helpers/.*-vectors\.json''',
+
+  # Vendored SDK sources and build output, present only in a working tree.
+  '''^apps/apple/\.build/''',
+
+  # `require("STRIPE_SECRET_KEY", ...)`: a variable name and its reason, which
+  # the generic-api-key rule reads as name-then-value.
+  '''services/server/(src/common|lib)/config\.ts''',
+]
+
+regexes = [
+  # The PEM armour constants the key parser checks against.
+  '''-----BEGIN PRIVATE KEY-----''',
+  '''-----END PRIVATE KEY-----''',
+]

@@ -1,0 +1,262 @@
+// Surgical revocation, and the reason it never once worked on this deployment.
+//
+// ── The failure ──────────────────────────────────────────────────────────────
+//
+// `src/server/emqx.ts` exists so that revocation ACTS instead of waiting: deleting an
+// ACL row stopped the NEXT authorization check (and a retired topic id stops
+// nobody who already holds it), so an unfriended peer's already-open
+// subscription keeps delivering until they disconnect for their own reasons. The
+// admin API is what closes that window — `POST /clients/{id}/unsubscribe`.
+//
+// ── The second failure ───────────────────────────────────────────────────────
+//
+// Once the URL fit, it still did not work: the call was `DELETE
+// /clients/{id}/subscriptions/{topic}`, a route EMQX 5.8 does not have. The
+// broker answered with an HTML 404, the client read a 404 as "already gone",
+// and every unfriend reported success. Asserted below: the request is the POST
+// the broker serves, and a bare 404 is NOT success.
+//
+// Both path segments were public keys. A client id was 14474 characters and a
+// conversation topic embedded a hash of two more, so the request line ran to
+// roughly 14.5 kB and EMQX answered `414 URI Too Long`. Every time. The code
+// treats a failed kick as best-effort and logs it, so the unfriend still
+// succeeded and nothing surfaced — the only visible symptom was that revoked
+// peers kept receiving, which looks like a protocol bug rather than a URL one.
+//
+// ── What is asserted here ────────────────────────────────────────────────────
+//
+// Not "the URL is short". That is a consequence. What matters is the request
+// the client actually PUTS ON THE WIRE, so this runs the real `EMQX` against a
+// real HTTP server standing in for the broker and inspects what arrives:
+//
+//   1. an unsubscribe names ONE client and ONE topic, so the peer's other
+//      conversations are untouched (the reason this is not a kick);
+//   2. the request line fits comfortably inside any sane limit;
+//   3. a kick — account deletion, a revoked device — is a single client too.
+//
+// The size assertions use the OLD sizes as the counter-example, so a change that
+// puts a key back into an identifier fails here rather than in production
+// fifteen minutes after a deploy.
+
+import assert from "node:assert/strict";
+import * as crypto from "node:crypto";
+import * as http from "node:http";
+import { test } from "node:test";
+import { setLogLevel } from "../../src/common/logger";
+import { peerId } from "../../src/protocol/identity";
+
+setLogLevel("silent");
+
+const HQC_PUBLIC_KEY_BYTES = 7237;
+
+/**
+ * The bound this is really about.
+ *
+ * EMQX's HTTP listener refuses a request line past its limit with 414, and
+ * anything in front of it (nginx defaults to 8 kB of request line + headers)
+ * would too. 2048 is the conservative figure every HTTP client and proxy is
+ * safe under; the point is not the exact number but that we are two orders of
+ * magnitude below it rather than two above.
+ */
+const SAFE_URL_LENGTH = 2048;
+
+/** Requests the fake broker saw, in order. */
+const seen: string[] = [];
+
+const bodies: string[] = [];
+/** When set, the stand-in answers the next non-login request with this instead. */
+let override: { status: number; type: string; body: string } | null = null;
+let server: http.Server;
+let EMQX: typeof import("../../src/server/emqx").EMQX;
+
+test("start a stand-in broker", async () => {
+  server = http.createServer((req, res) => {
+    seen.push(`${req.method} ${req.url}`);
+    // Bodies matter for `publish`, which is the only admin call that carries
+    // one — the rest say everything in the URL.
+    let raw = "";
+    req.on("data", (chunk) => {
+      raw += chunk;
+    });
+    req.on("end", () => {
+      if (raw) bodies.push(raw);
+      if (override && !req.url!.endsWith("/login")) {
+        const o = override;
+        override = null;
+        res.writeHead(o.status, { "content-type": o.type });
+        res.end(o.body);
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      // Every admin call goes through `login` first, so the token has to be real
+      // enough for the client to carry on.
+      res.end(JSON.stringify({ token: "stub-token" }));
+    });
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as { port: number }).port;
+
+  // Read at module scope in src/server/emqx.ts, so both must be set before the require.
+  process.env.EMQX_API_URL = `http://127.0.0.1:${port}`;
+  process.env.EMQX_API_KEY = "hqcat-svc";
+  process.env.EMQX_API_SECRET = "stub";
+  EMQX = (require("../../src/server/emqx") as typeof import("../../src/server/emqx")).EMQX;
+  assert.ok(EMQX.enabled, "an admin credential is configured");
+});
+
+test("unfriending drops ONE subscription, and the request fits in a URL", async () => {
+  const [pkA, pkB] = [
+    crypto.randomBytes(HQC_PUBLIC_KEY_BYTES).toString("hex"),
+    crypto.randomBytes(HQC_PUBLIC_KEY_BYTES).toString("hex"),
+  ];
+  const [a, b] = [peerId(pkA), peerId(pkB)];
+  const topic = `cv/${crypto.randomBytes(32).toString("hex")}`;
+
+  seen.length = 0;
+  await EMQX.revokeTopic(a, b, topic);
+
+  const unsubscribes = seen.filter((line) => line.startsWith("POST") && line.endsWith("/unsubscribe"));
+  assert.equal(unsubscribes.length, 2, "one call per member of the friendship");
+  assert.ok(!seen.some((l) => l.startsWith("DELETE")), "no DELETE — EMQX 5.8 has no such subscription route");
+
+  for (const line of unsubscribes) {
+    const url = line.slice("POST ".length);
+    // An UNSUBSCRIBE, not a kick. Dropping the connection would also drop the
+    // peer's other conversations, which are none of our business.
+    assert.match(url, /^\/api\/v5\/clients\/[0-9a-f]{64}\/unsubscribe$/, "names one client");
+    assert.ok(
+      url.length < SAFE_URL_LENGTH,
+      `the admin URL is ${url.length} characters, against a ${SAFE_URL_LENGTH} bound`,
+    );
+  }
+  // The topic travels in the body.
+  assert.equal(
+    bodies.filter((b) => b.includes(JSON.stringify(topic))).length,
+    2,
+    "both bodies name the topic being revoked",
+  );
+
+  // Both members, and only those two.
+  assert.ok(
+    unsubscribes.some((l) => l.includes(a)),
+    "A's subscription is dropped",
+  );
+  assert.ok(
+    unsubscribes.some((l) => l.includes(b)),
+    "B's subscription is dropped",
+  );
+});
+
+test("a 404 is success only when the broker says the client is not connected", async () => {
+  const id = peerId(crypto.randomBytes(HQC_PUBLIC_KEY_BYTES).toString("hex"));
+
+  // What EMQX answers for a route it does not have — which is what the old
+  // DELETE got, every time, and read as "already gone".
+  override = { status: 404, type: "text/html", body: "<html><h1>404 - NOT FOUND</h1></html>" };
+  assert.equal(
+    await EMQX.unsubscribe(id, `cv/${"1".repeat(64)}`),
+    false,
+    "a missing route must not read as a dropped subscription",
+  );
+
+  // The client is simply not connected: nothing to drop.
+  override = {
+    status: 404,
+    type: "application/json",
+    body: JSON.stringify({ code: "CLIENTID_NOT_FOUND", message: "Client ID not found" }),
+  };
+  assert.equal(await EMQX.unsubscribe(id, `cv/${"1".repeat(64)}`), true);
+
+  // And the real success, a 204.
+  override = { status: 204, type: "application/json", body: "" };
+  assert.equal(await EMQX.unsubscribe(id, `cv/${"1".repeat(64)}`), true);
+});
+
+test("a kick names one client, and also fits", async () => {
+  // Account deletion and a revoked device, where ending the whole session IS the
+  // intent — its queued QoS-1 backlog goes with it.
+  const id = peerId(crypto.randomBytes(HQC_PUBLIC_KEY_BYTES).toString("hex"));
+  seen.length = 0;
+  assert.equal(await EMQX.kick(id), true);
+
+  const kicks = seen.filter((l) => l.startsWith("DELETE"));
+  assert.equal(kicks.length, 1);
+  const url = kicks[0]!.slice("DELETE ".length);
+  assert.equal(url, `/api/v5/clients/${id}`);
+  assert.ok(url.length < SAFE_URL_LENGTH, `${url.length} characters`);
+});
+
+test("a graph nudge is one publish per account, on that account's own topic", async () => {
+  // The whole reason this exists: the friend graph was the one piece of state
+  // the server owned and the client could only learn by ASKING, on a 60-second
+  // poll. So an invite sat unseen until the next tick, and an `init` from a
+  // freshly accepted contact could reach the inviter before their directory had
+  // the sender's client id in it at all — a frame naming nobody they knew, which
+  // the client dropped.
+  const [a, b] = [
+    peerId(crypto.randomBytes(HQC_PUBLIC_KEY_BYTES).toString("hex")),
+    peerId(crypto.randomBytes(HQC_PUBLIC_KEY_BYTES).toString("hex")),
+  ];
+
+  seen.length = 0;
+  bodies.length = 0;
+  await EMQX.notifyGraphChanged([a, b]);
+
+  const publishes = seen.filter((line) => line === "POST /api/v5/publish");
+  assert.equal(publishes.length, 2, "one publish per account, not one broadcast");
+  assert.equal(bodies.length, 2);
+
+  const topics = bodies.map((raw) => JSON.parse(raw).topic).sort();
+  assert.deepEqual(
+    topics,
+    [`u/${a}/graph`, `u/${b}/graph`].sort(),
+    "each account is told on its OWN topic — the one only it may subscribe to",
+  );
+
+  for (const raw of bodies) {
+    const body = JSON.parse(raw);
+    assert.equal(body.qos, 1, "at least once: a missed nudge is a minute of staleness");
+    assert.equal(
+      body.retain,
+      false,
+      "not retained — a client pulls the directory on connect anyway, so a " +
+        "retained nudge would only make every reconnect do it twice",
+    );
+    // The fact of the message is the message. Anything else would be graph
+    // CONTENT on a topic the client answers by calling authenticated /friends.
+    assert.deepEqual(JSON.parse(body.payload), { t: "graph" });
+  }
+});
+
+test("a nudge carries no graph content — only that something changed", async () => {
+  const id = peerId(crypto.randomBytes(HQC_PUBLIC_KEY_BYTES).toString("hex"));
+  const other = peerId(crypto.randomBytes(HQC_PUBLIC_KEY_BYTES).toString("hex"));
+
+  bodies.length = 0;
+  await EMQX.notifyGraphChanged([id]);
+
+  const raw = bodies[0]!;
+  // Neither the account being told, nor anyone else, appears in the payload.
+  // The client answers a nudge by asking `/friends`, which is authenticated, so
+  // a spoofed one costs its sender one directory fetch and reveals nothing.
+  assert.ok(!raw.includes(other), "no other account is named");
+  assert.equal(JSON.parse(JSON.parse(raw).payload).t, "graph");
+});
+
+test("an empty or blank list publishes nothing", async () => {
+  seen.length = 0;
+  await EMQX.notifyGraphChanged([]);
+  await EMQX.notifyGraphChanged(["", ""]);
+  assert.equal(seen.filter((l) => l.includes("publish")).length, 0);
+});
+
+test("a broker that refuses does not fail the operation that called it", async () => {
+  // The property that hid the 414 for as long as it did, and which is still
+  // correct: you unfriended someone, and that must succeed even if the broker is
+  // unreachable. The ACL row is deleted regardless, so the next authorization
+  // check refuses them anyway.
+  await new Promise<void>((r) => server.close(() => r()));
+  const id = peerId(crypto.randomBytes(HQC_PUBLIC_KEY_BYTES).toString("hex"));
+  assert.equal(await EMQX.kick(id), false, "reports failure rather than throwing");
+  await EMQX.revokeTopic(id, id, "c/x"); // must not throw
+});

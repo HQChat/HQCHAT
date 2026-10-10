@@ -1,0 +1,267 @@
+# One click: deploy the selected ref ("Use workflow from") to an environment,
+# from an empty DigitalOcean account or over a running one.
+#
+#   ci        the full CI suite, the two-VM stack test included; skipped when
+#             this exact commit already passed CI (push to main), so a deploy
+#             does not pay for the same suite twice
+#   build     both host closures and the environment's image, signed, pushed to the
+#             cache; warns first if the server or app Sentry DSN is empty
+#   infra     Terraform (guarded), then each host's secret bundle
+#   release   move channels/<environment>/<role>; hosts switch within minutes
+#   verify    /health reports this commit and a healthy broker, on the domain and
+#             on the apps' API host, then the functional scenarios run against
+#             the live environment
+#   rollback  if verify fails, the channels go back to the previous release
+#
+# Environment secrets: DIGITALOCEAN_TOKEN, CLOUDFLARE_API_TOKEN, R2_ACCESS_KEY_ID,
+# R2_SECRET_ACCESS_KEY, NIX_CACHE_SIGNING_KEY, BOT_SEED, NOISE_KEYS and,
+# optionally, STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, APNS_KEY_P8
+# (infra/scripts/init-environment.sh sets the generated ones).
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to deploy (infra/environments/<name>.json)
+        type: environment
+        required: true
+      allow_replace:
+        description: Allow destroying or replacing droplets, the volume, the database or the reserved IP
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
+env:
+  ENVIRONMENT: ${{ inputs.environment }}
+
+jobs:
+  ci-passed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      actions: read
+    outputs:
+      passed: ${{ steps.check.outputs.passed }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          n=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&event=push&status=success" -q .total_count)
+          echo "passed=$([ "${n:-0}" -gt 0 ] && echo true || echo false)" >>"$GITHUB_OUTPUT"
+
+  ci:
+    needs: ci-passed
+    if: needs.ci-passed.outputs.passed != 'true'
+    uses: ./.github/workflows/ci.yml
+
+  # `!cancelled() && !failure()` lets a skipped `ci` through; GitHub would
+  # otherwise skip every job downstream of a skipped one.
+  build:
+    needs: [ci-passed, ci]
+    if: ${{ !cancelled() && !failure() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: ${{ inputs.environment }}
+    outputs:
+      app: ${{ steps.build.outputs.app }}
+      mqtt: ${{ steps.build.outputs.mqtt }}
+      image_url: ${{ steps.image.outputs.url }}
+      image_name: ${{ steps.image.outputs.name }}
+    env:
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Check Sentry is configured (warns, never fails)
+        run: infra/scripts/check-sentry.sh "$ENVIRONMENT"
+      - name: Read the environment
+        id: env
+        run: |
+          f="infra/environments/$ENVIRONMENT.json"
+          {
+            echo "cache_url=$(jq -r .cache.url "$f")"
+            echo "cache_key=$(jq -r .cache.publicKey "$f")"
+            echo "bucket=$(jq -r .cache.bucket "$f")"
+            echo "endpoint=https://$(jq -r .cloudflare.accountId "$f").r2.cloudflarestorage.com"
+          } >>"$GITHUB_OUTPUT"
+      - uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = false
+            extra-substituters = ${{ steps.env.outputs.cache_url }}
+            extra-trusted-public-keys = ${{ steps.env.outputs.cache_key }}
+      - name: Build the closures and the image
+        id: build
+        run: |
+          for role in app mqtt; do
+            nix build ".#toplevel-$ENVIRONMENT-$role" --print-build-logs --out-link "result-$role"
+            echo "$role=$(readlink -f "result-$role")" >>"$GITHUB_OUTPUT"
+          done
+          nix build ".#image-$ENVIRONMENT" --print-build-logs --out-link result-image
+      - name: Sign and push the closures
+        env:
+          SIGNING_KEY: ${{ secrets.NIX_CACHE_SIGNING_KEY }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: |
+          umask 077
+          printf '%s' "$SIGNING_KEY" >"$RUNNER_TEMP/cache.key"
+          nix store sign --key-file "$RUNNER_TEMP/cache.key" --recursive result-app result-mqtt
+          rm -f "$RUNNER_TEMP/cache.key"
+          nix copy --to "s3://${{ steps.env.outputs.bucket }}?endpoint=${{ steps.env.outputs.endpoint }}&region=auto" \
+            result-app result-mqtt
+      - name: Upload the image
+        id: image
+        run: |
+          source infra/scripts/lib.sh
+          id="$(basename "$(readlink -f result-image)" | cut -c1-12)"
+          key="images/$ENVIRONMENT/$id.qcow2"
+          r2 ls "s3://${{ steps.env.outputs.bucket }}/$key" >/dev/null || \
+            r2 cp result-image/nixos.qcow2 "s3://${{ steps.env.outputs.bucket }}/$key" --content-type application/octet-stream
+          echo "url=${{ steps.env.outputs.cache_url }}/$key" >>"$GITHUB_OUTPUT"
+          echo "name=hqchat-$ENVIRONMENT-$id" >>"$GITHUB_OUTPUT"
+
+  infra:
+    needs: build
+    if: ${{ !cancelled() && !failure() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: ${{ inputs.environment }}
+    outputs:
+      domain: ${{ steps.apply.outputs.domain }}
+      api_host: ${{ steps.apply.outputs.api_host }}
+      app_ipv4: ${{ steps.apply.outputs.app_ipv4 }}
+      mqtt_ipv4: ${{ steps.apply.outputs.mqtt_ipv4 }}
+    env:
+      DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      TF_VAR_image_url: ${{ needs.build.outputs.image_url }}
+      TF_VAR_image_name: ${{ needs.build.outputs.image_name }}
+      ALLOW_REPLACE: ${{ inputs.allow_replace }}
+      TF_OUTPUTS: /tmp/tf-outputs.json
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: "1.15.6"
+          terraform_wrapper: false
+      - uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = false
+      - name: Terraform
+        id: apply
+        run: |
+          infra/scripts/terraform.sh "$ENVIRONMENT" apply
+          {
+            echo "domain=$(jq -r .domain.value "$TF_OUTPUTS")"
+            echo "api_host=$(jq -r .api_host.value "$TF_OUTPUTS")"
+            echo "app_ipv4=$(jq -r .hosts.value.app.public_ipv4 "$TF_OUTPUTS")"
+            echo "mqtt_ipv4=$(jq -r .hqn_ipv4.value "$TF_OUTPUTS")"
+          } >>"$GITHUB_OUTPUT"
+      - name: Publish the secret bundles
+        env:
+          BOT_SEED: ${{ secrets.BOT_SEED }}
+          NOISE_KEYS: ${{ secrets.NOISE_KEYS }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          APNS_KEY_P8: ${{ secrets.APNS_KEY_P8 }}
+        run: |
+          BOT_ID="$(nix shell .#hqcat-server --command hqcat-bot --print-id)"
+          export BOT_ID
+          nix shell nixpkgs#age nixpkgs#awscli2 --command infra/scripts/publish-secrets.sh "$ENVIRONMENT"
+
+  release:
+    needs: [build, infra]
+    if: ${{ !cancelled() && !failure() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ${{ inputs.environment }}
+    env:
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Move the channels
+        run: infra/scripts/release.sh "$ENVIRONMENT" promote "${{ needs.build.outputs.app }}" "${{ needs.build.outputs.mqtt }}"
+
+  verify:
+    needs: [infra, release]
+    if: ${{ !cancelled() && !failure() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DOMAIN: ${{ needs.infra.outputs.domain }}
+      API_HOST: ${{ needs.infra.outputs.api_host }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: services/server/package-lock.json
+      - run: npm ci --prefix services/server
+      - name: Wait for this commit to serve, with a healthy broker
+        run: |
+          for _ in $(seq 1 120); do
+            health="$(curl -fsS --max-time 10 "https://$DOMAIN/health" || true)"
+            if jq -e --arg v "$GITHUB_SHA" '.version == $v and .broker == []' <<<"$health" >/dev/null 2>&1; then
+              echo "serving $GITHUB_SHA"
+              exit 0
+            fi
+            echo "waiting: ${health:-no answer}"
+            sleep 15
+          done
+          echo "::error::$DOMAIN never served $GITHUB_SHA with a healthy broker"
+          exit 1
+      - name: The apps' API host reaches the same server
+        run: |
+          health="$(curl -fsS --max-time 10 "https://$API_HOST/health" || true)"
+          jq -e --arg v "$GITHUB_SHA" '.version == $v' <<<"$health" >/dev/null 2>&1 || {
+            echo "::error::https://$API_HOST/health does not serve $GITHUB_SHA: the apps cannot reach this server (${health:-no answer})"
+            exit 1
+          }
+      - name: Only the expected ports answer
+        env:
+          APP_IPV4: ${{ needs.infra.outputs.app_ipv4 }}
+          HQN_IPV4: ${{ needs.infra.outputs.mqtt_ipv4 }}
+        run: |
+          ! curl -sk --max-time 5 -o /dev/null "https://$APP_IPV4/health" || { echo "::error::the origin answers outside Cloudflare"; exit 1; }
+          for port in 1883 1884 8083 8081 18083; do
+            ! nc -z -w 3 "$HQN_IPV4" "$port" || { echo "::error::the broker answers on $port"; exit 1; }
+          done
+          nc -z -w 5 "$HQN_IPV4" 443
+      - name: Functional scenarios against the environment
+        working-directory: services/server
+        env:
+          TEST_BASE_URL: https://${{ needs.infra.outputs.domain }}
+          TEST_MQTT_URL: wss://${{ needs.infra.outputs.domain }}/mqtt
+          TEST_EXPECT_VERSION: ${{ github.sha }}
+          SCENARIOS_REQUIRED: "1"
+        run: npm run test:scenarios
+
+  rollback:
+    needs: [release, verify]
+    if: always() && needs.release.result == 'success' && needs.verify.result == 'failure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ${{ inputs.environment }}
+    env:
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Return the channels to the previous release
+        run: infra/scripts/release.sh "$ENVIRONMENT" rollback

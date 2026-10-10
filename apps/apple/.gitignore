@@ -1,0 +1,3 @@
+.build/
+tests/.coverage/bin/
+.DS_Store

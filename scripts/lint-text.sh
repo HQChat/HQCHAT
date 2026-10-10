@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Text policy over tracked source files.
+#
+#   scripts/lint-text.sh names      the retired product name (bundle ids excepted)
+#   scripts/lint-text.sh comments   comments that narrate history instead of documenting
+#
+# Exits 1 on any finding.
+set -euo pipefail
+
+mode="${1:?usage: scripts/lint-text.sh names|comments}"
+cd "$(git rev-parse --show-toplevel)"
+
+old_name="diss""qus"
+bundle_ids='martin\.rougeron\.Diss''Qus'
+comment_prefix='^[[:space:]]*(//|///|#|--|%%|\*|/\*)'
+history='\bused to\b|no longer|Phase [0-9]|PR #[0-9]|\(#[0-9]{2,}\)|\bcompose\b|pre-?prod|was removed|went with|stood here|until now'
+
+files=$(git ls-files -- '*.ts' '*.mjs' '*.js' '*.swift' '*.nix' '*.sh' '*.tf' '*.hcl' '*.sql' '*.yml' '*.conf' '*.py' \
+  '*.pbxproj' '*.xcscheme' '*.plist' '*.entitlements' ':!**/package-lock.json')
+
+hits=0
+while IFS= read -r file; do
+  [[ -f "$file" ]] || continue
+  case "$mode" in
+    names) found=$(grep -aniE "$old_name" "$file" | grep -vE "$bundle_ids" || true) ;;
+    comments) found=$(grep -anE "$comment_prefix" "$file" | grep -iE "$history" || true) ;;
+    *)
+      echo "unknown mode: $mode" >&2
+      exit 2
+      ;;
+  esac
+  if [[ -n "$found" ]]; then
+    count=$(grep -c . <<<"$found")
+    hits=$((hits + count))
+    printf '%5d  %s\n' "$count" "$file"
+  fi
+done <<<"$files"
+
+echo "lint-text $mode: $hits finding(s)"
+((hits == 0))

@@ -1,0 +1,12 @@
+{
+  "name": "hqchat-site",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "test": "node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4"
+  }
+}

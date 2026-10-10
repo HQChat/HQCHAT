@@ -1,0 +1,12 @@
+# The script name Terraform deploys (infra/terraform/cloudflare.tf).
+name = "hqchat-site"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+# Terraform owns the deployed script and its routes; use `wrangler dev` locally only.
+# They are EXACT paths, never "/*": the same host serves the API, and a glob
+# would swallow /auth, /mqtt, /subscribe and /health.
+#
+# Note `wrangler dev` serves this Worker alone, so POSTing the subscribe form
+# locally 404s. That is deliberate — the alternative is a laptop minting live
+# Stripe sessions against production.

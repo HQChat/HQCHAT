@@ -1,0 +1,12 @@
+# The HQC reference implementation this repository builds (native/hqc/package.nix).
+# Every target (Linux and macOS libraries, the iOS xcframework) is compiled from
+# this one commit: builds from different upstream revisions do not interoperate.
+# .github/workflows/hqc-upstream.yml reports when REF moves past PINNED_COMMIT.
+#
+# Upstream 161cd4f ("Update sampling") changes keygen/encaps/decaps output and
+# all KATs; adopting it means rebuilding every target and shipping server, bot
+# and apps together.
+REPO=https://gitlab.com/pqc-hqc/hqc
+REF=next-release
+PINNED_COMMIT=3a0f86f84f6cb9c90729f038828a6e5f7df8634f
+HASH=sha256-uBlMOtCz7c8ZA+ldPXuaHendLR3/wCVWgiND2ssEcVE=

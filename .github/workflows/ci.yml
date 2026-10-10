@@ -1,0 +1,181 @@
+name: CI
+
+# Kept to the minimum of Actions minutes. The repo is private and every job is
+# billed rounded up to the minute, so jobs are merged to pay setup only once.
+#   - PR: one `test` job, unit + integration (under 15 min). Draft PRs, and PRs
+#     that touch only docs or the Apple app, run nothing.
+#   - Heavy (lint, infra, scenarios in one job, plus the two-VM stack): on push
+#     to main, on manual dispatch, when deploy.yml calls this, or on a PR
+#     carrying the `functional` label (adding the label triggers that run).
+# Pushes to other branches run nothing: their PR already covers them, and
+# push + pull_request in different concurrency groups billed every push twice.
+# Nix caches are saved only off-PR: a cache saved by a PR run is scoped to
+# that PR, while main's caches are readable by every branch.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "apps/apple/**"
+  push:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+
+jobs:
+  test:
+    if: github.event.pull_request.draft != true && (github.event.action != 'labeled' || github.event.label.name == 'functional')
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: hqcat
+          POSTGRES_PASSWORD: hqcat
+          POSTGRES_DB: hqcat
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U hqcat -d hqcat" --health-interval 5s
+          --health-timeout 3s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://hqcat:hqcat@localhost:5432/hqcat
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: services/server/package-lock.json
+      - run: npm ci --prefix services/server
+      - run: npm ci --prefix apps/site
+      - uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = false
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          primary-key: nix-devshell-${{ runner.os }}-${{ hashFiles('flake.lock', 'flake.nix') }}
+          restore-prefixes-first-match: nix-devshell-${{ runner.os }}-
+          gc-max-store-size-linux: 4G
+          save: false
+      - name: Unit tests
+        env:
+          FUZZ_SEED: ${{ github.run_number }}
+        run: scripts/check.sh unit
+      - name: Integration tests
+        run: scripts/check.sh integration
+
+  heavy:
+    if: (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'functional')) && github.event.pull_request.draft != true && (github.event.action != 'labeled' || github.event.label.name == 'functional')
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ github.event_name == 'pull_request' && 15 || 40 }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = false
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          primary-key: nix-devshell-${{ runner.os }}-${{ hashFiles('flake.lock', 'flake.nix') }}
+          restore-prefixes-first-match: nix-devshell-${{ runner.os }}-
+          gc-max-store-size-linux: 4G
+          save: ${{ github.event_name != 'pull_request' }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: services/server/package-lock.json
+      - name: Install server dependencies
+        run: npm ci --prefix services/server
+      - name: Static analysis
+        run: nix develop --command scripts/check.sh lint
+      - name: Actions are pinned by commit SHA
+        run: |
+          unpinned=$(grep -rhoE 'uses: +[A-Za-z0-9._/-]+@[A-Za-z0-9._-]+' .github/workflows/ | grep -vE '@[0-9a-f]{40}' || true)
+          if [ -n "$unpinned" ]; then
+            echo "::error::actions pinned by a mutable tag:"
+            echo "$unpinned"
+            exit 1
+          fi
+      - name: Known vulnerabilities
+        run: |
+          npm audit --prefix services/server --audit-level=high
+          npm audit --prefix apps/site --audit-level=high
+      - name: Secrets
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [ -n "$BASE" ]; then
+            nix develop --command gitleaks detect --source . --config .gitleaks.toml --redact --no-banner --log-opts="$BASE..HEAD"
+          else
+            nix develop --command gitleaks detect --source . --config .gitleaks.toml --redact --no-banner --no-git
+          fi
+      - name: Terraform policy tests and NixOS evaluation
+        run: nix develop --command scripts/check.sh infra
+      - name: Functional scenarios on a local stack
+        run: scripts/check.sh scenarios
+
+  changes:
+    if: (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'functional')) && github.event.pull_request.draft != true && (github.event.action != 'labeled' || github.event.label.name == 'functional')
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      hosts: ${{ steps.filter.outputs.hosts }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
+        id: filter
+        with:
+          filters: |
+            hosts:
+              - 'flake.nix'
+              - 'flake.lock'
+              - 'infra/nixos/**'
+              - 'infra/emqx/**'
+              - 'services/server/**'
+
+  stack:
+    needs: changes
+    if: needs.changes.outputs.hosts == 'true' || github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ github.event_name == 'pull_request' && 15 || 60 }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = false
+            system-features = nixos-test benchmark big-parallel kvm
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          primary-key: nix-stack-${{ runner.os }}-${{ hashFiles('flake.lock', 'flake.nix') }}
+          restore-prefixes-first-match: nix-stack-${{ runner.os }}-
+          gc-max-store-size-linux: 4G
+          save: ${{ github.event_name != 'pull_request' }}
+      - name: Two-VM stack test
+        run: nix build .#checks.x86_64-linux.stack --print-build-logs
