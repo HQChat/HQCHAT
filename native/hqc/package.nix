@@ -25,15 +25,10 @@ let
       rev = pin "PINNED_COMMIT";
       hash = pin "HASH";
     };
-    # The reference headers include x86 intrinsics headers unconditionally;
-    # the reference C uses none, so they are guarded for other architectures.
+    # prepare-source.sh guards the x86 intrinsics headers and adds the wrapper;
+    # build-apple.sh runs the same script, so every target compiles these bytes.
     installPhase = ''
-      for h in $(grep -rlE '#include <(imm|emm|x86|xmm|smm|tmm|pmm|nmm|wmm|mm)intrin\.h>' src); do
-        sed -i -E 's/^([[:space:]]*#include <(imm|emm|x86|xmm|smm|tmm|pmm|nmm|wmm|mm)intrin\.h>)/#if defined(__i386__) || defined(__x86_64__)\n\1\n#endif/' "$h"
-      done
-      mkdir -p $out
-      cp -r src lib $out/
-      cp ${./src}/* $out/
+      bash ${./prepare-source.sh} . $out ${./src}
     '';
   };
 

@@ -15,6 +15,7 @@ from") and the environment.
 | `release` | Moves `channels/<env>/app` and `/mqtt` to the new closures, keeping the old pointers as `.previous`. |
 | `verify` | Waits for `https://<domain>/health` to report this commit with a healthy broker, checks only the expected ports answer, then runs the functional scenarios against the live environment. |
 | `rollback` | If `verify` fails, puts the channels back on the previous release. |
+| `ios` | If `verify` passed and `ship_ios` is on: builds the HQC library, archives the iOS app, signs it and uploads it to App Store Connect (`apps/apple/release-ios.sh`), build number 22 + the run number. |
 
 Re-running Deploy on the same ref changes nothing. Running it on an older ref
 deploys that ref.
@@ -48,7 +49,12 @@ and skips that release. Nothing in CI connects to a host.
    its hostname, and generates `BOT_SEED`, `NOISE_KEYS` and (if none exists)
    `NIX_CACHE_SIGNING_KEY`. It never overwrites a secret.
 4. Optionally set `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` and
-   `APNS_KEY_P8` on the GitHub Environment.
+   `APNS_KEY_P8` on the GitHub Environment. For the `ios` job (on by default
+   through the `ship_ios` input), also set `ASC_KEY_ID`, `ASC_ISSUER_ID` and
+   `ASC_KEY_P8`: an App Store Connect API key with the App Manager or Admin
+   role. The job archives the iOS app after `verify`, lets Xcode sign it with
+   that key (cloud-managed certificate, nothing stored on the runner) and
+   uploads it to TestFlight; submitting it for review stays manual.
 5. Protect the GitHub Environment (Settings → Environments): a required
    reviewer, and deployment branches limited to the release branches. Without
    it, a workflow on any branch can read its secrets.
