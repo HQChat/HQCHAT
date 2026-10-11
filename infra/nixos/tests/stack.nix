@@ -154,9 +154,12 @@ in
         app.wait_for_unit("hqcat-db-migrate.service")
         app.wait_until_succeeds("curl -fsS 127.0.0.1:8090/health", timeout=240)
 
+    # `emqx ctl status` passes once the node runs; the admin listener and the
+    # bootstrapped API key come up a moment later.
     with subtest("the admin API answers the key over wg, and nothing else"):
-        app.succeed(
-            "curl -fsS -u hqcat-svc:${apiSecret} http://10.200.0.2:18083/api/v5/nodes | grep -q running"
+        app.wait_until_succeeds(
+            "curl -fsS -u hqcat-svc:${apiSecret} http://10.200.0.2:18083/api/v5/nodes | grep -q running",
+            timeout=120,
         )
         app.fail("curl -fsS -o /dev/null -u hqcat-svc:wrong http://10.200.0.2:18083/api/v5/nodes")
 
