@@ -6,8 +6,9 @@
 #   cloudflare_workers_route   a route with the same pattern (any Worker's; the
 #                              apply then points it at this environment's)
 #   cloudflare_record          a record with the same name and type
-#   digitalocean_reserved_ip   the one unassigned reserved IP in the region (the
-#                              provider can create one and lose it from the state)
+#
+# Only objects with a unique name are adopted. A reserved IP has none: an
+# unassigned one may belong to a stack being torn down.
 #
 # Prints the number of imports; the caller plans again when it is not 0. Each
 # import is listed in $GITHUB_STEP_SUMMARY. Run from the Terraform directory.
@@ -17,7 +18,7 @@ set -euo pipefail
 
 plan="${1:?usage: tf-adopt.sh <plan.json>}"
 creates="$(jq -c '[.resource_changes[]? | select(.change.actions == ["create"])
-  | select(.type | IN("cloudflare_workers_route", "cloudflare_record", "digitalocean_reserved_ip"))
+  | select(.type | IN("cloudflare_workers_route", "cloudflare_record"))
   | {address, type, after: .change.after}]' "$plan")"
 [[ "$(jq length <<<"$creates")" != 0 ]] || {
   echo 0
@@ -25,7 +26,6 @@ creates="$(jq -c '[.resource_changes[]? | select(.change.actions == ["create"])
 }
 
 cf() { curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN:?}" "https://api.cloudflare.com/client/v4$1"; }
-do_api() { curl -fsS -H "Authorization: Bearer ${DIGITALOCEAN_TOKEN:?}" "https://api.digitalocean.com/v2$1"; }
 
 imported=0
 adopt() {
@@ -57,12 +57,6 @@ while read -r c; do
       ids="$(cf "/zones/$zone/dns_records?type=$type&name=$fqdn" | jq -r '[.result[].id] | join(" ")')"
       # Several records of one name and type (round robin) are left to a person.
       if [[ -n "$ids" && "$ids" != *" "* ]]; then adopt "$address" "$zone/$ids" "$type record $fqdn"; fi
-      ;;
-    digitalocean_reserved_ip)
-      region="$(jq -r .after.region <<<"$c")"
-      ips="$(do_api "/reserved_ips?per_page=200" |
-        jq -r --arg r "$region" '[.reserved_ips[] | select(.region.slug == $r and .droplet == null) | .ip] | join(" ")')"
-      if [[ -n "$ips" && "$ips" != *" "* ]]; then adopt "$address" "$ips" "unassigned reserved IP $ips"; fi
       ;;
   esac
 done < <(jq -c '.[]' <<<"$creates")
