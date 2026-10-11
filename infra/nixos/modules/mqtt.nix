@@ -166,6 +166,13 @@ lib.mkIf (cfg.role == "mqtt") {
       "network-online.target"
       "var-lib-emqx.mount"
     ];
+    # A freshly formatted volume's root belongs to root, and the tmpfiles rule
+    # above can run before the mount, owning only the directory underneath.
+    # EMQX (uid ${toString emqxUid} in the container) then cannot create data/configs.
+    preStart = lib.mkBefore ''
+      ${pkgs.coreutils}/bin/chown ${toString emqxUid}:${toString emqxUid} /var/lib/emqx
+      ${pkgs.coreutils}/bin/chmod 0750 /var/lib/emqx
+    '';
   };
 
   systemd.services.hqcat-noise-gw = {
