@@ -74,7 +74,7 @@
         p.mkShellNoCC {
           packages = with p; [
             nodejs_22
-            terraform
+            (callPackage ./infra/nixos/pkgs/terraform-bin.nix { })
             tflint
             shellcheck
             shfmt

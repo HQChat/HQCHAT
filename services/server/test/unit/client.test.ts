@@ -279,3 +279,30 @@ test("payload sealing binds the AAD and refuses a short tag", () => {
   assert.throws(() => openPayload(sealed, key, Buffer.from("other")));
   assert.throws(() => openPayload(sealed.subarray(0, 20), key, aad));
 });
+
+test("the client delivers a released burst before a later frame whose receipt is quicker", async () => {
+  const { Client } = await import("../../src/client/client");
+  const identity = identityFromSeed(newSeed());
+  const c = new Client({ baseUrl: "https://hqchat.invalid", endpoint: { url: "wss://hqchat.invalid/mqtt" }, identity });
+  const receipt = (topic: string) => ({ topic, payload: Buffer.alloc(0) });
+  // The proof releases two held messages with a receipt each; the next init,
+  // opened right after, carries one. Every publish takes a tick of the broker.
+  const results = [
+    {
+      messages: [
+        { from: "a", text: "hi", msgId: "1" },
+        { from: "a", text: "you there?", msgId: "2" },
+      ],
+      outbound: [receipt("r1"), receipt("r2")],
+    },
+    { messages: [{ from: "a", text: "it is about tomorrow", msgId: "3" }], outbound: [receipt("r3")] },
+  ];
+  c.conversations.receive = () => results.shift()!;
+  const fake = { publish: () => new Promise<boolean>((r) => setTimeout(() => r(true), 5)) };
+  const internals = c as unknown as { transport: unknown; handle(topic: string, payload: Buffer): Promise<void> };
+  internals.transport = fake;
+  const got: string[] = [];
+  c.onMessage((m) => got.push(m.text));
+  await Promise.all([internals.handle("hs/x", Buffer.alloc(0)), internals.handle("u/x/inbox", Buffer.alloc(0))]);
+  assert.deepEqual(got, ["hi", "you there?", "it is about tomorrow"]);
+});
