@@ -1,0 +1,66 @@
+# Archive the iOS app, sign it and upload a new version to App Store Connect
+# (apps/apple/release-ios.sh). Every run ships a version and a build number
+# strictly above everything already in App Store Connect (apps/apple/asc-next.mjs):
+#
+#   push to main   when the Apple app or the HQC library changes; the patch
+#                  version goes up by one
+#   manual run     optionally with a version (e.g. 3.1.0), which must be higher
+#                  than every version already uploaded
+#   deploy.yml     after a successful verify, when ship_ios is on
+#
+# Environment secrets (production): ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8 (an
+# App Store Connect API key, role App Manager or Admin). Submitting a build for
+# review stays manual.
+name: iOS release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/apple/**"
+      - "native/hqc/**"
+      - "!**.md"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to ship (e.g. 3.1.0); empty bumps the patch of the latest one
+        type: string
+        required: false
+  workflow_call:
+    inputs:
+      environment:
+        type: string
+        default: production
+      version:
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+# Runs queue rather than race, so two of them never pick the same number.
+concurrency:
+  group: ios-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    environment: ${{ inputs.environment || 'production' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - name: Use the newest Xcode on the runner
+        run: |
+          xcode="$(find /Applications -maxdepth 1 -name 'Xcode*.app' | sort -V | tail -n 1)"
+          sudo xcode-select -s "$xcode/Contents/Developer"
+      - name: Archive, sign and upload
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          VERSION: ${{ inputs.version }}
+        run: bash apps/apple/release-ios.sh
