@@ -97,10 +97,8 @@ jobs:
         with:
           primary-key: nix-devshell-${{ runner.os }}-${{ hashFiles('flake.lock', 'flake.nix') }}
           restore-prefixes-first-match: nix-devshell-${{ runner.os }}-
-      # The dev shell builds Terraform from source (unfree, so not on
-      # cache.nixos.org): about five minutes. It is saved as soon as it exists,
-      # not in a post step that a failing check would skip, so only the first
-      # run after a flake.lock change pays for it.
+      # The dev shell is saved as soon as it exists, not in a post step that a
+      # failing check would skip, so a red run still leaves the cache warm.
       - name: Dev shell
         run: nix develop --command true
       - if: github.event_name != 'pull_request' && steps.nix-cache.outputs.hit-primary-key != 'true'
