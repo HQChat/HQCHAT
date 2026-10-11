@@ -127,10 +127,11 @@ jobs:
         run: |
           umask 077
           printf '%s' "$SIGNING_KEY" >"$RUNNER_TEMP/cache.key"
-          nix store sign --key-file "$RUNNER_TEMP/cache.key" --recursive result-app result-mqtt
+          # ./ makes them paths: a bare word is read as a flake registry name.
+          nix store sign --key-file "$RUNNER_TEMP/cache.key" --recursive ./result-app ./result-mqtt
           rm -f "$RUNNER_TEMP/cache.key"
           nix copy --to "s3://${{ steps.env.outputs.bucket }}?endpoint=${{ steps.env.outputs.endpoint }}&region=auto" \
-            result-app result-mqtt
+            ./result-app ./result-mqtt
       - name: Upload the image
         id: image
         run: |
