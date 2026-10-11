@@ -173,8 +173,11 @@ export class Client {
       await this.graphHandler().catch((e: Error) => this.log(`graph sync failed: ${e.message}`));
       return;
     }
+    // receive() is synchronous, so frames are decided in arrival order. Deliver
+    // before awaiting any publish: handlers run concurrently, and a frame that
+    // releases held messages (a handshake proof) must not let a later frame's
+    // message overtake them while its receipts are in flight.
     const r = this.conversations.receive(topic, payload);
-    for (const out of r.outbound) await this.transport?.publish(out.topic, out.payload);
     if (r.dropped) {
       this.drops.push(r.dropped);
       this.log(`dropped: ${r.dropped}`);
@@ -183,6 +186,7 @@ export class Client {
       this.inbox.push(m);
       for (const h of this.messageHandlers) h(m);
     }
+    for (const out of r.outbound) await this.transport?.publish(out.topic, out.payload);
   }
 
   private onClosed(t: Transport, reason: string): void {

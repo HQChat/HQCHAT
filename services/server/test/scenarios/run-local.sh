@@ -136,13 +136,13 @@ for _ in $(seq 1 45); do
   sleep 1
 done
 grep -q "connected to the broker" "$WORK/bot.log" || {
-  tail -20 "$WORK/bot.log"
+  tail -n 20 "$WORK/bot.log"
   exit 1
 }
 
 step "Scenarios"
 npm run --silent test:scenarios || {
-  tail -40 "$WORK/server.log" "$WORK/bot.log"
+  tail -n 40 "$WORK/server.log" "$WORK/bot.log"
   exit 1
 }
 
