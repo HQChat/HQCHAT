@@ -44,7 +44,8 @@ describe("database TLS", () => {
     fs.writeFileSync(file, "-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----\n");
     process.env.PGSSLROOTCERT = file;
     const remote = tls("postgresql://u@db.example.com/db");
-    assert.ok(remote?.rejectUnauthorized);
+    assert.ok(remote);
+    assert.equal(remote.rejectUnauthorized, true);
     assert.ok(tls("postgresql://u@localhost/db"));
   });
 
