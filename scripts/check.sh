@@ -73,6 +73,7 @@ unit() {
   run "envelope fuzz" bash -c "cd '$server' && npx tsx test/fuzz/envelope-v3-invariants.ts --iterations 200000 --seed ${FUZZ_SEED:-1}"
   run "http body fuzz" bash -c "cd '$server' && npx tsx test/fuzz/http-body.ts --iterations 400 --seed ${FUZZ_SEED:-1}"
   run "site" bash -c "cd '$site' && node --test test/*.test.mjs"
+  run "ios versions" node --test "$root/apps/apple/asc-next.test.mjs"
   finish
 }
 

@@ -12,12 +12,12 @@ pinned in `native/hqc/HQC_UPSTREAM.txt`.
 | Local server runs | `nix build .#hqc -o native/hqc/result` | found by `src/protocol/hqc.ts` when `HQC_LIB` is unset |
 | macOS app and the Swift test slices | `bash native/hqc/build-apple.sh` | `apps/apple/libhqc_wrap.dylib` (arm64) |
 | iOS app | the same script | `native/hqc/dist/apple/HQC.xcframework` (device arm64, simulator arm64 and x86_64) |
-| The App Store build (Deploy → `ios`) | `apps/apple/release-ios.sh`, which runs the same script | the xcframework, then the signed upload |
+| The App Store builds (Apple release workflow) | `apps/apple/release.sh ios\|macos`, which runs the same script | the xcframework or the dylib, then the signed upload |
 
 Every build compiles the same bytes: `native/hqc/prepare-source.sh` turns the
 pinned upstream tree into the compiled source (it guards the unused x86
 intrinsics headers and adds the wrapper), and both `package.nix` and
-`build-apple.sh` run it. Where Nix is missing (the Deploy workflow's macOS
+`build-apple.sh` run it. Where Nix is missing (the Apple release workflow's macOS
 runner), `build-apple.sh` fetches `PINNED_COMMIT` from `REPO` with git and
 refuses any other commit.
 

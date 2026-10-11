@@ -6,7 +6,7 @@
 #   native/hqc/dist/apple/HQC.xcframework           iOS device + simulator (arm64, x86_64)
 #
 # The source is the one Nix pins (`nix build .#hqc.source`). Without Nix (the
-# Deploy workflow's macOS runner, see apps/apple/release-ios.sh), the pinned
+# Apple release workflow's macOS runner, see apps/apple/release.sh), the pinned
 # commit in HQC_UPSTREAM.txt is fetched with git, checked against that commit
 # id, and prepared by the same prepare-source.sh, so both paths compile the
 # same bytes.

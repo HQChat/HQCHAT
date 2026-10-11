@@ -12,13 +12,13 @@
 #             on the apps' API host, then the functional scenarios run against
 #             the live environment
 #   rollback  if verify fails, the channels go back to the previous release
-#   ios       once verify passes (and ship_ios is on): archive the iOS app, sign it
-#             and upload it to App Store Connect (apps/apple/release-ios.sh)
+#   apple     once verify passes (and ship_apple is on): apple-release.yml
+#             uploads a new version of the iOS and macOS apps to App Store Connect
 #
 # Environment secrets: DIGITALOCEAN_TOKEN, CLOUDFLARE_API_TOKEN, R2_ACCESS_KEY_ID,
 # R2_SECRET_ACCESS_KEY, NIX_CACHE_SIGNING_KEY, BOT_SEED, NOISE_KEYS and,
 # optionally, STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, APNS_KEY_P8
-# (infra/scripts/init-environment.sh sets the generated ones); for the ios job,
+# (infra/scripts/init-environment.sh sets the generated ones); for the apple job,
 # ASC_KEY_ID, ASC_ISSUER_ID and ASC_KEY_P8 (an App Store Connect API key).
 name: Deploy
 
@@ -33,8 +33,8 @@ on:
         description: Allow destroying or replacing droplets, the volume, the database or the reserved IP
         type: boolean
         default: false
-      ship_ios:
-        description: After a successful verify, build the iOS app and upload it to App Store Connect
+      ship_apple:
+        description: After a successful verify, build the iOS and macOS apps and upload them to App Store Connect
         type: boolean
         default: true
 
@@ -273,24 +273,10 @@ jobs:
       - name: Return the channels to the previous release
         run: infra/scripts/release.sh "$ENVIRONMENT" rollback
 
-  # The app ships only against a server that verify has just proven live.
-  ios:
+  # The apps ship only against a server that verify has just proven live.
+  apple:
     needs: verify
-    if: ${{ inputs.ship_ios && needs.verify.result == 'success' }}
-    runs-on: macos-latest
-    timeout-minutes: 60
-    environment: ${{ inputs.environment }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Use the newest Xcode on the runner
-        run: |
-          xcode="$(find /Applications -maxdepth 1 -name 'Xcode*.app' | sort -V | tail -n 1)"
-          sudo xcode-select -s "$xcode/Contents/Developer"
-      - name: Archive, sign and upload
-        env:
-          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
-        # 22 is the last build uploaded before this workflow existed; a re-run of
-        # the same run gets its own number through the attempt suffix.
-        run: BUILD_NUMBER="$((22 + GITHUB_RUN_NUMBER)).$GITHUB_RUN_ATTEMPT" bash apps/apple/release-ios.sh
+    if: ${{ inputs.ship_apple && needs.verify.result == 'success' }}
+    uses: ./.github/workflows/apple-release.yml
+    with:
+      environment: ${{ inputs.environment }}
