@@ -2,7 +2,8 @@
 # shellcheck source-path=SCRIPTDIR
 # Plans or applies one environment's Terraform (infra/terraform) against its
 # state in R2, refusing destructive changes to stateful resources unless
-# ALLOW_REPLACE=true (tf-guard.sh). After an apply, writes the outputs as JSON
+# ALLOW_REPLACE=true (tf-guard.sh). An apply first imports what the plan would
+# create but already exists (tf-adopt.sh). After an apply, writes the outputs as JSON
 # to $TF_OUTPUTS (default /tmp/tf-outputs.json).
 #
 #   infra/scripts/terraform.sh <environment> plan|apply
@@ -33,8 +34,17 @@ terraform init -input=false -reconfigure \
   -backend-config="skip_s3_checksum=true" \
   -backend-config="use_path_style=true"
 
-terraform plan -input=false -lock-timeout=5m -out=tfplan
-terraform show -json tfplan >tfplan.json
+plan() {
+  terraform plan -input=false -lock-timeout=5m -out=tfplan
+  terraform show -json tfplan >tfplan.json
+}
+plan
+# Before an apply, what the plan would create but already exists is imported,
+# then planned again (tf-adopt.sh), so the guard judges the plan that will run.
+if [[ "$action" == apply ]]; then
+  adopted="$("$root/infra/scripts/tf-adopt.sh" tfplan.json)"
+  if ((adopted > 0)); then plan; fi
+fi
 "$root/infra/scripts/tf-guard.sh" tfplan.json
 
 if [[ "$action" == apply ]]; then
