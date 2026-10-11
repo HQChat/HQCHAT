@@ -42,7 +42,10 @@ resource "digitalocean_reserved_ip" "hqn" {
   region = local.env.region
 }
 
+# A droplet takes one action at a time: assigning the IP while the volume is
+# being attached fails with "Droplet already has a pending event".
 resource "digitalocean_reserved_ip_assignment" "hqn" {
   ip_address = digitalocean_reserved_ip.hqn.ip_address
   droplet_id = digitalocean_droplet.host["mqtt"].id
+  depends_on = [digitalocean_volume_attachment.emqx]
 }
