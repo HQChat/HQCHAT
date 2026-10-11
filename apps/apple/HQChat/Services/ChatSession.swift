@@ -1,6 +1,7 @@
 import Foundation
 import CryptoKit
 import SwiftData
+import Combine
 
 fileprivate func dlog(_ message: @autoclosure () -> String) {
     let text = message()
@@ -48,6 +49,9 @@ final class ChatSession: ObservableObject {
     /// The private key could not be read — a dismissed or failed unlock.
     var onUnlockFailed: (() -> Void)?
 
+    /// Opens the queued backlog and restocks prekeys whenever the user unlocks.
+    private var unlockWatch: AnyCancellable?
+
     init() {
         let auth = self.auth
         self.api = APIClient(auth: auth)
@@ -79,7 +83,20 @@ final class ChatSession: ObservableObject {
         self.directory = DirectorySync(api: api, modelContext: modelContext,
                                        profileManager: profileManager)
 
+        // Frames that arrived locked are opened by the unlock, and a prekey
+        // check skipped while locked is made then.
+        unlockWatch = MessageKeyGate.shared.$isUnlocked
+            .removeDuplicates()
+            .filter { $0 }
+            .sink { [weak self] _ in self?.unlocked() }
+        router.drainPending()
+
         Task { await self.installHandlers() }
+    }
+
+    private func unlocked() {
+        router?.drainPending()
+        Task { await prekeys?.ensurePublished() }
     }
 
     /// Routes the transport's inbound traffic: frames, handshakes, graph nudges,
@@ -95,7 +112,7 @@ final class ChatSession: ObservableObject {
                 return
             }
             // The router checks this kind of frame may arrive on this topic.
-            Task { @MainActor in await self.router?.handle(frame, aad: aad, topic: topic) }
+            Task { @MainActor in await self.router?.handle(frame, aad: aad, topic: topic, raw: payload) }
         }
         await mqtt.setHandshakeHandler { [weak self] topic, payload in
             Task { @MainActor in await self?.router?.handleHandshake(payload, topic: topic) }
@@ -354,8 +371,10 @@ final class ChatSession: ObservableObject {
     /// Tells `friend` their message `msgId` arrived: a sealed, empty frame on the
     /// conversation, so the server sees one more message and nothing else.
     func sendReceipt(for msgId: String, to friend: Friend) async {
-        // A receipt never opens a session, and is only sent inside an answered one.
-        guard friend.hasSession, friend.ratchetSession?.pendingInit == nil else { return }
+        // A receipt never opens a session, and is only sent inside an answered
+        // one. Nor does it ask for an unlock: locked, the state cannot be read.
+        guard AESKeyStore.isUnlocked(), friend.hasSession,
+              friend.ratchetSession?.pendingInit == nil else { return }
         do {
             publish(try await seal("", kind: .receipt, to: friend, msgId: msgId), to: friend)
         } catch {
@@ -365,6 +384,14 @@ final class ChatSession: ObservableObject {
 
     private func seal(_ text: String, kind: ConversationFrame.Kind, to friend: Friend,
                       msgId: String) async throws -> ConversationFrame {
+        // Sealing advances the ratchet state, which only an unlock can read. A
+        // locked read is not a missing session and must never start a new one.
+        if !AESKeyStore.isUnlocked() {
+            await MessageKeyGate.shared.unlock(reason: "Send your message", retry: true)
+            guard AESKeyStore.isUnlocked() else {
+                throw AppError.crypto("Unlock HQChat to send.")
+            }
+        }
         if !friend.hasSession {
             await startSession(with: friend)
             guard friend.hasSession else {
@@ -478,6 +505,8 @@ final class ChatSession: ObservableObject {
     /// after yielding a simultaneous session start. Message ids are kept, so a
     /// peer that already has one drops the duplicate.
     func resendUnconfirmed(to friend: Friend) async {
+        // Locked, `content` is a placeholder, which must never be sent.
+        guard MessageKeyStore.canRead else { return }
         let outgoing = (friend.messages ?? [])
             .filter { $0.isOutgoing }
             .sorted { $0.timestamp < $1.timestamp }
@@ -520,6 +549,7 @@ final class ChatSession: ObservableObject {
     private func linkChanged(connected: Bool, error: Error?) {
         if connected {
             state = .connected
+            router?.drainPending()
             Task { _ = await refreshDirectory() }
             startDirectoryPoll()
             onConnected?()

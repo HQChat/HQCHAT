@@ -11,6 +11,11 @@ fileprivate func dlog(_ message: @autoclosure () -> String) {
 /// Applies inbound frames to the local store: verifies an `init`'s sender with
 /// a handshake challenge, opens sessions, decrypts and stores messages.
 /// Friends are resolved by client id.
+///
+/// In two stages. A frame is admitted on arrival without any key (checked
+/// against its sender and topic, queued as ciphertext, notified), and opened
+/// from `InboundQueue` once the ratchet state can be read, which needs the
+/// user. A frame that arrives locked waits for the unlock.
 @MainActor
 final class ConversationRouter {
 
@@ -29,6 +34,11 @@ final class ConversationRouter {
     /// Our own published prekeys — the secrets that open an inbound `init`.
     private let prekeys: PrekeyService?
     private let kem: RatchetKem
+    /// Admitted frames waiting to be opened.
+    let queue: InboundQueue
+    /// Tells the user a message arrived (by sender name), and recounts badges.
+    private let notifyMessage: @MainActor (String) -> Void
+    private let recount: @MainActor (ModelContext, UUID?) -> Void
 
     init(modelContext: ModelContext,
          profileManager: ProfileManager?,
@@ -38,7 +48,11 @@ final class ConversationRouter {
          publishHandshake: @escaping (Data, Friend) -> Void = { _, _ in },
          resendUnconfirmed: @escaping (Friend) async -> Void = { _ in },
          sendReceipt: @escaping (String, Friend) async -> Void = { _, _ in },
-         resyncDirectory: @escaping () async -> Void = {}) {
+         resyncDirectory: @escaping () async -> Void = {},
+         notifyMessage: @escaping @MainActor (String) -> Void = { NotificationService.shared.notifyMessage(from: $0) },
+         recount: @escaping @MainActor (ModelContext, UUID?) -> Void = {
+             NotificationService.shared.refreshCounts(modelContext: $0, profileID: $1)
+         }) {
         self.modelContext = modelContext
         self.profileManager = profileManager
         self.prekeys = prekeys
@@ -48,6 +62,12 @@ final class ConversationRouter {
         self.resendUnconfirmed = resendUnconfirmed
         self.sendReceipt = sendReceipt
         self.resyncDirectory = resyncDirectory
+        self.notifyMessage = notifyMessage
+        self.recount = recount
+        self.queue = InboundQueue(modelContext: modelContext,
+                                  canProcess: { AESKeyStore.isUnlocked() })
+        queue.process = { [weak self] frame in await self?.open(frame) ?? false }
+        queue.onDrained = { [weak self] in self?.refreshCounts() }
     }
 
     private var currentProfile: Profile? { profileManager?.currentProfile }
@@ -145,57 +165,73 @@ final class ConversationRouter {
         dlog("[ConversationRouter] 🔐 challenged \(friend.username) — holding their init")
     }
 
-    /// Handles a challenge or proof on the friendship's handshake topic.
+    /// Admits a challenge or proof on the friendship's handshake topic.
+    /// Answering a challenge reads the ratchet state and the identity key, so it
+    /// is opened from the queue like any other frame, in order with the rest of
+    /// this sender's traffic.
     func handleHandshake(_ raw: Data, topic: String) async {
+        guard let profileID = currentProfile?.id else { return }
         guard let frame = Handshake.decode(raw) else { return }
         guard !myID.isEmpty, frame.to == myID, frame.from != myID else { return }
         guard let friend = friend(withID: frame.from), !friend.isVanished else { return }
         // It must arrive on our friendship's handshake topic with that peer.
         guard let topics = friend.topics, topic == topics.handshake else { return }
 
+        queue.admit(profileID: profileID, senderID: friend.peerID, topic: topic, raw: raw,
+                    kind: .handshake, dedupeKey: "hs:\(frame.kind):\(frame.nonce.hexString)")
+        queue.kick(profileID: profileID, senderID: friend.peerID)
+    }
+
+    /// Answers a challenge, or opens the `init` a proof unlocked.
+    private func applyHandshake(_ frame: Handshake.Frame, from friend: Friend) -> FollowUp? {
         switch frame.kind {
         case .challenge:
             // Answer only challenges for a handshake we started.
-            guard friend.ratchetSession?.pendingInit != nil, let ct = frame.ct else { return }
+            guard friend.ratchetSession?.pendingInit != nil, let ct = frame.ct else { return nil }
             guard let sk = getSecretKey(reason: "proving your identity to \(friend.username)"),
                   let ss = try? kem.decapsulate(sk: sk, ct: ct),
                   let proof = Handshake.proof(ss: ss, nonce: frame.nonce,
                                               challenger: frame.from, prover: myID),
                   let reply = Handshake.encode(.init(kind: .proof, from: myID, to: frame.from,
                                                      nonce: frame.nonce, ct: nil, proof: proof))
-            else { return }
+            else { return nil }
             publishHandshake(reply, friend)
             ProtocolLog.record(.handshakeProved(peer: frame.from))
             dlog("[ConversationRouter] 🔐 proved our identity to \(friend.username)")
+            return nil
 
         case .proof:
             sweepChallenges()
             guard let pending = pendingChallenges[frame.from],
                   let offered = frame.proof,
-                  pending.nonce == frame.nonce else { return }
+                  pending.nonce == frame.nonce else { return nil }
             guard Handshake.proofMatches(expected: pending.expected, offered: offered) else {
                 // Someone sent an `init` naming this peer without holding its key.
                 dlog("[ConversationRouter] ❌ \(friend.username) FAILED the handshake — init discarded")
                 ProtocolLog.record(.handshakeFailed(peer: frame.from))
                 pendingChallenges.removeValue(forKey: frame.from)
-                return
+                return nil
             }
             pendingChallenges.removeValue(forKey: frame.from)
             proven.insert(frame.from)
             ProtocolLog.record(.handshakeProven(peer: frame.from))
             dlog("[ConversationRouter] ✅ \(friend.username) proved possession — opening their init")
-            await handleInit(from: friend, pending.heldInit.frame, aad: pending.heldInit.aad)
+            return handleInit(from: friend, pending.heldInit.frame, aad: pending.heldInit.aad)
         }
     }
 
     // MARK: - Inbound
 
+    /// Admits a frame: checks it may come from its sender on this topic, queues
+    /// it as it arrived and notifies. Needs no key; it is opened from the queue.
     /// - Parameters:
     ///   - aad: the header bytes as they arrived.
     ///   - topic: the topic the frame arrived on, checked against its kind.
-    func handle(_ envelope: ConversationFrame, aad: Data, topic: String) async {
+    ///   - raw: the wire bytes, queued as they are. Nil re-encodes `envelope`.
+    func handle(_ envelope: ConversationFrame, aad: Data, topic: String, raw: Data? = nil) async {
         // Our own publishes come back to us.
-        guard let myID = currentProfile?.peerID, !myID.isEmpty else { return }
+        guard let myID = currentProfile?.peerID, !myID.isEmpty,
+              let profileID = currentProfile?.id else { return }
         if envelope.sender == myID { return }
 
         // The frame must be addressed to us (bound in the AAD) and arrive where its
@@ -234,77 +270,170 @@ final class ConversationRouter {
                                         reason: "vanished identity — the server no longer lists this id"))
             return
         }
-        switch envelope.t {
-        case .initiate:
+        if envelope.t == .initiate {
             ProtocolLog.record(.initReceived(from: friend.peerID,
                                              hasSenderPk: envelope.senderPk != nil))
+        }
+        guard let bytes = raw ?? envelope.encoded() else { return }
+        let kind: PendingFrame.Kind = switch envelope.t {
+        case .initiate: .initiate
+        case .message: .message
+        case .receipt: .receipt
+        }
+        let dedupeKey = "\(kindName(envelope)):\(envelope.cid):\(envelope.n):\(envelope.msgId)"
+        guard queue.admit(profileID: profileID, senderID: friend.peerID, topic: topic, raw: bytes,
+                          kind: kind, dedupeKey: dedupeKey) else {
+            dlog("[ConversationRouter] · \(kindName(envelope)) from \(friend.username) already queued — not admitted twice")
+            return
+        }
+        // The notification never carried plaintext, so it need not wait for the unlock.
+        if kind != .receipt {
+            notifyMessage(friend.username)
+            refreshCounts()
+        }
+        queue.kick(profileID: profileID, senderID: friend.peerID)
+    }
+
+    /// Opens every queued frame that can be opened now. Called on unlock,
+    /// reconnect and profile switch; returns at once, the drain runs on.
+    func drainPending() {
+        guard let profileID = currentProfile?.id, AESKeyStore.isUnlocked() else { return }
+        // Before the first read, so nothing reads around the move.
+        AESKeyStore.migrateLegacyItems(profileID: profileID)
+        queue.kickAll(profileID: profileID)
+    }
+
+    /// What is left to do once a frame is opened and its effects are stored:
+    /// network work (a receipt, a resend), run after the frame is deleted so a
+    /// crash during it cannot have the frame opened twice.
+    typealias FollowUp = () async -> Void
+
+    /// Opens one queued frame. True when it is done with and deleted; false
+    /// (frame kept) when it cannot be opened yet.
+    ///
+    /// Everything up to the delete is synchronous, in this order: the message is
+    /// stored, then the advanced ratchet state, then the frame is deleted. A
+    /// crash after the first finds the message a duplicate on replay (the
+    /// ratchet still advances); after the second, the frame no longer opens
+    /// (its key is spent) and is dropped. Neither loses a message.
+    private func open(_ pending: PendingFrame) async -> Bool {
+        guard let profileID = currentProfile?.id, pending.profileID == profileID,
+              AESKeyStore.isUnlocked() else { return false }
+
+        var followUp: FollowUp?
+        if let friend = friend(withID: pending.senderID), !friend.isVanished {
+            switch pending.kind {
+            case .handshake:
+                if let frame = Handshake.decode(pending.raw) {
+                    followUp = applyHandshake(frame, from: friend)
+                }
+            case .initiate, .message, .receipt:
+                let decoded = ConversationFrame.decodeReporting(pending.raw)
+                if let (envelope, aad) = decoded.result {
+                    followUp = apply(envelope, aad: aad, from: friend)
+                } else {
+                    ProtocolLog.record(.dropped(stage: "envelope-decode", peerID: pending.senderID,
+                                                reason: decoded.reason))
+                }
+            }
+        } else {
+            ProtocolLog.record(.dropped(stage: "envelope", peerID: pending.senderID,
+                                        reason: "queued for a contact that is gone or vanished"))
+        }
+        modelContext.delete(pending)
+        try? modelContext.save()
+        await followUp?()
+        return true
+    }
+
+    private func apply(_ envelope: ConversationFrame, aad: Data, from friend: Friend) -> FollowUp? {
+        switch envelope.t {
+        case .initiate:
             // Hold an unproven sender's `init` and challenge them; proof lasts for this launch.
             if !proven.contains(friend.peerID) {
                 challengeInitiator(friend, envelope, aad: aad)
-                return
+                return nil
             }
-            await handleInit(from: friend, envelope, aad: aad)
+            return handleInit(from: friend, envelope, aad: aad)
         case .message:
-            await handleMsg(from: friend, envelope, aad: aad)
+            return handleMsg(from: friend, envelope, aad: aad)
         case .receipt:
             handleReceipt(from: friend, envelope, aad: aad)
+            return nil
         }
     }
 
+    private func refreshCounts() {
+        recount(modelContext, currentProfile?.id)
+    }
+
     /// Opens a session from an inbound `init`, whose payload is the first message.
-    private func handleInit(from friend: Friend, _ envelope: ConversationFrame, aad: Data) async {
+    private func handleInit(from friend: Friend, _ envelope: ConversationFrame, aad: Data) -> FollowUp? {
         dlog("[ConversationRouter] 🤝 init ← \(friend.username)")
         // An inbound `init` never replaces an established session (it would let a
         // replay wipe a conversation).
         var yielding = false
         if friend.hasSession {
-            guard let decision = await resolveCollision(friend, envelope, aad: aad) else { return }
-            yielding = decision
+            switch resolveCollision(friend, envelope, aad: aad) {
+            case .handled(let followUp): return followUp
+            case .open: break
+            case .yield: yielding = true
+            }
         }
         pinSenderKey(friend, envelope)
-        guard var session = deriveResponderSession(friend, envelope) else { return }
+        guard var session = deriveResponderSession(friend, envelope) else { return nil }
 
         // Open the payload before consuming the one-time key.
         guard let text = Self.openFrame(kem: kem, session: &session, envelope, aad: aad) else {
-            return dropInit(friend, "session derived but the payload did not decrypt")
+            dropInit(friend, "session derived but the payload did not decrypt")
+            return nil
         }
+        store(text, from: friend, msgId: envelope.msgId)
         friend.ratchetSession = session
         if let otId = envelope.otId { prekeys?.consumeOneTime(id: otId) }
-        store(text, from: friend, msgId: envelope.msgId)
-        await sendReceipt(envelope.msgId, friend)
         dlog("[ConversationRouter] ✅ session open with \(friend.username)")
         ProtocolLog.record(.sessionOpenedAsResponder(peer: friend.peerID, usedOneTime: envelope.otId != nil))
-        // After the session is in place, so the resend does not start another.
-        if yielding { await resendUnconfirmed(friend) }
+        let msgId = envelope.msgId
+        return { [weak self] in
+            await self?.sendReceipt(msgId, friend)
+            // After the session is in place, so the resend does not start another.
+            if yielding { await self?.resendUnconfirmed(friend) }
+        }
+    }
+
+    private enum Collision {
+        /// Handled here; nothing more to open.
+        case handled(FollowUp?)
+        /// Open it as a new session.
+        case open
+        /// Our session was dropped; open theirs and re-send ours over it.
+        case yield
     }
 
     /// An `init` from a contact we already have a session with. Established (we
     /// have heard from them): its payload is an ordinary message. Our own `init`
     /// unanswered: both sides started at once, and the lower id keeps its own.
-    /// Returns nil when handled here, true when yielding to theirs (our session
-    /// is dropped and what we sent is re-sent over theirs).
-    private func resolveCollision(_ friend: Friend, _ envelope: ConversationFrame, aad: Data) async -> Bool? {
-        guard let myID = currentProfile?.peerID, !myID.isEmpty else { return nil }
+    private func resolveCollision(_ friend: Friend, _ envelope: ConversationFrame, aad: Data) -> Collision {
+        guard let myID = currentProfile?.peerID, !myID.isEmpty else { return .handled(nil) }
         switch InitCollision.resolve(hasSession: true,
                                      heardFromThem: friend.ratchetSession?.pendingInit == nil,
                                      myID: myID, peerID: friend.peerID) {
         case .open:
-            return false
+            return .open
         case .ignoreReplay:
             // An initiator repeats the init header until answered; the payload is a message.
             dlog("[ConversationRouter] · init from \(friend.username) — session already open, opening its payload as a message")
             ProtocolLog.record(.initIgnoredSessionOpen(peer: friend.peerID))
-            await handleMsg(from: friend, envelope, aad: aad)
-            return nil
+            return .handled(handleMsg(from: friend, envelope, aad: aad))
         case .keepOurs:
             dlog("[ConversationRouter] · simultaneous init from \(friend.username) — keeping ours (lower id)")
             ProtocolLog.record(.initGlareKept(peer: friend.peerID))
-            return nil
+            return .handled(nil)
         case .yieldToTheirs:
             dlog("[ConversationRouter] · simultaneous init from \(friend.username) — yielding to theirs")
             ProtocolLog.record(.initGlareYielded(peer: friend.peerID))
             friend.ratchetSession = nil
-            return true
+            return .yield
         }
     }
 
@@ -348,12 +477,12 @@ final class ConversationRouter {
 
     /// Decrypts and stores a message. The header is AAD, so a tampered header
     /// yields no message rather than a wrong one.
-    private func handleMsg(from friend: Friend, _ envelope: ConversationFrame, aad: Data) async {
+    private func handleMsg(from friend: Friend, _ envelope: ConversationFrame, aad: Data) -> FollowUp? {
         guard var session = friend.ratchetSession else {
             dlog("[ConversationRouter] ❌ no session with \(friend.username)")
             ProtocolLog.record(.messageUndecryptable(peer: friend.peerID,
                                                      reason: "no session — their init never arrived"))
-            return
+            return nil
         }
         guard let text = Self.openFrame(kem: kem, session: &session, envelope, aad: aad) else {
             // A replay, a retired chain, a gap too large, or a failed tag: ordinary,
@@ -362,13 +491,15 @@ final class ConversationRouter {
                  + "(cid \(envelope.cid.prefix(8))…, n \(envelope.n))")
             ProtocolLog.record(.messageUndecryptable(peer: friend.peerID,
                                                      reason: "no key for this position (replay, retired chain, too large a gap, or a payload that did not authenticate)"))
-            return
+            return nil
         }
 
-        friend.ratchetSession = session
+        // The message before the state that spends its key (see `open`).
         store(text, from: friend, msgId: envelope.msgId)
+        friend.ratchetSession = session
         ProtocolLog.record(.messageDecrypted(peer: friend.peerID))
-        await sendReceipt(envelope.msgId, friend)
+        let msgId = envelope.msgId
+        return { [weak self] in await self?.sendReceipt(msgId, friend) }
     }
 
     /// Marks our message `envelope.msgId` delivered once the receipt authenticates.
@@ -379,17 +510,18 @@ final class ConversationRouter {
                                                      reason: "a receipt that did not authenticate"))
             return
         }
-        friend.ratchetSession = session
         let msgId = envelope.msgId
         if let message = (friend.messages ?? []).first(where: { $0.isOutgoing && $0.messageId == msgId }) {
             message.advanceDelivery(to: .delivered)
         }
         try? modelContext.save()
+        friend.ratchetSession = session
     }
 
-    /// Stores a decrypted message and refreshes the badges, dropping a `msgId`
-    /// already stored from this contact (a re-send seals the same message at a
-    /// new ratchet position).
+    /// Stores a decrypted message, dropping a `msgId` already stored from this
+    /// contact (a re-send seals the same message at a new ratchet position, and
+    /// a frame replayed after a crash opens to one already stored). Its
+    /// notification went out when the frame was admitted.
     private func store(_ text: String, from friend: Friend, msgId: String) {
         if !msgId.isEmpty, alreadyStored(msgId: msgId, from: friend) {
             dlog("[ConversationRouter] · duplicate \(msgId.prefix(8))… from \(friend.username) — not stored twice")
@@ -399,10 +531,6 @@ final class ConversationRouter {
                               messageId: msgId.isEmpty ? nil : msgId)
         modelContext.insert(message)
         try? modelContext.save()
-
-        NotificationService.shared.notifyMessage(from: friend.username)
-        NotificationService.shared.refreshCounts(modelContext: modelContext,
-                                                profileID: currentProfile?.id)
     }
 
     /// Opens one frame: the ratchet proposes a key and the AEAD tag decides,

@@ -189,7 +189,7 @@ struct ChatView: View {
             onRotateKeys: {
                 let svc = FriendService(session: session, modelContext: modelContext)
                 svc.setModelContext(modelContext)
-                svc.forceRatchetStep(friend: friend)
+                Task { await svc.forceRatchetStep(friend: friend) }
             }
         )
     }

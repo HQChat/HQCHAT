@@ -11,7 +11,7 @@ import SwiftData
 @MainActor
 func freshContainer() -> ModelContainer {
     let config = ModelConfiguration(isStoredInMemoryOnly: true)
-    return try! ModelContainer(for: Profile.self, Friend.self, Message.self, configurations: config)
+    return try! ModelContainer(for: Profile.self, Friend.self, Message.self, PendingFrame.self, configurations: config)
 }
 
 @MainActor

@@ -82,6 +82,9 @@ class DataResetService {
             // Per-friend channel keys and at-rest message keys, keyed by peer
             // rather than by profile service name.
             ("channel keys", [kSecClass as String: generic, kSecAttrService as String: AESKeyStore.service]),
+            ("channel keys (protected)", [kSecClass as String: generic,
+                                          kSecUseDataProtectionKeychain as String: true,
+                                          kSecAttrService as String: AESKeyStore.protectedService]),
             ("message keys", [kSecClass as String: generic, kSecAttrService as String: MessageKeyStore.service]),
             // Items written with `kSecUseDataProtectionKeychain` are only found by
             // a query that sets it (macOS has two keychains; iOS has one, where the
@@ -164,6 +167,11 @@ class DataResetService {
             let messages = try modelContext.fetch(messageDescriptor)
             for message in messages {
                 modelContext.delete(message)
+            }
+
+            // Frames not yet opened: ciphertext, but still traffic to drop.
+            for frame in try modelContext.fetch(FetchDescriptor<PendingFrame>()) {
+                modelContext.delete(frame)
             }
             
             try modelContext.save()
