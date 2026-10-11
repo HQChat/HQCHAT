@@ -64,9 +64,14 @@ jobs:
           n=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&event=push&status=success" -q .total_count)
           echo "passed=$([ "${n:-0}" -gt 0 ] && echo true || echo false)" >>"$GITHUB_OUTPUT"
 
+  # A called workflow gets at most its caller's permissions; ci.yml asks for
+  # pull-requests: read (paths-filter lists a PR's files with it).
   ci:
     needs: ci-passed
     if: needs.ci-passed.outputs.passed != 'true'
+    permissions:
+      contents: read
+      pull-requests: read
     uses: ./.github/workflows/ci.yml
 
   # `!cancelled() && !failure()` lets a skipped `ci` through; GitHub would
