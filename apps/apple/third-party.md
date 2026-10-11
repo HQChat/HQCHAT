@@ -12,7 +12,7 @@ rather than taken.
 
 | | |
 |---|---|
-| **Where it lives** | Not vendored. `native/hqc/package.nix` fetches it at build time; `native/hqc/HQC_UPSTREAM.txt` pins it. |
+| **Where it lives** | Source not vendored: `native/hqc/package.nix` fetches it at build time; `native/hqc/HQC_UPSTREAM.txt` pins it. The Apple builds compiled from it are committed (`native/hqc/dist/apple/HQC.xcframework`, `apps/apple/libhqc_wrap.dylib`) so the app builds from a clone. |
 | **Upstream** | https://gitlab.com/pqc-hqc/hqc |
 | **Revision** | `3a0f86f84f6cb9c90729f038828a6e5f7df8634f` (Nix hash `sha256-uBlMOtCz7c8ZA+ldPXuaHendLR3/wCVWgiND2ssEcVE=`) |
 | **Licence** | Public domain (SPDX: `LicenseRef-PublicDomain`), per the upstream `LICENSE` at that revision |

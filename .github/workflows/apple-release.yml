@@ -1,16 +1,19 @@
-# Archive the iOS and macOS apps, sign them and upload a new version of each to
-# App Store Connect (apps/apple/release.sh). Every run ships, per platform, a
-# version and a build number strictly above everything already in App Store
-# Connect (apps/apple/asc-next.mjs):
+# Archive the iOS app, sign it and upload a new version to App Store Connect
+# (apps/apple/release.sh). Every run ships a version and a build number strictly
+# above everything already in App Store Connect (apps/apple/asc-next.mjs):
 #
 #   push to main   when the Apple apps or the HQC library change; the patch
 #                  version goes up by one
 #   manual run     optionally with a version (e.g. 3.1.0), which must be higher
-#                  than every version already uploaded, and a choice of platforms
+#                  than every version already uploaded; macOS can be picked too
 #   deploy.yml     after a successful verify, when ship_apple is on
 #
-# Environment secrets (production): ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8 (an
-# App Store Connect API key, role App Manager or Admin). Submitting a build for
+# Only iOS ships unless a manual run asks for macOS, which needs its own App
+# Store Connect record (martin.rougeron.DissQus).
+#
+# Environment secrets (production): ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8: an
+# App Store Connect team API key with the Admin role, which cloud-managed
+# distribution signing requires. Submitting a build for
 # review stays manual.
 name: Apple release
 
@@ -30,8 +33,8 @@ on:
       platforms:
         description: Apps to ship
         type: choice
-        options: ["ios macos", ios, macos]
-        default: "ios macos"
+        options: [ios, "ios macos", macos]
+        default: ios
   workflow_call:
     inputs:
       environment:
@@ -45,8 +48,8 @@ permissions:
   contents: read
 
 jobs:
-  # A manual run may ship one platform; macOS minutes are too dear to start a
-  # runner only to skip it.
+  # Only the platforms a run ships get a runner; macOS minutes are too dear to
+  # start one only to skip it.
   platforms:
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -55,7 +58,7 @@ jobs:
     steps:
       - id: list
         env:
-          PLATFORMS: ${{ inputs.platforms || 'ios macos' }}
+          PLATFORMS: ${{ inputs.platforms || 'ios' }}
         run: echo "list=$(jq -cn --arg p "$PLATFORMS" '$p | split(" ")')" >>"$GITHUB_OUTPUT"
 
   release:

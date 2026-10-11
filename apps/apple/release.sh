@@ -5,10 +5,10 @@
 #
 #   ASC_KEY_ID=… ASC_ISSUER_ID=… ASC_KEY_P8=… [VERSION=3.1.0] apps/apple/release.sh ios|macos
 #
-# ASC_*    an App Store Connect API key (role App Manager or Admin): Xcode uses
-#          it to fetch the signing certificate and profile (cloud-managed
-#          signing, nothing kept on the runner) and to upload; asc-next.mjs uses
-#          it to read what is already uploaded.
+# ASC_*    an App Store Connect team API key with the Admin role: Xcode uses it
+#          to create the cloud-managed distribution certificate and profile
+#          (nothing kept on the runner) and to upload; asc-next.mjs uses it to
+#          read what is already uploaded.
 # VERSION  optional CFBundleShortVersionString; must be higher than every
 #          version of this platform in App Store Connect. Without it, the patch
 #          of the highest one goes up (asc-next.mjs). The build number is always
@@ -82,8 +82,13 @@ cat >"$work/export.plist" <<EOF
 EOF
 
 echo "signing for the App Store and uploading"
-xcodebuild -exportArchive -archivePath "$work/HQChat.xcarchive" \
-  -exportOptionsPlist "$work/export.plist" -exportPath "$work/export" "${auth[@]}"
+if ! xcodebuild -exportArchive -archivePath "$work/HQChat.xcarchive" \
+  -exportOptionsPlist "$work/export.plist" -exportPath "$work/export" "${auth[@]}" 2>&1 | tee "$work/export.log"; then
+  if grep -q "Cloud signing permission error" "$work/export.log"; then
+    echo "::error::the App Store Connect key ($ASC_KEY_ID) may not create cloud-managed distribution certificates: give ASC_KEY_P8 a team key with the Admin role (App Store Connect → Users and Access → Integrations)" >&2
+  fi
+  exit 1
+fi
 echo "uploaded $scheme $version ($build); it appears in App Store Connect → TestFlight once processed"
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
   echo "Uploaded **$scheme $version ($build)** to App Store Connect." >>"$GITHUB_STEP_SUMMARY"

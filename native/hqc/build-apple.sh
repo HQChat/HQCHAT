@@ -11,6 +11,11 @@
 # id, and prepared by the same prepare-source.sh, so both paths compile the
 # same bytes.
 #
+# Both outputs are committed, so the Xcode project builds and runs on a device
+# straight from a clone. Rerun this and commit the result whenever
+# HQC_UPSTREAM.txt moves; `scripts/check.sh lint` fails while the committed
+# build names another commit. Releases rebuild from source regardless.
+#
 # Does nothing when both already exist for the current source. Needs Xcode, and
 # Nix or git with network access.
 set -euo pipefail

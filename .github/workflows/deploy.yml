@@ -13,7 +13,7 @@
 #             the live environment
 #   rollback  if verify fails, the channels go back to the previous release
 #   apple     once verify passes (and ship_apple is on): apple-release.yml
-#             uploads a new version of the iOS and macOS apps to App Store Connect
+#             uploads a new version of the iOS app to App Store Connect
 #
 # Environment secrets: DIGITALOCEAN_TOKEN, CLOUDFLARE_API_TOKEN, R2_ACCESS_KEY_ID,
 # R2_SECRET_ACCESS_KEY, NIX_CACHE_SIGNING_KEY, BOT_SEED, NOISE_KEYS and,
@@ -34,7 +34,7 @@ on:
         type: boolean
         default: false
       ship_apple:
-        description: After a successful verify, build the iOS and macOS apps and upload them to App Store Connect
+        description: After a successful verify, build the iOS app and upload it to App Store Connect
         type: boolean
         default: true
 

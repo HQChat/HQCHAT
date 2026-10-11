@@ -3,8 +3,12 @@
 HQC-256 comes from the upstream reference implementation, wrapped by
 `native/hqc/src/low_wrap.c` (IND-CCA2 KEM: keypair from seed, encapsulate,
 decapsulate, each returning a status and writing into caller-allocated
-buffers). No binary is committed: every consumer builds it from the commit
-pinned in `native/hqc/HQC_UPSTREAM.txt`.
+buffers). Every consumer builds it from the commit pinned in
+`native/hqc/HQC_UPSTREAM.txt`. The Apple builds are also committed, so the
+Xcode project runs on a device straight from a clone: after moving the pin,
+run `bash native/hqc/build-apple.sh` and commit `native/hqc/dist/apple` and
+`apps/apple/libhqc_wrap.dylib` (`scripts/check.sh lint` fails until you do).
+App Store builds rebuild from source either way.
 
 | Consumer | Built by | Result |
 |---|---|---|
