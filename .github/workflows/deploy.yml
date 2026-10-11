@@ -12,13 +12,13 @@
 #             on the apps' API host, then the functional scenarios run against
 #             the live environment
 #   rollback  if verify fails, the channels go back to the previous release
-#   ios       once verify passes (and ship_ios is on): ios.yml uploads a new
-#             version of the iOS app to App Store Connect
+#   apple     once verify passes (and ship_apple is on): apple-release.yml
+#             uploads a new version of the iOS and macOS apps to App Store Connect
 #
 # Environment secrets: DIGITALOCEAN_TOKEN, CLOUDFLARE_API_TOKEN, R2_ACCESS_KEY_ID,
 # R2_SECRET_ACCESS_KEY, NIX_CACHE_SIGNING_KEY, BOT_SEED, NOISE_KEYS and,
 # optionally, STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, APNS_KEY_P8
-# (infra/scripts/init-environment.sh sets the generated ones); for the ios job,
+# (infra/scripts/init-environment.sh sets the generated ones); for the apple job,
 # ASC_KEY_ID, ASC_ISSUER_ID and ASC_KEY_P8 (an App Store Connect API key).
 name: Deploy
 
@@ -33,8 +33,8 @@ on:
         description: Allow destroying or replacing droplets, the volume, the database or the reserved IP
         type: boolean
         default: false
-      ship_ios:
-        description: After a successful verify, build the iOS app and upload it to App Store Connect
+      ship_apple:
+        description: After a successful verify, build the iOS and macOS apps and upload them to App Store Connect
         type: boolean
         default: true
 
@@ -273,10 +273,10 @@ jobs:
       - name: Return the channels to the previous release
         run: infra/scripts/release.sh "$ENVIRONMENT" rollback
 
-  # The app ships only against a server that verify has just proven live.
-  ios:
+  # The apps ship only against a server that verify has just proven live.
+  apple:
     needs: verify
-    if: ${{ inputs.ship_ios && needs.verify.result == 'success' }}
-    uses: ./.github/workflows/ios.yml
+    if: ${{ inputs.ship_apple && needs.verify.result == 'success' }}
+    uses: ./.github/workflows/apple-release.yml
     with:
       environment: ${{ inputs.environment }}

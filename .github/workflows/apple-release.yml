@@ -1,17 +1,18 @@
-# Archive the iOS app, sign it and upload a new version to App Store Connect
-# (apps/apple/release-ios.sh). Every run ships a version and a build number
-# strictly above everything already in App Store Connect (apps/apple/asc-next.mjs):
+# Archive the iOS and macOS apps, sign them and upload a new version of each to
+# App Store Connect (apps/apple/release.sh). Every run ships, per platform, a
+# version and a build number strictly above everything already in App Store
+# Connect (apps/apple/asc-next.mjs):
 #
-#   push to main   when the Apple app or the HQC library changes; the patch
+#   push to main   when the Apple apps or the HQC library change; the patch
 #                  version goes up by one
 #   manual run     optionally with a version (e.g. 3.1.0), which must be higher
-#                  than every version already uploaded
-#   deploy.yml     after a successful verify, when ship_ios is on
+#                  than every version already uploaded, and a choice of platforms
+#   deploy.yml     after a successful verify, when ship_apple is on
 #
 # Environment secrets (production): ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8 (an
 # App Store Connect API key, role App Manager or Admin). Submitting a build for
 # review stays manual.
-name: iOS release
+name: Apple release
 
 on:
   push:
@@ -26,6 +27,11 @@ on:
         description: Version to ship (e.g. 3.1.0); empty bumps the patch of the latest one
         type: string
         required: false
+      platforms:
+        description: Apps to ship
+        type: choice
+        options: ["ios macos", ios, macos]
+        default: "ios macos"
   workflow_call:
     inputs:
       environment:
@@ -38,13 +44,30 @@ on:
 permissions:
   contents: read
 
-# Runs queue rather than race, so two of them never pick the same number.
-concurrency:
-  group: ios-release
-  cancel-in-progress: false
-
 jobs:
+  # A manual run may ship one platform; macOS minutes are too dear to start a
+  # runner only to skip it.
+  platforms:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      list: ${{ steps.list.outputs.list }}
+    steps:
+      - id: list
+        env:
+          PLATFORMS: ${{ inputs.platforms || 'ios macos' }}
+        run: echo "list=$(jq -cn --arg p "$PLATFORMS" '$p | split(" ")')" >>"$GITHUB_OUTPUT"
+
   release:
+    needs: platforms
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ${{ fromJSON(needs.platforms.outputs.list) }}
+    # One platform's runs queue rather than race, so two never pick the same number.
+    concurrency:
+      group: apple-release-${{ matrix.platform }}
+      cancel-in-progress: false
     runs-on: macos-latest
     timeout-minutes: 60
     environment: ${{ inputs.environment || 'production' }}
@@ -63,4 +86,5 @@ jobs:
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
           VERSION: ${{ inputs.version }}
-        run: bash apps/apple/release-ios.sh
+          PLATFORM: ${{ matrix.platform }}
+        run: bash apps/apple/release.sh "$PLATFORM"

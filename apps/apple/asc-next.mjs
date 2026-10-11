@@ -1,10 +1,10 @@
-// The version and build number of the next iOS upload, read from App Store
-// Connect so every upload is strictly above everything already there: above
-// every TestFlight train and App Store version, and above every build number,
-// whichever workflow or Mac uploaded them.
+// The version and build number of the next iOS or macOS upload, read from App
+// Store Connect so every upload is strictly above everything already there for
+// that platform: above every TestFlight train and App Store version, and above
+// every build number, whichever workflow or Mac uploaded them.
 //
 //   ASC_KEY_ID=… ASC_ISSUER_ID=… ASC_KEY_P8=… node asc-next.mjs \
-//     <bundle id> <project MARKETING_VERSION> <project CURRENT_PROJECT_VERSION> [requested version]
+//     <bundle id> <IOS|MAC_OS> <project MARKETING_VERSION> <project CURRENT_PROJECT_VERSION> [requested version]
 //
 // Prints "<version> <build>". Without a requested version, the patch of the
 // highest version goes up by one, unless the project already names a higher
@@ -83,10 +83,10 @@ async function getAll(jwt, path) {
   return out;
 }
 
-async function main([bundleId, projectVersion, projectBuild, requested]) {
+async function main([bundleId, platform, projectVersion, projectBuild, requested]) {
   const { ASC_KEY_ID: keyId, ASC_ISSUER_ID: issuerId, ASC_KEY_P8: p8 } = process.env;
-  if (!keyId || !issuerId || !p8 || !bundleId) {
-    throw new Error("usage: ASC_KEY_ID=… ASC_ISSUER_ID=… ASC_KEY_P8=… node asc-next.mjs <bundle id> <version> <build> [requested]");
+  if (!keyId || !issuerId || !p8 || !bundleId || !["IOS", "MAC_OS"].includes(platform)) {
+    throw new Error("usage: ASC_KEY_ID=… ASC_ISSUER_ID=… ASC_KEY_P8=… node asc-next.mjs <bundle id> <IOS|MAC_OS> <version> <build> [requested]");
   }
   const jwt = token({ keyId, issuerId, p8 });
   const apps = await getAll(jwt, `/v1/apps?filter[bundleId]=${encodeURIComponent(bundleId)}&fields[apps]=bundleId`);
@@ -94,9 +94,9 @@ async function main([bundleId, projectVersion, projectBuild, requested]) {
   if (!app) throw new Error(`no app with bundle id ${bundleId} in App Store Connect`);
 
   const [trains, storeVersions, builds] = await Promise.all([
-    getAll(jwt, `/v1/preReleaseVersions?filter[app]=${app.id}&fields[preReleaseVersions]=version&limit=200`),
-    getAll(jwt, `/v1/apps/${app.id}/appStoreVersions?fields[appStoreVersions]=versionString&limit=200`),
-    getAll(jwt, `/v1/builds?filter[app]=${app.id}&fields[builds]=version&limit=200`),
+    getAll(jwt, `/v1/preReleaseVersions?filter[app]=${app.id}&filter[platform]=${platform}&fields[preReleaseVersions]=version&limit=200`),
+    getAll(jwt, `/v1/apps/${app.id}/appStoreVersions?filter[platform]=${platform}&fields[appStoreVersions]=versionString&limit=200`),
+    getAll(jwt, `/v1/builds?filter[app]=${app.id}&filter[preReleaseVersion.platform]=${platform}&fields[builds]=version&limit=200`),
   ]);
   const version = nextVersion({
     existing: [...trains.map((t) => t.attributes.version), ...storeVersions.map((v) => v.attributes.versionString)],
