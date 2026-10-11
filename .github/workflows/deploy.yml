@@ -87,6 +87,8 @@ jobs:
       mqtt: ${{ steps.build.outputs.mqtt }}
       image_url: ${{ steps.image.outputs.url }}
       image_name: ${{ steps.image.outputs.name }}
+      cache_url: ${{ steps.env.outputs.cache_url }}
+      cache_key: ${{ steps.env.outputs.cache_key }}
     env:
       R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -127,10 +129,11 @@ jobs:
         run: |
           umask 077
           printf '%s' "$SIGNING_KEY" >"$RUNNER_TEMP/cache.key"
-          nix store sign --key-file "$RUNNER_TEMP/cache.key" --recursive result-app result-mqtt
+          # ./ makes them paths: a bare word is read as a flake registry name.
+          nix store sign --key-file "$RUNNER_TEMP/cache.key" --recursive ./result-app ./result-mqtt
           rm -f "$RUNNER_TEMP/cache.key"
           nix copy --to "s3://${{ steps.env.outputs.bucket }}?endpoint=${{ steps.env.outputs.endpoint }}&region=auto" \
-            result-app result-mqtt
+            ./result-app ./result-mqtt
       - name: Upload the image
         id: image
         run: |
@@ -168,11 +171,14 @@ jobs:
         with:
           terraform_version: "1.15.6"
           terraform_wrapper: false
+      # hqcat-server comes from the cache build just pushed to, not a rebuild.
       - uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
             accept-flake-config = false
+            extra-substituters = ${{ needs.build.outputs.cache_url }}
+            extra-trusted-public-keys = ${{ needs.build.outputs.cache_key }}
       - name: Terraform
         id: apply
         run: |
@@ -193,7 +199,7 @@ jobs:
         run: |
           BOT_ID="$(nix shell .#hqcat-server --command hqcat-bot --print-id)"
           export BOT_ID
-          nix shell nixpkgs#age nixpkgs#awscli2 --command infra/scripts/publish-secrets.sh "$ENVIRONMENT"
+          nix shell --inputs-from . nixpkgs#age nixpkgs#awscli2 --command infra/scripts/publish-secrets.sh "$ENVIRONMENT"
 
   release:
     needs: [build, infra]
@@ -210,7 +216,7 @@ jobs:
         run: infra/scripts/release.sh "$ENVIRONMENT" promote "${{ needs.build.outputs.app }}" "${{ needs.build.outputs.mqtt }}"
 
   verify:
-    needs: [infra, release]
+    needs: [build, infra, release]
     if: ${{ !cancelled() && !failure() }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -219,6 +225,17 @@ jobs:
       API_HOST: ${{ needs.infra.outputs.api_host }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # The scenarios load the native HQC library (HQC_LIB); the release's own
+      # build of it is in the cache, inside the server's closure.
+      - uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = false
+            extra-substituters = ${{ needs.build.outputs.cache_url }}
+            extra-trusted-public-keys = ${{ needs.build.outputs.cache_key }}
+      - name: The HQC library
+        run: echo "HQC_LIB=$(nix build .#hqc --no-link --print-out-paths)/lib/libhqc_wrap.so" >>"$GITHUB_ENV"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
