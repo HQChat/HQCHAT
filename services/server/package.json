@@ -25,10 +25,10 @@
   "dependencies": {
     "@sentry/node": "^10.75.3",
     "koffi": "^2.15.0",
-    "mqtt": "^5.15.2",
-    "pg": "^8.13.1",
+    "mqtt": "^5.16.0",
+    "pg": "^8.23.1",
     "stripe": "^17.5.0",
-    "tsx": "^4.21.0"
+    "tsx": "^4.23.15"
   },
   "devDependencies": {
     "@types/node": "^25.0.3",
