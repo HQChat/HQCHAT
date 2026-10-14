@@ -60,18 +60,33 @@ the lower client id keeps its own session and the other yields and re-sends.
 ## Proving the initiator (handshake)
 
 An `init` is built only from the responder's public keys, so it proves nothing
-about who sent it. Before accepting the first `init` from a contact in a given
-app run, the responder challenges on the friendship's `hs/` topic:
+about who sent it. Before opening an `init`, the responder challenges on the
+friendship's `hs/` topic, and the proof is bound to that one `init`:
 
 ```
-challenge:  (ct, ss) = Encaps(initiator's pinned identity key), nonce = 32 random bytes
-proof    =  HKDF-SHA256(ss, "salt", "hqchat/handshake/v1" ‖ nonce ‖ challengerId ‖ proverId, 32)
+transcript = SHA-256("hqchat/handshake/v2/init" ‖ sender ‖ to
+                     ‖ lp(rk) ‖ lp(ctId) ‖ lp(ctMt) ‖ lp(ctOt or empty) ‖ u32(otId or 0xffffffff))
+challenge:  (ct, ss) = Encaps(initiator's identity key), nonce = 32 random bytes
+proof    =  HKDF-SHA256(ss, "salt", "hqchat/handshake/v2" ‖ nonce ‖ challengerId ‖ proverId ‖ transcript, 32)
 ```
 
-The initiator answers only challenges for handshakes it started. The proof is
-compared in constant time; the held `init` is processed once it matches.
+`lp` is a `u32` big-endian length followed by the bytes. The transcript is
+never sent: the responder computes it from the `init` it holds, the initiator
+from the `init` it sent (its `pendingInit`). The initiator answers only while it
+has a handshake pending, and only with a proof for its own `init`.
 
-Handshake frame (`HQCH`, version 1, fixed offsets, big-endian):
+The responder keeps one challenge per distinct transcript (at most 4 per
+contact, oldest evicted), holds every frame of that `init` (a burst shares one
+transcript), and opens them only when the proof for that transcript matches.
+A proven transcript is remembered for the app run; every other `init`,
+including a new one from the same contact, is challenged again.
+
+Version 1 bound only the nonce and the two ids. A forged `init` naming a
+contact (anyone who can publish to the inbox and claim the prekeys: a friend,
+or the server) was then released by the contact's proof for its own, genuine
+`init`. Version 2 frames are the only ones accepted.
+
+Handshake frame (`HQCH`, version 2, fixed offsets, big-endian):
 
 | Offset | Field | Size |
 |---|---|---|

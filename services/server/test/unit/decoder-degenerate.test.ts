@@ -25,6 +25,7 @@ import {
   encodeHandshake,
   HANDSHAKE_NONCE_BYTES,
   HANDSHAKE_PROOF_BYTES,
+  HANDSHAKE_TRANSCRIPT_BYTES,
   HANDSHAKE_VERSION,
   handshakeProof,
 } from "../../src/protocol/handshake";
@@ -32,6 +33,7 @@ import {
 const ID_A = "a".repeat(64);
 const ID_B = "b".repeat(64);
 const NONCE = Buffer.alloc(HANDSHAKE_NONCE_BYTES, 7);
+const T = Buffer.alloc(HANDSHAKE_TRANSCRIPT_BYTES, 3);
 
 // Offsets, from the wire format in src/protocol/handshake.ts. Spelled out rather than
 // imported because they are private there — and because a test that reads the
@@ -170,17 +172,17 @@ test("an id of the wrong width is refused on both sides of the frame", () => {
 
 test("handshakeProof refuses a bad id on either side, and a bad nonce", () => {
   const ss = Buffer.alloc(32, 5);
-  assert.throws(() => handshakeProof(ss, Buffer.alloc(1), ID_A, ID_B), /nonce/);
-  assert.throws(() => handshakeProof(ss, NONCE, "", ID_B), /ids/, "an empty challenger was accepted");
-  assert.throws(() => handshakeProof(ss, NONCE, ID_A, ""), /ids/, "an empty prover was accepted");
-  assert.throws(() => handshakeProof(ss, NONCE, "ab", ID_B), /ids/);
-  assert.throws(() => handshakeProof(ss, NONCE, ID_A, "ab"), /ids/);
+  assert.throws(() => handshakeProof(ss, Buffer.alloc(1), ID_A, ID_B, T), /nonce/);
+  assert.throws(() => handshakeProof(ss, NONCE, "", ID_B, T), /ids/, "an empty challenger was accepted");
+  assert.throws(() => handshakeProof(ss, NONCE, ID_A, "", T), /ids/, "an empty prover was accepted");
+  assert.throws(() => handshakeProof(ss, NONCE, "ab", ID_B, T), /ids/);
+  assert.throws(() => handshakeProof(ss, NONCE, ID_A, "ab", T), /ids/);
 
   // And the proof is a function of BOTH ids in that order — swapping them must
   // not produce the same value, or a challenge could be answered by replaying
   // the other direction's proof.
-  const ab = handshakeProof(ss, NONCE, ID_A, ID_B);
-  const ba = handshakeProof(ss, NONCE, ID_B, ID_A);
+  const ab = handshakeProof(ss, NONCE, ID_A, ID_B, T);
+  const ba = handshakeProof(ss, NONCE, ID_B, ID_A, T);
   assert.notDeepEqual(ab, ba, "the proof is symmetric in the two ids");
   assert.equal(ab.length, HANDSHAKE_PROOF_BYTES);
 });
@@ -231,6 +233,7 @@ test("the magic, the version and the kind are each checked", () => {
   };
   assert.equal(decodeHandshake(bad(0, 0x00)), null, "a wrong magic was accepted");
   assert.equal(decodeHandshake(bad(4, HANDSHAKE_VERSION + 1)), null, "a future version was accepted");
+  assert.equal(decodeHandshake(bad(4, 1)), null, "a v1 frame (proof not bound to an init) was accepted");
   assert.equal(decodeHandshake(bad(5, 9)), null, "an unknown kind was accepted");
   // Short of the header entirely.
   for (const n of [0, 1, 4, 5, 101]) {

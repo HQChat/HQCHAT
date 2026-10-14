@@ -7,6 +7,7 @@ import {
   handshakeNonce,
   handshakeProof,
   handshakeProofMatches,
+  initTranscript,
 } from "../protocol/handshake";
 import {
   type InitHeader,
@@ -51,8 +52,12 @@ const PREKEY_REPLENISH_AT = 4;
 const MEDIUM_TERM_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
 /** How long an issued handshake challenge stands. */
 const CHALLENGE_TTL_MS = 60_000;
+/** Open challenges per peer (one per distinct init): bounds the encapsulations and held frames forged inits cost. */
+const MAX_CHALLENGES_PER_PEER = 4;
 
+/** An open challenge, about ONE init (keyed by its transcript). */
 interface Challenge {
+  peer: string;
   nonce: Buffer;
   expected: Buffer;
   /** `init` frames held until the proof arrives, in arrival order. */
@@ -92,7 +97,9 @@ export function initHeaderOf(f: Frame): InitHeader | null {
  */
 export class Conversations {
   readonly state: ClientState;
+  /** Open challenges, keyed by the hex transcript of the init they are about. */
   private readonly challenges = new Map<string, Challenge>();
+  /** Transcripts (hex) of inits whose sender proved possession of its key. */
   private readonly proven = new Set<string>();
   private readonly now: () => number;
 
@@ -156,8 +163,7 @@ export class Conversations {
       if (live.has(id)) continue;
       unsubscribe.push(...this.topicsOf(id));
       delete this.state.peers[id];
-      this.challenges.delete(id);
-      this.proven.delete(id);
+      this.dropChallenges(id);
       changed = true;
     }
     if (changed) this.save();
@@ -284,7 +290,12 @@ export class Conversations {
     if (topic !== expected) return nothing(`${frame.t} on ${topic}, expected ${expected}`);
 
     if (frame.t === "init" && !p.session) {
-      return this.proven.has(p.id) ? this.openInit(p, frame, aad) : this.challenge(p, frame, aad);
+      const header = initHeaderOf(frame);
+      if (!header) return nothing("init missing handshake fields");
+      const transcript = initTranscript(frame.sender, frame.to, header).toString("hex");
+      return this.proven.has(transcript)
+        ? this.openInit(p, frame, aad)
+        : this.challenge(p, frame, aad, transcript);
     }
     return this.openMessage(p, frame, aad);
   }
@@ -312,19 +323,33 @@ export class Conversations {
     for (const [id, c] of this.challenges) if (c.expiresAt <= now) this.challenges.delete(id);
   }
 
-  private challenge(p: Peer, frame: Frame, aad: Buffer): Received {
+  /** Drops every open challenge for one peer. */
+  private dropChallenges(peer: string): void {
+    for (const [t, c] of this.challenges) if (c.peer === peer) this.challenges.delete(t);
+  }
+
+  /**
+   * Holds an unproven init and challenges its sender, one challenge per
+   * distinct init: the proof is bound to the transcript, so it releases only
+   * the frames of the init the sender actually built.
+   */
+  private challenge(p: Peer, frame: Frame, aad: Buffer, transcript: string): Received {
     this.sweepChallenges();
-    const open = this.challenges.get(p.id);
+    const open = this.challenges.get(transcript);
     if (open) {
       open.held.push({ frame, aad });
       return { messages: [], outbound: [] };
     }
     if (!p.handshakeId || !frame.senderPk) return nothing("init without a handshake topic or sender key");
+    const openForPeer = [...this.challenges].filter(([, c]) => c.peer === p.id);
+    // At the cap the oldest goes: the real initiator re-sends its init, so its newest one always gets a challenge.
+    if (openForPeer.length >= MAX_CHALLENGES_PER_PEER) this.challenges.delete(openForPeer[0]![0]);
     const nonce = handshakeNonce();
     const { ct, ss } = this.o.kem.encapsulate(frame.senderPk);
-    this.challenges.set(p.id, {
+    this.challenges.set(transcript, {
+      peer: p.id,
       nonce,
-      expected: handshakeProof(ss, nonce, this.me, p.id),
+      expected: handshakeProof(ss, nonce, this.me, p.id, Buffer.from(transcript, "hex")),
       held: [{ frame, aad }],
       expiresAt: this.now() + CHALLENGE_TTL_MS,
     });
@@ -341,7 +366,8 @@ export class Conversations {
     if (!p?.handshakeId || topic !== handshakeTopic(p.handshakeId)) return nothing(`handshake frame on ${topic}`);
 
     if (h.kind === "chal") {
-      if (!p.session?.pendingInit || !h.ct) return nothing("challenge for a handshake this client did not start");
+      const pendingInit = p.session?.pendingInit;
+      if (!pendingInit || !h.ct) return nothing("challenge for a handshake this client did not start");
       let ss: Buffer;
       try {
         ss = this.o.kem.decapsulate(this.o.identity.sk, h.ct);
@@ -353,17 +379,21 @@ export class Conversations {
         from: this.me,
         to: p.id,
         nonce: h.nonce,
-        proof: handshakeProof(ss, h.nonce, p.id, this.me),
+        // Bound to the init WE sent: a challenge about a forged init gets a proof that does not match it.
+        proof: handshakeProof(ss, h.nonce, p.id, this.me, initTranscript(this.me, p.id, pendingInit)),
       });
       return { messages: [], outbound: [{ topic, payload: proof }] };
     }
 
     this.sweepChallenges();
-    const pending = this.challenges.get(p.id);
-    if (!pending || !h.proof || !h.nonce.equals(pending.nonce)) return nothing("proof for no open challenge");
-    this.challenges.delete(p.id);
+    const found = [...this.challenges].find(([, c]) => c.peer === p.id && c.nonce.equals(h.nonce));
+    if (!found || !h.proof) return nothing("proof for no open challenge");
+    const [transcript, pending] = found;
+    this.challenges.delete(transcript);
     if (!handshakeProofMatches(pending.expected, h.proof)) return nothing("handshake proof did not match");
-    this.proven.add(p.id);
+    // The peer proved THIS init. Its other open challenges are about inits it did not build.
+    this.proven.add(transcript);
+    this.dropChallenges(p.id);
     const out: Received = { messages: [], outbound: [] };
     for (const { frame, aad } of pending.held) {
       const r = p.session ? this.openMessage(p, frame, aad) : this.openInit(p, frame, aad);
