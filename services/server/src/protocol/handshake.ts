@@ -4,22 +4,31 @@
  * the responder. The responder answers with a challenge: an HQC encapsulation
  * to the initiator's identity key. The initiator proves possession with
  *
- *     info  = "hqchat/handshake/v1" ‖ nonce(32) ‖ challenger(32) ‖ prover(32)
+ *     info  = "hqchat/handshake/v2" ‖ nonce(32) ‖ challenger(32) ‖ prover(32) ‖ transcript(32)
  *     proof = HKDF-SHA256(ikm = ss, salt = "salt", info, 32)
  *
- * The nonce gives freshness and the ordered ids bind the proof to one pair. The
- * exchange runs on the friendship's `hs/` topic, which only its two members
- * may use, and a prover answers only challenges for handshakes it started.
+ * The nonce gives freshness and the ordered ids bind the proof to one pair.
+ * `transcript` (initTranscript) binds it to ONE init: the responder computes it
+ * from the init it holds, the initiator from the init it sent. Without it (v1),
+ * a forged init naming the initiator was released by the initiator's proof for
+ * its own, genuine init. The transcript is never sent: each side derives it.
  */
 
 import * as crypto from "node:crypto";
+import type { InitHeader } from "./ratchet";
 
 /** Bytes of freshness in a challenge. */
 export const HANDSHAKE_NONCE_BYTES = 32;
 /** Bytes of proof. */
 export const HANDSHAKE_PROOF_BYTES = 32;
 
-const INFO_PREFIX = Buffer.from("hqchat/handshake/v1", "utf8");
+/** Bytes of an init transcript. */
+export const HANDSHAKE_TRANSCRIPT_BYTES = 32;
+
+const INFO_PREFIX = Buffer.from("hqchat/handshake/v2", "utf8");
+const TRANSCRIPT_LABEL = Buffer.from("hqchat/handshake/v2/init", "utf8");
+/** `otId` when the init carries no one-time prekey. */
+const NO_ONE_TIME = 0xffffffff;
 const SALT = Buffer.from("salt", "utf8");
 const ID_BYTES = 32;
 
@@ -28,20 +37,77 @@ export function handshakeNonce(): Buffer {
   return crypto.randomBytes(HANDSHAKE_NONCE_BYTES);
 }
 
+function rawId(id: string, what: string): Buffer {
+  const raw = Buffer.from(id, "hex");
+  if (raw.length !== ID_BYTES) throw new Error(`${what}: ids must be 64 lowercase hex characters`);
+  return raw;
+}
+
+function u32(n: number): Buffer {
+  const b = Buffer.alloc(4);
+  b.writeUInt32BE(n, 0);
+  return b;
+}
+
+/** A length-prefixed field: u32 big-endian length, then the bytes. */
+function field(b: Buffer): Buffer {
+  return Buffer.concat([u32(b.length), b]);
+}
+
+/**
+ * The hash of the session-defining fields of one init:
+ *
+ *     SHA-256("hqchat/handshake/v2/init" ‖ sender(32) ‖ to(32)
+ *             ‖ lp(rk) ‖ lp(ctId) ‖ lp(ctMt) ‖ lp(ctOt or empty) ‖ u32(otId or 0xffffffff))
+ *
+ * `lp` = u32 big-endian length + bytes. Every frame of an initiator's init
+ * burst shares these fields, so one proof covers the burst; a forged init,
+ * built from other ciphertexts, has another transcript.
+ */
+export function initTranscript(sender: string, to: string, h: InitHeader): Buffer {
+  const otId = h.ctOt && h.otId !== null ? h.otId : NO_ONE_TIME;
+  return crypto
+    .createHash("sha256")
+    .update(
+      Buffer.concat([
+        TRANSCRIPT_LABEL,
+        rawId(sender, "initTranscript"),
+        rawId(to, "initTranscript"),
+        field(h.rk),
+        field(h.ctId),
+        field(h.ctMt),
+        field(h.ctOt ?? Buffer.alloc(0)),
+        u32(otId),
+      ]),
+    )
+    .digest();
+}
+
 /**
  * The proof for one challenge. `challenger` and `prover` are 64-char hex
- * client ids, bound in that order so the roles cannot be swapped.
+ * client ids, bound in that order so the roles cannot be swapped; `transcript`
+ * is the initTranscript of the init the challenge is about.
  */
-export function handshakeProof(ss: Buffer, nonce: Buffer, challenger: string, prover: string): Buffer {
+export function handshakeProof(
+  ss: Buffer,
+  nonce: Buffer,
+  challenger: string,
+  prover: string,
+  transcript: Buffer,
+): Buffer {
   if (nonce.length !== HANDSHAKE_NONCE_BYTES) {
     throw new Error(`handshakeProof: nonce must be ${HANDSHAKE_NONCE_BYTES} bytes`);
   }
-  const challengerRaw = Buffer.from(challenger, "hex");
-  const proverRaw = Buffer.from(prover, "hex");
-  if (challengerRaw.length !== ID_BYTES || proverRaw.length !== ID_BYTES) {
-    throw new Error("handshakeProof: ids must be 64 lowercase hex characters");
+  if (transcript.length !== HANDSHAKE_TRANSCRIPT_BYTES) {
+    throw new Error(`handshakeProof: transcript must be ${HANDSHAKE_TRANSCRIPT_BYTES} bytes`);
   }
-  const info = Buffer.concat([INFO_PREFIX, nonce, challengerRaw, proverRaw]);
+  const info = Buffer.concat([
+    INFO_PREFIX,
+    nonce,
+    rawId(challenger, "handshakeProof"),
+    rawId(prover, "handshakeProof"),
+    transcript,
+  ]);
   return Buffer.from(crypto.hkdfSync("sha256", ss, SALT, info, HANDSHAKE_PROOF_BYTES));
 }
 
@@ -54,7 +120,7 @@ export function handshakeProofMatches(expected: Buffer, offered: Buffer): boolea
 // Wire format (fixed offsets, integers big-endian):
 //
 //   0   magic   4 bytes  "HQCH"
-//   4   version u8       1
+//   4   version u8       2 (v1 proofs were not bound to an init; refused)
 //   5   kind    u8       0 = challenge, 1 = proof
 //   6   from    32 bytes raw client id
 //   38  to      32 bytes raw client id
@@ -63,7 +129,7 @@ export function handshakeProofMatches(expected: Buffer, offered: Buffer): boolea
 //   [proof]     32 bytes
 
 const HS_MAGIC = Buffer.from("HQCH", "ascii");
-export const HANDSHAKE_VERSION = 1;
+export const HANDSHAKE_VERSION = 2;
 const KIND_CHALLENGE = 0;
 const KIND_PROOF = 1;
 

@@ -667,7 +667,8 @@ const HANDSHAKE = `<pre>  alice                        <s># bob can be offline u
     │  ◀────────── <b>challenge</b> {nonce} <s>on</s> <u>h/{hash}</u> <s>— 60s to answer</s> ───────────────   │
     │       <s># ct_c = Encap(alice's identity_pk): only alice can decapsulate</s>        │
     │                                                                              │
-    │  <b>proof = HKDF(ss_c, "hqchat/handshake/v1" ‖ nonce ‖ bob_id ‖ alice_id)</b>       │
+    │  <b>proof = HKDF(ss_c, "hqchat/handshake/v2" ‖ nonce ‖ bob_id ‖ alice_id ‖ T)</b>   │
+    │       <s># T = SHA-256 of the init: binds the proof to that one init</s>            │
     │                                                                              │
     │  ────────────────────────── <b>proof</b> ───────────────────────────────────────▶   │
     │                                                     constant-time compare,   │
@@ -801,7 +802,7 @@ const PRIMITIVES_TABLE = scroll(`<table>
         <code>hqchat/v2/init/root</code>, <code>hqchat/v2/init/chain</code>,
         <code>hqchat/v2/root</code>, <code>hqchat/v2/chain</code>, <code>hqchat/v2/msg</code>,
         <code>hqchat/v2/ck</code> for the ratchet; <code>auth</code> for the server
-        challenge and <code>hqchat/handshake/v1</code> for the peer one, so the two proofs
+        challenge and <code>hqchat/handshake/v2</code> for the peer one, so the two proofs
         can never be confused.</td></tr>
 <tr><td>hashing</td><td><b>SHA-256</b></td>
     <td>topic derivation, safety numbers, and the hashes that stand in for tokens and
@@ -1196,12 +1197,15 @@ ${sec(
   because the decoder has already refused any <code>init</code> whose <code>senderPk</code>
   does not hash to its <code>sender</code>, so it <em>is</em> that peer's real key — and waits
   up to 60 seconds for:</p>
-  ${scroll(`<pre>  <b>info</b>  = "hqchat/handshake/v1" ‖ nonce(32) ‖ challenger(32) ‖ prover(32)
+  ${scroll(`<pre>  <b>info</b>  = "hqchat/handshake/v2" ‖ nonce(32) ‖ challenger(32) ‖ prover(32) ‖ transcript(32)
   <b>proof</b> = HKDF-SHA256(ikm = ss, salt = "salt", info, 32)</pre>`)}
   <p>Every component is fixed-width, so there is nothing to delimit and no encoding for a
   Swift client and a TypeScript bot to disagree about. The nonce is freshness; binding both
   ids in a fixed order means a proof made for one pair cannot be presented to another, or
-  replayed back at its own author. The prover answers only for a handshake it started, so
+  replayed back at its own author. The <code>transcript</code> is a SHA-256 over the init
+  itself — both ids and every ciphertext in it — which each side computes on its own and
+  never sends. It binds the proof to <em>one</em> init: in v1 it was missing, so a forged init
+  naming the initiator was released by the proof the initiator made for its real one. The prover answers only for a handshake it started, so
   this is not a standing decryption oracle for anyone who can reach the topic.</p>
   <p class="note">what it does not stop is a relay — someone who can both see the challenge
   and reach the real B could forward it. what stops that here is the transport: the exchange

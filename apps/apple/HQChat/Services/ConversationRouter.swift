@@ -8,6 +8,13 @@ fileprivate func dlog(_ message: @autoclosure () -> String) {
     Log.network.debug("\(text)")
 }
 
+extension RatchetInitHeader {
+    /// `Handshake.initTranscript` of this init, sent by `sender` to `to`.
+    fileprivate func transcript(sender: String, to: String) -> Data? {
+        Handshake.initTranscript(sender: sender, to: to, rk: rk, ctId: ctId, ctMt: ctMt, ctOt: ctOt, otId: otId)
+    }
+}
+
 /// Applies inbound frames to the local store: verifies an `init`'s sender with
 /// a handshake challenge, opens sessions, decrypts and stores messages.
 /// Friends are resolved by client id.
@@ -119,46 +126,75 @@ final class ConversationRouter {
     /// frame until answered, so an expired one is retried by their next send.
     private static let handshakeTTL: TimeInterval = 60
 
+    /// Open challenges per peer (one per distinct init): bounds the
+    /// encapsulations and held frames that forged inits can cost.
+    private static let maxChallengesPerPeer = 4
+
+    /// A challenge about ONE init, keyed by that init's transcript.
     private struct PendingChallenge {
+        let peer: String
         let nonce: Data
         let expected: Data
-        /// The held `init` and the AAD it opens against.
-        let heldInit: (frame: ConversationFrame, aad: Data)
+        /// The held `init` frames of that init (a burst shares one transcript), in arrival order.
+        var held: [(frame: ConversationFrame, aad: Data)]
+        let issuedAt: Date
         let expiresAt: Date
     }
 
-    /// Challenges we have issued and are waiting on, keyed by the peer's id.
-    private var pendingChallenges: [String: PendingChallenge] = [:]
-    /// Peers that have proven possession of their identity key this launch.
-    private var proven: Set<String> = []
+    /// Challenges we have issued and are waiting on, keyed by init transcript.
+    private var pendingChallenges: [Data: PendingChallenge] = [:]
+    /// Transcripts of inits whose sender proved possession of its key this launch.
+    private var proven: Set<Data> = []
 
     private func sweepChallenges(_ now: Date = Date()) {
-        for (peer, c) in pendingChallenges where c.expiresAt <= now {
-            pendingChallenges.removeValue(forKey: peer)
-            dlog("[ConversationRouter] · handshake with \(peer.prefix(8))… timed out — init dropped")
+        for (transcript, c) in pendingChallenges where c.expiresAt <= now {
+            pendingChallenges.removeValue(forKey: transcript)
+            dlog("[ConversationRouter] · handshake with \(c.peer.prefix(8))… timed out — init dropped")
         }
     }
 
-    /// Challenges an `init`'s sender to prove possession of its identity key.
+    /// Drops every open challenge for one peer.
+    private func dropChallenges(for peer: String) {
+        pendingChallenges = pendingChallenges.filter { $0.value.peer != peer }
+    }
+
+    /// Challenges an `init`'s sender to prove possession of its identity key,
+    /// one challenge per distinct init: the proof is bound to the transcript,
+    /// so it releases only the frames of the init the sender actually built.
     /// The key comes from the frame, whose decoder already checked that it
     /// hashes to the sender's id.
-    private func challengeInitiator(_ friend: Friend, _ envelope: ConversationFrame, aad: Data) {
+    private func challengeInitiator(_ friend: Friend, _ envelope: ConversationFrame, aad: Data, transcript: Data) {
         guard let senderPk = envelope.senderPk else { return }
         sweepChallenges()
+
+        // Another frame of an init already challenged: hold it with the rest.
+        if pendingChallenges[transcript] != nil {
+            pendingChallenges[transcript]?.held.append((envelope, aad))
+            return
+        }
+        // At the cap the oldest goes: the real initiator re-sends its init, so
+        // its newest one always gets a challenge.
+        let open = pendingChallenges.filter { $0.value.peer == friend.peerID }
+        if open.count >= Self.maxChallengesPerPeer,
+           let oldest = open.min(by: { $0.value.issuedAt < $1.value.issuedAt }) {
+            pendingChallenges.removeValue(forKey: oldest.key)
+        }
 
         let nonce = Handshake.nonce()
         guard let enc = try? kem.encapsulate(senderPk),
               let expected = Handshake.proof(ss: enc.ss, nonce: nonce,
-                                             challenger: myID, prover: friend.peerID),
+                                             challenger: myID, prover: friend.peerID,
+                                             transcript: transcript),
               let frame = Handshake.encode(.init(kind: .challenge, from: myID, to: friend.peerID,
                                                  nonce: nonce, ct: enc.ct, proof: nil))
         else {
             dlog("[ConversationRouter] ❌ could not build a challenge for \(friend.username)")
             return
         }
-        pendingChallenges[friend.peerID] = PendingChallenge(
-            nonce: nonce, expected: expected, heldInit: (envelope, aad),
-            expiresAt: Date().addingTimeInterval(Self.handshakeTTL)
+        let now = Date()
+        pendingChallenges[transcript] = PendingChallenge(
+            peer: friend.peerID, nonce: nonce, expected: expected, held: [(envelope, aad)],
+            issuedAt: now, expiresAt: now.addingTimeInterval(Self.handshakeTTL)
         )
         publishHandshake(frame, friend)
         ProtocolLog.record(.handshakeChallenged(peer: friend.peerID))
@@ -186,12 +222,17 @@ final class ConversationRouter {
     private func applyHandshake(_ frame: Handshake.Frame, from friend: Friend) -> FollowUp? {
         switch frame.kind {
         case .challenge:
-            // Answer only challenges for a handshake we started.
-            guard friend.ratchetSession?.pendingInit != nil, let ct = frame.ct else { return nil }
+            // Answer only challenges for a handshake we started, and bind the
+            // proof to the init WE sent: a challenge about a forged init gets a
+            // proof that does not match it.
+            guard let pendingInit = friend.ratchetSession?.pendingInit, let ct = frame.ct,
+                  let transcript = pendingInit.transcript(sender: myID, to: friend.peerID)
+            else { return nil }
             guard let sk = getSecretKey(reason: "proving your identity to \(friend.username)"),
                   let ss = try? kem.decapsulate(sk: sk, ct: ct),
                   let proof = Handshake.proof(ss: ss, nonce: frame.nonce,
-                                              challenger: frame.from, prover: myID),
+                                              challenger: frame.from, prover: myID,
+                                              transcript: transcript),
                   let reply = Handshake.encode(.init(kind: .proof, from: myID, to: frame.from,
                                                      nonce: frame.nonce, ct: nil, proof: proof))
             else { return nil }
@@ -202,21 +243,27 @@ final class ConversationRouter {
 
         case .proof:
             sweepChallenges()
-            guard let pending = pendingChallenges[frame.from],
-                  let offered = frame.proof,
-                  pending.nonce == frame.nonce else { return nil }
+            guard let offered = frame.proof,
+                  let match = pendingChallenges.first(where: {
+                      $0.value.peer == frame.from && $0.value.nonce == frame.nonce
+                  }) else { return nil }
+            let (transcript, pending) = (match.key, match.value)
+            pendingChallenges.removeValue(forKey: transcript)
             guard Handshake.proofMatches(expected: pending.expected, offered: offered) else {
-                // Someone sent an `init` naming this peer without holding its key.
+                // An `init` naming this peer that the peer did not build.
                 dlog("[ConversationRouter] ❌ \(friend.username) FAILED the handshake — init discarded")
                 ProtocolLog.record(.handshakeFailed(peer: frame.from))
-                pendingChallenges.removeValue(forKey: frame.from)
                 return nil
             }
-            pendingChallenges.removeValue(forKey: frame.from)
-            proven.insert(frame.from)
+            // The peer proved THIS init. Its other open challenges are about inits it did not build.
+            proven.insert(transcript)
+            dropChallenges(for: frame.from)
             ProtocolLog.record(.handshakeProven(peer: frame.from))
             dlog("[ConversationRouter] ✅ \(friend.username) proved possession — opening their init")
-            return handleInit(from: friend, pending.heldInit.frame, aad: pending.heldInit.aad)
+            let followUps = pending.held.compactMap { handleInit(from: friend, $0.frame, aad: $0.aad) }
+            return followUps.isEmpty ? nil : {
+                for followUp in followUps { await followUp() }
+            }
         }
     }
 
@@ -349,9 +396,15 @@ final class ConversationRouter {
     private func apply(_ envelope: ConversationFrame, aad: Data, from friend: Friend) -> FollowUp? {
         switch envelope.t {
         case .initiate:
-            // Hold an unproven sender's `init` and challenge them; proof lasts for this launch.
-            if !proven.contains(friend.peerID) {
-                challengeInitiator(friend, envelope, aad: aad)
+            // Hold an `init` until its sender proves it built THIS init; the
+            // proof covers the init's transcript and lasts for this launch.
+            guard let transcript = Self.initHeader(from: envelope)?
+                    .transcript(sender: envelope.sender, to: envelope.to) else {
+                dropInit(friend, "malformed init header")
+                return nil
+            }
+            if !proven.contains(transcript) {
+                challengeInitiator(friend, envelope, aad: aad, transcript: transcript)
                 return nil
             }
             return handleInit(from: friend, envelope, aad: aad)
