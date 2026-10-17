@@ -86,8 +86,17 @@ the message ([e2ee-protocol.md](e2ee-protocol.md#the-frame)): the server sees
 one more small frame and learns nothing it could not already infer from timing.
 
 The receiver checks the frame is addressed to it, from that friendship's
-member, on the right topic, then opens it. The plaintext is shown and stored
-sealed (see [e2ee-protocol.md](e2ee-protocol.md#at-rest-on-the-device)).
+member, on the right topic, and queues it as it arrived. It is opened once the
+user has unlocked the app, because the ratchet state it needs sits in the
+Keychain behind the profile's protection tier (Face ID, or the passcode on the
+reduced tier). Nothing about a queued frame needs that unlock: the local
+notification says only that the sender sent an encrypted message. Frames are
+opened per sender, in arrival order, without blocking the interface; a frame
+that arrives while a backlog drains joins its sender's queue. The delivery
+receipt is sent when a frame is opened, so a sender sees "delivered" once the
+recipient has unlocked, not merely once the phone was reachable. The plaintext
+is shown and stored sealed (see
+[e2ee-protocol.md](e2ee-protocol.md#at-rest-on-the-device)).
 
 ## 4. While a phone is offline
 

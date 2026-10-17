@@ -18,7 +18,8 @@ struct PersistenceController {
     @MainActor
     static let preview: ModelContainer = {
         let config = ModelConfiguration(isStoredInMemoryOnly: true)
-        let container = try! ModelContainer(for: Profile.self, Friend.self, Message.self, configurations: config)
+        let container = try! ModelContainer(for: Profile.self, Friend.self, Message.self, PendingFrame.self,
+                                       configurations: config)
         
         // Add sample data for preview
         let sampleProfile = Profile(username: "tester", publicKeyHex: Data(count: 7237).hexString)
@@ -40,7 +41,7 @@ struct PersistenceController {
     let container: ModelContainer
     
     init() {
-        let schema = Schema([Profile.self, Friend.self, Message.self])
+        let schema = Schema([Profile.self, Friend.self, Message.self, PendingFrame.self])
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: Self.isDemo)
 
         do {

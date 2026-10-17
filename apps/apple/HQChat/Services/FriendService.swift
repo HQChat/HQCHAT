@@ -118,7 +118,11 @@ class FriendService: ObservableObject {
     /// immediately: a step has to ride on a real message (it carries a ciphertext
     /// the peer decapsulates), so sending an empty frame just to rotate would be
     /// a message the user did not write.
-    func forceRatchetStep(friend: Friend) {
+    func forceRatchetStep(friend: Friend) async {
+        // The state is behind the unlock, like a send.
+        if !AESKeyStore.isUnlocked() {
+            await MessageKeyGate.shared.unlock(reason: "Rotate your keys", retry: true)
+        }
         guard var session = friend.ratchetSession else { return }
         session.chainStartedAt = .distantPast
         friend.ratchetSession = session

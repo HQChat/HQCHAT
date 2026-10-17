@@ -23,7 +23,7 @@ let storeDir = URL(fileURLWithPath: NSTemporaryDirectory())
 try! FileManager.default.createDirectory(at: storeDir, withIntermediateDirectories: true)
 let storeURL = storeDir.appendingPathComponent("test.store")
 
-let schema = Schema([Profile.self, Friend.self, Message.self])
+let schema = Schema([Profile.self, Friend.self, Message.self, PendingFrame.self])
 let container = try! ModelContainer(
     for: schema,
     configurations: [ModelConfiguration(schema: schema, url: storeURL)]
