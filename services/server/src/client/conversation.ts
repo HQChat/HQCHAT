@@ -293,9 +293,7 @@ export class Conversations {
       const header = initHeaderOf(frame);
       if (!header) return nothing("init missing handshake fields");
       const transcript = initTranscript(frame.sender, frame.to, header).toString("hex");
-      return this.proven.has(transcript)
-        ? this.openInit(p, frame, aad)
-        : this.challenge(p, frame, aad, transcript);
+      return this.proven.has(transcript) ? this.openInit(p, frame, aad) : this.challenge(p, frame, aad, transcript);
     }
     return this.openMessage(p, frame, aad);
   }
