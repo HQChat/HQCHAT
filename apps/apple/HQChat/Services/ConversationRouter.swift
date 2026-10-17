@@ -361,7 +361,7 @@ final class ConversationRouter {
     /// Everything up to the delete is synchronous, in this order: the message is
     /// stored, then the advanced ratchet state, then the frame is deleted. A
     /// crash after the first finds the message a duplicate on replay (the
-    /// ratchet still advances); after the second, the frame no longer opens
+    /// ratchet still advances); after the second, the frame cannot open
     /// (its key is spent) and is dropped. Neither loses a message.
     private func open(_ pending: PendingFrame) async -> Bool {
         guard let profileID = currentProfile?.id, pending.profileID == profileID,
