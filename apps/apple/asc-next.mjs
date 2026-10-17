@@ -13,7 +13,7 @@
 import { createPrivateKey, sign } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
-const API = "https://api.appstoreconnect.apple.com";
+export const API = "https://api.appstoreconnect.apple.com";
 
 /** Version strings as App Store Connect takes them: one to three integers. */
 export function parseVersion(v) {
@@ -57,7 +57,7 @@ export function nextBuild({ existing, project }) {
   return Math.max(0, ...numbers) + 1;
 }
 
-function token({ keyId, issuerId, p8 }) {
+export function token({ keyId, issuerId, p8 }) {
   const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
   const now = Math.floor(Date.now() / 1000);
   const body = `${b64({ alg: "ES256", kid: keyId, typ: "JWT" })}.${b64({
@@ -71,7 +71,7 @@ function token({ keyId, issuerId, p8 }) {
   return `${body}.${sig.toString("base64url")}`;
 }
 
-async function getAll(jwt, path) {
+export async function getAll(jwt, path) {
   const out = [];
   for (let url = `${API}${path}`; url; ) {
     const res = await fetch(url, { headers: { Authorization: `Bearer ${jwt}` } });
