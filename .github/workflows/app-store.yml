@@ -1,0 +1,155 @@
+# Ship an iOS version and the server it needs together, without a window where
+# one speaks a protocol the other does not (apps/apple/asc-review.mjs):
+#
+#   submit   manual run, from the commit the build was uploaded from: submits
+#            that build for App Review with a MANUAL release, then tags the
+#            commit app-store/<version>
+#   watch    every 30 minutes: once Apple approves the newest tagged version
+#            (Pending Developer Release), runs deploy.yml on that tag with
+#            app_store_version set; deploy releases the app only after verify
+#            proves the new server live, and rolls the server back otherwise
+#
+# A tag that already has a deploy run is never deployed again by the watcher:
+# after a failed deploy, re-run deploy.yml by hand ("Use workflow from" the tag,
+# app_store_version set, ship_apple off).
+#
+# Environment secrets (production): ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8.
+name: App Store
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to submit (e.g. 3.1.0); empty submits the newest build uploaded
+        type: string
+        required: false
+      whats_new:
+        description: What's New text for every localization (needed once per version)
+        type: string
+        required: false
+  schedule:
+    - cron: "*/30 * * * *"
+
+permissions:
+  contents: read
+
+env:
+  BUNDLE_ID: martin.rougeron.DissQus-iOS
+  ENVIRONMENT: production
+
+jobs:
+  submit:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: production
+    permissions:
+      contents: write
+    concurrency:
+      group: app-store-submit
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - name: Submit for review (manual release)
+        id: submit
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          VERSION: ${{ inputs.version }}
+          WHATS_NEW: ${{ inputs.whats_new }}
+        run: |
+          version="$(node apps/apple/asc-review.mjs submit "$BUNDLE_ID" "$VERSION" "$WHATS_NEW")"
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+      # A resubmission after a rejection may come from a later commit: the tag follows it.
+      - name: Tag the commit the server will deploy from
+        env:
+          VERSION: ${{ steps.submit.outputs.version }}
+        run: |
+          git tag -f "app-store/$VERSION" "$GITHUB_SHA"
+          git push -f origin "refs/tags/app-store/$VERSION"
+          {
+            echo "Submitted **$VERSION** for App Review, manual release."
+            echo "Once approved, the watcher deploys \`app-store/$VERSION\` ($GITHUB_SHA) and then releases the app."
+          } >>"$GITHUB_STEP_SUMMARY"
+
+  # No secrets: decides whether there is anything to ask App Store Connect about.
+  pending:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      tag: ${{ steps.find.outputs.tag }}
+      sha: ${{ steps.find.outputs.sha }}
+    steps:
+      - id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The newest app-store/<version> tag, by version.
+          line="$(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/app-store/" \
+            -q '.[] | "\(.ref | ltrimstr("refs/tags/")) \(.object.sha) \(.object.type)"' | sort -V | tail -n 1)"
+          [ -n "$line" ] || { echo "no app-store/ tag"; exit 0; }
+          read -r tag sha type <<<"$line"
+          # An annotated tag points at a tag object; the deploy runs on its commit.
+          [ "$type" = "commit" ] || sha="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$sha" -q .object.sha)"
+          # Only a deploy started FROM this tag counts: an ordinary deploy of the
+          # same commit did not release the app.
+          runs="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/deploy.yml/runs?head_sha=$sha&event=workflow_dispatch" \
+            --jq "[.workflow_runs[] | select(.head_branch == \"$tag\")] | length")"
+          if [ "${runs:-0}" -gt 0 ]; then
+            echo "$tag ($sha) already has a deploy run: nothing to do"
+            exit 0
+          fi
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+          echo "sha=$sha" >>"$GITHUB_OUTPUT"
+
+  watch:
+    needs: pending
+    if: needs.pending.outputs.tag != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    permissions:
+      actions: write
+      contents: read
+    concurrency:
+      group: app-store-watch
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.pending.outputs.sha }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - name: Deploy the server once Apple approves
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.pending.outputs.tag }}
+        run: |
+          version="${TAG#app-store/}"
+          state="$(node apps/apple/asc-review.mjs state "$BUNDLE_ID" "$version")"
+          echo "$version is $state"
+          case "$state" in
+            PENDING_DEVELOPER_RELEASE)
+              gh workflow run deploy.yml --ref "$TAG" \
+                -f environment="$ENVIRONMENT" -f ship_apple=false -f app_store_version="$version"
+              echo "Apple approved **$version**: deploying \`$TAG\` to $ENVIRONMENT; the app is released after verify." >>"$GITHUB_STEP_SUMMARY"
+              ;;
+            REJECTED|METADATA_REJECTED|DEVELOPER_REJECTED|INVALID_BINARY)
+              echo "::warning::$version is $state in App Store Connect: fix it and run App Store again"
+              ;;
+            READY_FOR_SALE|READY_FOR_DISTRIBUTION)
+              echo "::warning::$version is already live but $TAG was never deployed: deploy it by hand"
+              ;;
+          esac
