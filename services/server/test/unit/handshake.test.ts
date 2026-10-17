@@ -20,6 +20,7 @@ import {
   encodeHandshake,
   HANDSHAKE_NONCE_BYTES,
   HANDSHAKE_PROOF_BYTES,
+  HANDSHAKE_TRANSCRIPT_BYTES,
   handshakeNonce,
   handshakeProof,
   handshakeProofMatches,
@@ -59,6 +60,8 @@ function stubKem() {
 }
 
 const kem = stubKem();
+/** The transcript of the init a challenge is about (initTranscript); its binding is pinned below. */
+const T = crypto.randomBytes(HANDSHAKE_TRANSCRIPT_BYTES);
 const idOf = (pk: Buffer) => peerId(Buffer.concat([pk, Buffer.alloc(7237 - pk.length)]).toString("hex"));
 
 test("the real peer answers a challenge, and A accepts", () => {
@@ -69,12 +72,12 @@ test("the real peer answers a challenge, and A accepts", () => {
   // A challenges: an ordinary HQC encapsulation to B's IDENTITY key.
   const nonce = handshakeNonce();
   const { ct, ss } = kem.encapsulate(b.pk);
-  const expected = handshakeProof(ss, nonce, aId, bId);
+  const expected = handshakeProof(ss, nonce, aId, bId, T);
 
   // B decapsulates with the one secret only B holds, and returns HKDF of it —
   // never the secret, so this is not a decryption oracle.
   const bSs = kem.decapsulate(b.sk, ct);
-  const offered = handshakeProof(bSs, nonce, aId, bId);
+  const offered = handshakeProof(bSs, nonce, aId, bId, T);
 
   assert.ok(handshakeProofMatches(expected, offered), "the real B proves it");
 });
@@ -88,13 +91,13 @@ test("an impersonator cannot answer — this is finding 01, closed", () => {
   // C has B's PUBLIC key and nothing else. A encapsulates to it.
   const nonce = handshakeNonce();
   const { ct, ss } = kem.encapsulate(b.pk);
-  const expected = handshakeProof(ss, nonce, aId, bId);
+  const expected = handshakeProof(ss, nonce, aId, bId, T);
 
   // C decapsulates with the only secret it has. HQC rejects implicitly, so this
   // SUCCEEDS and yields a pseudo-random secret — the failure has to surface at
   // the proof, and it does.
   const cSs = kem.decapsulate(c.sk, ct);
-  const forged = handshakeProof(cSs, nonce, aId, bId);
+  const forged = handshakeProof(cSs, nonce, aId, bId, T);
 
   assert.ok(!handshakeProofMatches(expected, forged), "C holds B's public key and still cannot produce the proof");
 });
@@ -107,10 +110,10 @@ test("a proof is bound to its nonce, so it cannot be replayed", () => {
 
   const first = handshakeNonce();
   const second = handshakeNonce();
-  const answered = handshakeProof(kem.decapsulate(b.sk, ct), first, aId, bId);
+  const answered = handshakeProof(kem.decapsulate(b.sk, ct), first, aId, bId, T);
 
   assert.ok(
-    !handshakeProofMatches(handshakeProof(ss, second, aId, bId), answered),
+    !handshakeProofMatches(handshakeProof(ss, second, aId, bId, T), answered),
     "yesterday's proof does not answer today's challenge",
   );
 });
@@ -122,18 +125,38 @@ test("a proof is bound to BOTH ids, in order", () => {
   const bId = idOf(b.pk);
   const nonce = handshakeNonce();
   const { ct, ss } = kem.encapsulate(b.pk);
-  const answered = handshakeProof(kem.decapsulate(b.sk, ct), nonce, aId, bId);
+  const answered = handshakeProof(kem.decapsulate(b.sk, ct), nonce, aId, bId, T);
 
   // The same proof presented as though it answered a different challenger…
   assert.ok(
-    !handshakeProofMatches(handshakeProof(ss, nonce, dId, bId), answered),
+    !handshakeProofMatches(handshakeProof(ss, nonce, dId, bId, T), answered),
     "a proof made for A does not satisfy D",
   );
   // …or with the roles swapped, which is what a reflection would need.
   assert.ok(
-    !handshakeProofMatches(handshakeProof(ss, nonce, bId, aId), answered),
+    !handshakeProofMatches(handshakeProof(ss, nonce, bId, aId, T), answered),
     "the two ids are bound in order, so a proof cannot be reflected",
   );
+});
+
+test("a proof is bound to the init it answers — a forged init is not released by the real peer's proof", () => {
+  const b = kem.keypair();
+  const aId = peerId(crypto.randomBytes(7237).toString("hex"));
+  const bId = idOf(b.pk);
+  const nonce = handshakeNonce();
+  const { ct, ss } = kem.encapsulate(b.pk);
+
+  // A holds a forged init naming B and challenges about IT. The real B answers
+  // with the transcript of the init B actually sent.
+  const forgedInit = crypto.randomBytes(HANDSHAKE_TRANSCRIPT_BYTES);
+  const realInit = crypto.randomBytes(HANDSHAKE_TRANSCRIPT_BYTES);
+  const expected = handshakeProof(ss, nonce, aId, bId, forgedInit);
+  const answered = handshakeProof(kem.decapsulate(b.sk, ct), nonce, aId, bId, realInit);
+  assert.ok(!handshakeProofMatches(expected, answered), "B's proof for its own init does not release another");
+});
+
+test("a proof refuses a transcript of the wrong width", () => {
+  assert.throws(() => handshakeProof(Buffer.alloc(32), handshakeNonce(), "a".repeat(64), "b".repeat(64), Buffer.alloc(16)), /transcript/);
 });
 
 test("the challenge and proof frames round-trip, and refuse garbage", () => {
@@ -174,7 +197,7 @@ test("the challenge and proof frames round-trip, and refuse garbage", () => {
       "wrong version",
       (() => {
         const b = Buffer.from(pf);
-        b.writeUInt8(2, 4);
+        b.writeUInt8(1, 4); // v1: unbound proofs, refused
         return b;
       })(),
     ],

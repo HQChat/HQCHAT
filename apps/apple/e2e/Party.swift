@@ -86,12 +86,23 @@ final class Party {
 
     // ── The handshake, mirroring ConversationRouter ──────────────────────────
     private struct PendingChallenge {
+        let peer: String
         let nonce: Data
         let expected: Data
-        let heldInit: (frame: ConversationFrame, aad: Data)
+        var held: [(frame: ConversationFrame, aad: Data)]
     }
-    private var pendingChallenges: [String: PendingChallenge] = [:]
+    /// Keyed by the transcript of the init each challenge is about.
+    private var pendingChallenges: [Data: PendingChallenge] = [:]
+    /// Transcripts of inits whose sender proved it built them.
+    private var provenInits: Set<Data> = []
+    /// Peers that proved at least one init (for the harness's report).
     private(set) var proven: Set<String> = []
+
+    private static func transcript(of frame: ConversationFrame) -> Data? {
+        guard let rk = frame.rk, let ctId = frame.ctId, let ctMt = frame.ctMt else { return nil }
+        return Handshake.initTranscript(sender: frame.sender, to: frame.to, rk: rk, ctId: ctId,
+                                        ctMt: ctMt, ctOt: frame.ctOt, otId: frame.otId)
+    }
 
     /// What we received, in order, per peer. The transcript the integrity check
     /// is made against.
@@ -256,8 +267,11 @@ final class Party {
         if frame.t == .initiate {
             // An `init` proves nothing about who sent it: every value in one is
             // public. Held, not opened, until the sender answers a challenge.
-            if !proven.contains(frame.sender) {
-                try challenge(frame, aad: aad)
+            guard let transcript = Self.transcript(of: frame) else {
+                drops.append("\(name): malformed init header"); return
+            }
+            if !provenInits.contains(transcript) {
+                try challenge(frame, aad: aad, transcript: transcript)
                 return
             }
             // An init builds a session only when there is none. The
@@ -284,18 +298,23 @@ final class Party {
 
     // MARK: - The handshake (mirrors ConversationRouter)
 
-    private func challenge(_ frame: ConversationFrame, aad: Data) throws {
+    private func challenge(_ frame: ConversationFrame, aad: Data, transcript: Data) throws {
         guard let senderPk = frame.senderPk else { return }
+        if pendingChallenges[transcript] != nil {
+            pendingChallenges[transcript]?.held.append((frame, aad))
+            return
+        }
         let nonce = Handshake.nonce()
         let enc = try kem.encapsulate(senderPk)
         guard let expected = Handshake.proof(ss: enc.ss, nonce: nonce,
-                                             challenger: id, prover: frame.sender),
+                                             challenger: id, prover: frame.sender,
+                                             transcript: transcript),
               let bytes = Handshake.encode(.init(kind: .challenge, from: id, to: frame.sender,
                                                  nonce: nonce, ct: enc.ct, proof: nil))
         else { throw HarnessError.failed("\(name): could not build a challenge") }
 
-        pendingChallenges[frame.sender] = PendingChallenge(nonce: nonce, expected: expected,
-                                                           heldInit: (frame, aad))
+        pendingChallenges[transcript] = PendingChallenge(peer: frame.sender, nonce: nonce,
+                                                         expected: expected, held: [(frame, aad)])
         try bus.publish(bytes, to: try friendTopics(for: frame.sender).handshake, from: id)
         handshakeEvents.append("\(name) challenged \(frame.sender.prefix(8))… and held their init")
     }
@@ -309,10 +328,16 @@ final class Party {
         case .challenge:
             // Answer ONLY a challenge for a handshake we started — otherwise
             // this is a standing HKDF-of-a-decapsulation service.
-            guard sessions[frame.from]?.pendingInit != nil, let ct = frame.ct else { return }
+            // And bind the proof to the init WE sent.
+            guard let mine = sessions[frame.from]?.pendingInit, let ct = frame.ct,
+                  let transcript = Handshake.initTranscript(
+                      sender: id, to: frame.from, rk: mine.rk, ctId: mine.ctId,
+                      ctMt: mine.ctMt, ctOt: mine.ctOt, otId: mine.otId)
+            else { return }
             let ss = try kem.decapsulate(sk: identitySk, ct: ct)
             guard let proof = Handshake.proof(ss: ss, nonce: frame.nonce,
-                                              challenger: frame.from, prover: id),
+                                              challenger: frame.from, prover: id,
+                                              transcript: transcript),
                   let bytes = Handshake.encode(.init(kind: .proof, from: id, to: frame.from,
                                                      nonce: frame.nonce, ct: nil, proof: proof))
             else { return }
@@ -320,18 +345,25 @@ final class Party {
             handshakeEvents.append("\(name) proved possession to \(frame.from.prefix(8))…")
 
         case .proof:
-            guard let pending = pendingChallenges[frame.from], let offered = frame.proof,
-                  pending.nonce == frame.nonce else { return }
+            guard let offered = frame.proof,
+                  let match = pendingChallenges.first(where: {
+                      $0.value.peer == frame.from && $0.value.nonce == frame.nonce
+                  }) else { return }
+            let (transcript, pending) = (match.key, match.value)
+            pendingChallenges.removeValue(forKey: transcript)
             guard Handshake.proofMatches(expected: pending.expected, offered: offered) else {
                 handshakeEvents.append("\(name): \(frame.from.prefix(8))… FAILED the handshake")
                 drops.append("\(name): handshake failed for \(frame.from.prefix(8))… — init discarded")
-                pendingChallenges.removeValue(forKey: frame.from)
                 return
             }
-            pendingChallenges.removeValue(forKey: frame.from)
+            provenInits.insert(transcript)
             proven.insert(frame.from)
+            pendingChallenges = pendingChallenges.filter { $0.value.peer != frame.from }
             handshakeEvents.append("\(name): \(frame.from.prefix(8))… proved possession")
-            try openInit(pending.heldInit.frame, aad: pending.heldInit.aad)
+            for held in pending.held {
+                if sessions[frame.from] != nil { try openMessage(held.frame, aad: held.aad) }
+                else { try openInit(held.frame, aad: held.aad) }
+            }
         }
     }
 

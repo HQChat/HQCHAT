@@ -48,6 +48,10 @@ enum MessageKeyStore {
         activeProfileID = id
     }
 
+    /// The tier the active profile's keys carry, for a store that writes items
+    /// the same unlock must open (`AESKeyStore`).
+    static var currentTier: KeyProtectionTier { activeTier }
+
     /// The tier the current unlock must authenticate against.
     private static var activeTier: KeyProtectionTier {
         lock.lock()

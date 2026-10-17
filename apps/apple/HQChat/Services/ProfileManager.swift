@@ -218,6 +218,10 @@ class ProfileManager: ObservableObject {
         MessageKeyStore.delete(for: profile.id)
         for friend in profile.friends ?? [] { friend.clearAESKeys() }
         PrekeyService.clear(profileID: profile.id)
+        // Frames it never opened are not reachable from the profile row.
+        let profileID: UUID? = profile.id
+        let unopened = FetchDescriptor<PendingFrame>(predicate: #Predicate { $0.profileID == profileID })
+        for frame in (try? modelContext.fetch(unopened)) ?? [] { modelContext.delete(frame) }
         
         // Delete from database (cascade will delete friends and messages)
         modelContext.delete(profile)

@@ -135,7 +135,7 @@ final class Friend {
     // These look like normal properties to all call sites, but SwiftData does
     // not persist computed properties — the bytes live in the Keychain via
     // AESKeyStore, keyed by the friend's public key. This keeps decryption keys
-    // out of the plaintext SwiftData store.
+    // out of the plaintext SwiftData store, and behind the profile's unlock.
 
     /// Keychain account for one piece of this friend's key material.
     ///
@@ -170,9 +170,13 @@ final class Friend {
     ///
     /// State at a different protocol version is discarded, not migrated; the next
     /// message re-handshakes.
+    ///
+    /// Nil also while the Keychain is locked, so anything that writes back what
+    /// it derived from this must run unlocked (`AESKeyStore.isUnlocked`); the
+    /// setter refuses otherwise, and `hasSession` does not depend on it.
     var ratchetSession: RatchetSessionState? {
         get {
-            guard let data = AESKeyStore.get(aesAccount("ratchet")),
+            guard let data = AESKeyStore.read(aesAccount("ratchet")).data,
                   let session = try? JSONDecoder().decode(RatchetSessionState.self, from: data)
             else { return nil }
             guard session.v == RatchetSession.protocolVersion else {
@@ -191,7 +195,10 @@ final class Friend {
     /// `hasSecureChannel` column that had to be kept in step with the Keychain by
     /// hand, and the two could disagree — a restored database with no Keychain
     /// showed contacts as ready and then dropped every message.
-    var hasSession: Bool { ratchetSession != nil }
+    ///
+    /// Asked of the Keychain without unlocking it, so it is right while locked
+    /// and costs no prompt from a view body.
+    var hasSession: Bool { AESKeyStore.exists(aesAccount("ratchet")) }
 
     /// Remove this friend's AES key material from the Keychain (call on removal).
     func clearAESKeys() {

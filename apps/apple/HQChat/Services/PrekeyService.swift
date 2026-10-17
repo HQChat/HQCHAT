@@ -82,14 +82,22 @@ final class PrekeyService {
         AESKeyStore.delete(account(for: profileID))
     }
 
+    /// Nil while locked as well as when absent; `ensurePublished` tells the two
+    /// apart before it would mint over secrets peers still hold.
     private var store: PrekeyStore? {
         get {
-            guard let data = AESKeyStore.get(account) else { return nil }
+            guard let data = AESKeyStore.read(account).data else { return nil }
             return try? JSONDecoder().decode(PrekeyStore.self, from: data)
         }
         set {
             AESKeyStore.set(newValue.flatMap { try? JSONEncoder().encode($0) }, account: account)
         }
+    }
+
+    /// Writes `store`, reporting whether it is now what the Keychain holds.
+    private func persist(_ store: PrekeyStore) -> Bool {
+        guard let data = try? JSONEncoder().encode(store) else { return false }
+        return AESKeyStore.set(data, account: account)
     }
 
     /// The secrets needed to answer an inbound `init` frame.
@@ -117,6 +125,13 @@ final class PrekeyService {
     /// Safe to call on every login and every directory sync: it does nothing
     /// when the pool is healthy.
     func ensurePublished() async {
+        // Locked, the store reads as nil whether or not it exists, and minting
+        // over it would destroy every secret peers can still claim. The next
+        // directory sync after an unlock does this instead.
+        if case .locked = AESKeyStore.read(account) {
+            dlogPrekey("store locked — not checked until the next unlock")
+            return
+        }
         do {
             if store == nil {
                 try await mintAndPublish(rotateMedium: true, count: Self.targetPoolSize)
@@ -184,7 +199,7 @@ final class PrekeyService {
         // can claim, which costs nothing; publishing first and then failing to
         // persist would advertise keys we cannot open — every peer claiming one
         // would send an `init` we must refuse.
-        self.store = store
+        guard persist(store) else { throw PrekeyError.notPersisted }
         try await api.publishPrekeys(medium: store.mediumPk.hexString, oneTime: minted)
         ProtocolLog.record(.prekeysPublished(count: minted.count, rotatedMedium: rotateMedium))
     }
@@ -197,6 +212,11 @@ final class PrekeyService {
         let pair = try HQCService.generateKeypair(seed: seed)
         return (pair.publicKey, pair.secretKey)
     }
+}
+
+enum PrekeyError: Error {
+    /// The secrets could not be written, so the public halves are not published.
+    case notPersisted
 }
 
 /// Debug-only. Compiled out of Release so key material never reaches production

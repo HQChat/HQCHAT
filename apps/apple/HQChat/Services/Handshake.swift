@@ -29,13 +29,18 @@
 // the two can never be confused.
 //
 // ── What the proof binds ────────────────────────────────────────────────────
-//     info  = "hqchat/handshake/v1" ‖ nonce(32) ‖ challenger(32) ‖ prover(32)
+//     info  = "hqchat/handshake/v2" ‖ nonce(32) ‖ challenger(32) ‖ prover(32) ‖ transcript(32)
 //     proof = HKDF-SHA256(ikm: ss, salt: "salt", info, 32)
 //
 // The nonce is freshness; the two ids are bound IN ORDER, so a proof made for
 // one pair cannot be presented to another and cannot be reflected back at its
 // own author. Every component is fixed-width — no delimiters to confuse, and
 // no encoding for the two implementations to disagree about.
+//
+// `transcript` (initTranscript) binds the proof to ONE init. The responder
+// derives it from the init it holds, the initiator from the init it sent; it
+// is never on the wire. v1 lacked it, so a forged init naming the initiator
+// was released by the initiator's proof for its own, genuine init.
 //
 // ── What it does not defend against ─────────────────────────────────────────
 // A relay. Somebody who can both see the challenge and reach the real peer
@@ -55,7 +60,13 @@ enum Handshake {
     /// Bytes of proof. Same width as the MQTT auth proof, for the same reason.
     static let proofBytes = 32
 
-    private static let infoPrefix = Data("hqchat/handshake/v1".utf8)
+    /// Bytes of an init transcript.
+    static let transcriptBytes = 32
+
+    private static let infoPrefix = Data("hqchat/handshake/v2".utf8)
+    private static let transcriptLabel = Data("hqchat/handshake/v2/init".utf8)
+    /// `otId` when the init carries no one-time prekey.
+    private static let noOneTime = 0xffff_ffff
     private static let salt = Data("salt".utf8)
     private static let idBytes = 32
 
@@ -66,16 +77,41 @@ enum Handshake {
         return out
     }
 
+    /// The hash of the session-defining fields of one init:
+    ///
+    ///     SHA-256("hqchat/handshake/v2/init" ‖ sender(32) ‖ to(32)
+    ///             ‖ lp(rk) ‖ lp(ctId) ‖ lp(ctMt) ‖ lp(ctOt or empty) ‖ u32(otId or 0xffffffff))
+    ///
+    /// `lp` = u32 big-endian length + bytes. Every frame of an init burst shares
+    /// these fields; a forged init, built from other ciphertexts, does not.
+    ///
+    /// Takes the fields rather than `RatchetInitHeader` so this file still
+    /// compiles on its own (tests, fuzzers, the e2e harness).
+    static func initTranscript(sender: String, to: String,
+                               rk: Data, ctId: Data, ctMt: Data, ctOt: Data?, otId: Int?) -> Data? {
+        guard let senderRaw = unhex(sender), senderRaw.count == idBytes,
+              let toRaw = unhex(to), toRaw.count == idBytes
+        else { return nil }
+        let otIdField = (ctOt != nil ? otId : nil) ?? noOneTime
+        var data = transcriptLabel + senderRaw + toRaw
+        for field in [rk, ctId, ctMt, ctOt ?? Data()] {
+            data += u32(field.count) + field
+        }
+        data += u32(otIdField)
+        return Data(SHA256.hash(data: data))
+    }
+
     /// The proof a prover returns for one challenge.
     ///
     /// `challenger` and `prover` are client ids in lowercase hex — the same 64
-    /// characters the wire carries — bound in that order.
-    static func proof(ss: Data, nonce: Data, challenger: String, prover: String) -> Data? {
-        guard nonce.count == nonceBytes,
+    /// characters the wire carries — bound in that order; `transcript` is the
+    /// `initTranscript` of the init the challenge is about.
+    static func proof(ss: Data, nonce: Data, challenger: String, prover: String, transcript: Data) -> Data? {
+        guard nonce.count == nonceBytes, transcript.count == transcriptBytes,
               let challengerRaw = unhex(challenger), challengerRaw.count == idBytes,
               let proverRaw = unhex(prover), proverRaw.count == idBytes
         else { return nil }
-        let info = infoPrefix + nonce + challengerRaw + proverRaw
+        let info = infoPrefix + nonce + challengerRaw + proverRaw + transcript
         let key = HKDF<SHA256>.deriveKey(
             inputKeyMaterial: SymmetricKey(data: ss),
             salt: salt,
@@ -101,7 +137,7 @@ enum Handshake {
     // MARK: - The wire format
     //
     //   0   magic   4 bytes  "HQCH"
-    //   4   version u8       1
+    //   4   version u8       2 (v1 proofs were not bound to an init; refused)
     //   5   kind    u8       0 = challenge, 1 = proof
     //   6   from    32 bytes raw client id
     //   38  to      32 bytes raw client id
@@ -113,7 +149,7 @@ enum Handshake {
     // encoding.
 
     private static let magic = Data("HQCH".utf8)
-    static let version: UInt8 = 1
+    static let version: UInt8 = 2
     private static let kindChallenge: UInt8 = 0
     private static let kindProof: UInt8 = 1
 

@@ -70,7 +70,9 @@ final class NotificationService: NSObject, ObservableObject {
                 message.profileID == profileID && !message.isOutgoing && message.readAt == nil
             }
         )
-        unreadMessages = (try? modelContext.fetchCount(unreadDescriptor)) ?? 0
+        // Frames not opened yet count too: each was notified when it arrived.
+        unreadMessages = ((try? modelContext.fetchCount(unreadDescriptor)) ?? 0)
+            + InboundQueue.unopenedMessageCount(modelContext: modelContext, profileID: profileID)
 
         let received = Friend.InviteStatus.inviteReceived.rawValue
         let inviteDescriptor = FetchDescriptor<Friend>(

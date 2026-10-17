@@ -14,6 +14,9 @@
 #   rollback  if verify fails, the channels go back to the previous release
 #   apple     once verify passes (and ship_apple is on): apple-release.yml
 #             uploads a new version of the iOS app to App Store Connect
+#   app-store once verify passes (and app_store_version is set): releases that
+#             approved App Store version, so the app goes live only against a
+#             server proven to speak its protocol (app-store.yml sets it)
 #
 # Environment secrets: DIGITALOCEAN_TOKEN, CLOUDFLARE_API_TOKEN, R2_ACCESS_KEY_ID,
 # R2_SECRET_ACCESS_KEY, NIX_CACHE_SIGNING_KEY, BOT_SEED, NOISE_KEYS and,
@@ -37,6 +40,10 @@ on:
         description: After a successful verify, build the iOS app and upload it to App Store Connect
         type: boolean
         default: true
+      app_store_version:
+        description: After a successful verify, release this approved (Pending Developer Release) App Store version
+        type: string
+        required: false
 
 permissions:
   contents: read
@@ -302,3 +309,26 @@ jobs:
     uses: ./.github/workflows/apple-release.yml
     with:
       environment: ${{ inputs.environment }}
+
+  # Set by app-store.yml once Apple approves: the app goes live only after the
+  # server it needs has been proven live, and never after a rollback.
+  app-store:
+    needs: verify
+    if: ${{ inputs.app_store_version != '' && needs.verify.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - name: Release the approved version
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          VERSION: ${{ inputs.app_store_version }}
+        run: |
+          node apps/apple/asc-review.mjs release martin.rougeron.DissQus-iOS "$VERSION"
+          echo "Released **$VERSION** on the App Store." >>"$GITHUB_STEP_SUMMARY"

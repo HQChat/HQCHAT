@@ -9,7 +9,8 @@ public key.
 
 - **Key pair:** HQC-256 (public key 7,237 bytes), generated on the device from a
   32-byte random seed that is never stored. The secret key goes into the
-  Keychain behind the profile's protection tier.
+  Keychain behind the profile's protection tier. So do the ratchet sessions
+  and the prekey secrets: inbound frames wait, as ciphertext, for the unlock.
 - **Client id:** `id = sha256(lowercase hex of the public key)`, 64 hex
   characters. Every topic, route and graph row names a client by its id. An id
   commits to its key (anyone can check a key against it) and proves nothing on

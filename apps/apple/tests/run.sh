@@ -341,6 +341,21 @@ xcrun swiftc -O $COV_FLAGS -target arm64-apple-macos14 \
 "$BINDIR/orchestratorTests"
 
 echo ""
+echo "── Deferred decryption (queue, lock, migration) ─"
+# Frames that arrive locked are queued as ciphertext and opened on unlock; the
+# ratchet and prekey state sits behind the user's unlock. The real router, queue
+# and key store, over in-memory SwiftData and an in-memory key backend.
+MAIN="$(stage InboundQueueTests.swift)"
+xcrun swiftc -O $COV_FLAGS -target arm64-apple-macos14 \
+  "$MAIN" TestSupport.swift \
+  "${ORCHESTRATOR_SOURCES[@]}" \
+  -import-objc-header "$APP/Core/HQC-Bridging-Header.h" -I "$APP/Core" \
+  -L ".." -lhqc_wrap -Xlinker -rpath -Xlinker "$(cd .. && pwd)" \
+  -framework Security \
+  -o "$BINDIR/inboundQueueTests"
+"$BINDIR/inboundQueueTests"
+
+echo ""
 echo "── Store, migration and reset ─────────────────"
 # 1,800 lines that no slice compiled, unlocked by one line of fixture:
 # ModelConfiguration(isStoredInMemoryOnly: true). What is asserted is what a user
@@ -350,7 +365,7 @@ echo "── Store, migration and reset ─────────────�
 MAIN="$(stage PersistenceTests.swift)"
 xcrun swiftc -O $COV_FLAGS -target arm64-apple-macos14 \
   "$MAIN" TestSupport.swift \
-  "$APP/Persistence.swift" "$MODELS/Message.swift" "$MODELS/Friend.swift" "$SRC/MQTTTopics.swift" "$MODELS/Profile.swift" \
+  "$APP/Persistence.swift" "$MODELS/Message.swift" "$MODELS/Friend.swift" "$SRC/AESKeyStore.swift" "$MODELS/PendingFrame.swift" "$SRC/MQTTTopics.swift" "$MODELS/Profile.swift" \
   "$MODELS/MessageTypes.swift" "$MODELS/AppError.swift" \
   "$SRC/PeerID.swift" "$SRC/RatchetSession.swift" "$SRC/DoubleRatchet.swift" \
   "$SRC/AESService.swift" "$SRC/BiometricAudit.swift" "$SRC/MessageKeyStore.swift" \
@@ -485,7 +500,7 @@ echo "── Shared auth context (one prompt, two stores) ──"
 MAIN="$(stage SharedAuthContextTests.swift)"
 xcrun swiftc -O $COV_FLAGS \
   "$MAIN" TestSupport.swift Stubs.swift \
-  "$MODELS/Message.swift" "$MODELS/Friend.swift" "$SRC/MQTTTopics.swift" "$MODELS/Profile.swift" \
+  "$MODELS/Message.swift" "$MODELS/Friend.swift" "$SRC/AESKeyStore.swift" "$MODELS/PendingFrame.swift" "$SRC/MQTTTopics.swift" "$MODELS/Profile.swift" \
   "$SRC/MessageKeyStore.swift" "$SRC/DeviceAuthCapability.swift" \
   "$SRC/AESService.swift" "$SRC/RatchetSession.swift" \
   "$SRC/DoubleRatchet.swift" "$SRC/PeerID.swift" \
@@ -499,7 +514,7 @@ echo "── Message at-rest tests ───────────────
 MAIN="$(stage MessageAtRestTests.swift)"
 xcrun swiftc -O $COV_FLAGS \
   "$MAIN" TestSupport.swift Stubs.swift \
-  "$MODELS/Message.swift" "$MODELS/Friend.swift" "$SRC/MQTTTopics.swift" "$MODELS/Profile.swift" \
+  "$MODELS/Message.swift" "$MODELS/Friend.swift" "$SRC/AESKeyStore.swift" "$MODELS/PendingFrame.swift" "$SRC/MQTTTopics.swift" "$MODELS/Profile.swift" \
   "$SRC/MessageKeyStore.swift" "$SRC/DeviceAuthCapability.swift" \
   "$SRC/AESService.swift" "$SRC/RatchetSession.swift" \
   "$SRC/DoubleRatchet.swift" "$SRC/PeerID.swift" \

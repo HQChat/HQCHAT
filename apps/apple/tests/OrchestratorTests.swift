@@ -250,7 +250,7 @@ check(seen.messages + seen.handshakes + seen.graph == 3,
 @MainActor
 func routerChecks() {
     let config = ModelConfiguration(isStoredInMemoryOnly: true)
-    let container = try! ModelContainer(for: Profile.self, Friend.self, Message.self, configurations: config)
+    let container = try! ModelContainer(for: Profile.self, Friend.self, Message.self, PendingFrame.self, configurations: config)
     let ctx = container.mainContext
 
     let pk = Data((0..<7237).map { UInt8($0 % 251) })
@@ -312,7 +312,7 @@ if let encoded = try? JSONEncoder().encode(item),
 @MainActor
 func directorySyncBlockGuards() {
     let config = ModelConfiguration(isStoredInMemoryOnly: true)
-    let container = try! ModelContainer(for: Profile.self, Friend.self, Message.self,
+    let container = try! ModelContainer(for: Profile.self, Friend.self, Message.self, PendingFrame.self,
                                         configurations: config)
     let ctx = container.mainContext
 
@@ -378,7 +378,7 @@ MainActor.assumeIsolated { directorySyncBlockGuards() }
 @MainActor
 func vanishedGuardSkipsBlocked() {
     let config = ModelConfiguration(isStoredInMemoryOnly: true)
-    let container = try! ModelContainer(for: Profile.self, Friend.self, Message.self,
+    let container = try! ModelContainer(for: Profile.self, Friend.self, Message.self, PendingFrame.self,
                                         configurations: config)
     let ctx = container.mainContext
     let pk = Data((0..<7237).map { UInt8($0 % 251) })

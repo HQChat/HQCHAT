@@ -47,5 +47,5 @@ struct ContentView: View {
 #Preview {
     ContentView()
         .environmentObject(AppState())
-        .modelContainer(for: [Friend.self, Message.self])
+        .modelContainer(for: [Friend.self, Message.self, PendingFrame.self])
 }
