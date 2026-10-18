@@ -10,6 +10,8 @@ publish.workspace = true
 
 [dependencies]
 aes-gcm = "0.10"
+base64 = "0.22"
+ed25519-dalek = { version = "2", features = ["zeroize"] }
 hkdf = "0.12"
 subtle = "2"
 hqc = { path = "../hqc" }
