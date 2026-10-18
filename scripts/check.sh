@@ -6,6 +6,7 @@
 #   scripts/check.sh integration      server against real Postgres + EMQX (DATABASE_URL, TEST_EMQX_*)
 #   scripts/check.sh scenarios        end-to-end user scenarios on a full local stack
 #   scripts/check.sh infra             Terraform policy tests and NixOS evaluation
+#   scripts/check.sh core              the Rust core: format, lints, tests, the Node addon
 #
 # Run inside `nix develop` so every tool is the pinned one.
 set -euo pipefail
@@ -111,7 +112,19 @@ infra() {
   finish
 }
 
-cmd="${1:?usage: scripts/check.sh lint|unit|integration|scenarios|infra}"
+# The Rust core (core/): every crate's tests, including the shared vectors,
+# and the Node addon against them and the TS hqn/1 initiator. Needs
+# HQC_SOURCE and the toolchain from `nix develop`, and the server's
+# node_modules for the addon tests.
+core() {
+  run "rustfmt" bash -c "cd '$root/core' && cargo fmt --check"
+  run "clippy" bash -c "cd '$root/core' && cargo clippy --all-targets --locked -- -D warnings"
+  run "core tests" bash -c "cd '$root/core' && cargo test --locked"
+  run "node addon" bash -c "'$root/core/hqchat-node/build.sh' && cd '$server' && node --import tsx --test ../../core/hqchat-node/test/*.test.ts"
+  finish
+}
+
+cmd="${1:?usage: scripts/check.sh lint|unit|integration|scenarios|infra|core}"
 shift
 case "$cmd" in
   lint) lint "$@" ;;
@@ -119,6 +132,7 @@ case "$cmd" in
   integration) integration ;;
   scenarios) scenarios ;;
   infra) infra ;;
+  core) core ;;
   *)
     echo "unknown check: $cmd" >&2
     exit 2
