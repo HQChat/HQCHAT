@@ -287,3 +287,9 @@ Windows gets runner jobs for the vault and the MSIX; Apple stays on
 - The push bridge (`src/server/push.ts`) wakes on `cv/+` only, so an `init`
   sent to an offline peer's inbox wakes nobody. Intentional or not, it
   matters before Android.
+- HQC's PRNG is one global SHAKE-256 state (`symmetric.c`), and after an
+  encapsulation it still holds the sponge that produced the message and the
+  salt; Keccak is invertible, so that memory gives the shared secret away.
+  `core/hqc-sys` wipes it after each encapsulation. The shipped
+  `hqc_kem_enc_wrap` (used by the server, the bot and the Apple app until the
+  core replaces it) does not.
