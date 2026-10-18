@@ -169,7 +169,11 @@ test("a burst of Alice's inits shares one challenge and opens in order", async (
   const first = B.receive(burst[0]!.topic, burst[0]!.payload);
   assert.equal(first.outbound.length, 1, "one challenge for the burst");
   for (const out of burst.slice(1)) {
-    assert.equal(B.receive(out.topic, out.payload).outbound.length, 0, "the rest of the burst is held, not re-challenged");
+    assert.equal(
+      B.receive(out.topic, out.payload).outbound.length,
+      0,
+      "the rest of the burst is held, not re-challenged",
+    );
   }
   const got = pump({ A, B }, [{ to: "A", out: first.outbound[0]! }]);
   assert.deepEqual(

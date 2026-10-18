@@ -1,0 +1,21 @@
+[package]
+name = "hqc"
+description = "HQC-256, the KEM under every HQChat key agreement: typed keys, zeroized secrets"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+hqc-sys = { path = "../hqc-sys" }
+getrandom = "0.3"
+subtle = "2"
+zeroize = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+sha2 = "0.10"
+
+[lints]
+workspace = true
