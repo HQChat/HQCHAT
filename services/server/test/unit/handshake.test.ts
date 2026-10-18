@@ -156,7 +156,10 @@ test("a proof is bound to the init it answers — a forged init is not released 
 });
 
 test("a proof refuses a transcript of the wrong width", () => {
-  assert.throws(() => handshakeProof(Buffer.alloc(32), handshakeNonce(), "a".repeat(64), "b".repeat(64), Buffer.alloc(16)), /transcript/);
+  assert.throws(
+    () => handshakeProof(Buffer.alloc(32), handshakeNonce(), "a".repeat(64), "b".repeat(64), Buffer.alloc(16)),
+    /transcript/,
+  );
 });
 
 test("the challenge and proof frames round-trip, and refuse garbage", () => {
