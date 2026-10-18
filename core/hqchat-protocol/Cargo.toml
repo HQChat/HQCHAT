@@ -9,6 +9,7 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+aes-gcm = "0.10"
 hqc = { path = "../hqc" }
 getrandom = "0.3"
 hex = "0.4"
