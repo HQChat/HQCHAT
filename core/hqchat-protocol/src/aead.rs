@@ -2,8 +2,8 @@
 //! ciphertext` as in the Swift `AESService` and the TS `aead.ts`. The frame
 //! header is always bound as AAD.
 
-use aes_gcm::aead::{AeadInPlace, KeyInit};
 use aes_gcm::Aes256Gcm;
+use aes_gcm::aead::{AeadInPlace, KeyInit};
 
 use crate::wire::Reader;
 use crate::{Entropy, Error};

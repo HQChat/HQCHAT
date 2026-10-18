@@ -36,7 +36,8 @@ impl PeerId {
     /// Reads an id; refuses anything but 64 lowercase hex characters.
     pub fn parse(value: &str) -> Result<PeerId, Error> {
         let mut bytes = [0u8; 32];
-        if !is_lower_hex(value, PEER_ID_LENGTH) || hex::decode_to_slice(value, &mut bytes).is_err() {
+        if !is_lower_hex(value, PEER_ID_LENGTH) || hex::decode_to_slice(value, &mut bytes).is_err()
+        {
             return Err(Error::Malformed("an id is 64 lowercase hex characters"));
         }
         Ok(Self::from_bytes(&bytes))

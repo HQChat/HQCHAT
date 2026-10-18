@@ -163,7 +163,9 @@ pub fn encode(frame: &HandshakeFrame) -> Result<Vec<u8>, Error> {
             if ct.is_empty() || ct.len() > MAX_CT_BYTES {
                 return Err(Error::Invalid("a challenge needs a ciphertext under 1 MiB"));
             }
-            out.extend_from_slice(&len_u32(ct.len(), "a challenge needs a ciphertext under 1 MiB")?.to_be_bytes());
+            out.extend_from_slice(
+                &len_u32(ct.len(), "a challenge needs a ciphertext under 1 MiB")?.to_be_bytes(),
+            );
             out.extend_from_slice(ct);
         }
         HandshakeFrame::Proof { proof, .. } => out.extend_from_slice(proof),

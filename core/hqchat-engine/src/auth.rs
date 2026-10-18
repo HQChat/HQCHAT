@@ -164,7 +164,8 @@ impl Core {
             .get("mqttKeyExpiresAt")
             .and_then(|v| v.as_i64())
             .map_or(now.saturating_add(12 * 3600 * 1000), |s| {
-                s.saturating_mul(1000).saturating_sub(self.auth.clock_offset_ms)
+                s.saturating_mul(1000)
+                    .saturating_sub(self.auth.clock_offset_ms)
             });
         self.auth.signing = Some(signing);
         self.auth.key_id = Some(key_id);

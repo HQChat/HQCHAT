@@ -17,8 +17,8 @@
 //! Plaintext is `postcard`, versioned by the first field of each record.
 
 use hqc::{Ciphertext, KeyPair, PublicKey, SecretKey};
-use hqchat_protocol::ratchet::{Chain, InitHeader, SessionState, SkippedKey, SymmetricKey};
 use hqchat_protocol::kdf::hkdf_sha256;
+use hqchat_protocol::ratchet::{Chain, InitHeader, SessionState, SkippedKey, SymmetricKey};
 use hqchat_protocol::wire::Reader;
 use hqchat_protocol::{OsEntropy, PeerId, aead};
 use p256::elliptic_curve::sec1::ToEncodedPoint;

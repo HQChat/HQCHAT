@@ -227,9 +227,7 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, Error> {
 
 /// A cheap check of magic and version, before a full decode.
 pub fn looks_like_frame(raw: &[u8]) -> bool {
-    raw.len() >= OFF_MSGID
-        && raw.starts_with(MAGIC)
-        && raw.get(MAGIC.len()) == Some(&FRAME_VERSION)
+    raw.len() >= OFF_MSGID && raw.starts_with(MAGIC) && raw.get(MAGIC.len()) == Some(&FRAME_VERSION)
 }
 
 /// Decodes a frame and returns it with its AAD, the header bytes exactly as
@@ -274,7 +272,11 @@ pub fn decode(raw: &[u8]) -> Result<(Frame, Vec<u8>), Error> {
         .to_owned();
 
     let rk = if has_rk { Some(blob(&mut r)?) } else { None };
-    let kem_ct = if has_kem_ct { Some(blob(&mut r)?) } else { None };
+    let kem_ct = if has_kem_ct {
+        Some(blob(&mut r)?)
+    } else {
+        None
+    };
     let init = if kind == Kind::Init {
         Some(InitFields {
             sender_pk: blob(&mut r)?,

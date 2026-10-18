@@ -439,8 +439,16 @@ fn parse(header: u8, body: &[u8]) -> Result<Packet, Error> {
             } else {
                 None
             };
-            let username = if has_user { Some(string(&mut c)?) } else { None };
-            let password = if has_pass { Some(field(&mut c)?.to_vec()) } else { None };
+            let username = if has_user {
+                Some(string(&mut c)?)
+            } else {
+                None
+            };
+            let password = if has_pass {
+                Some(field(&mut c)?.to_vec())
+            } else {
+                None
+            };
             end(c)?;
             Packet::Connect {
                 client_id,

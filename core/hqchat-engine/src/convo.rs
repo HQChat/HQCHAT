@@ -77,17 +77,18 @@ pub(crate) struct Convo {
 /// than hand out a predictable id when the OS generator does.
 fn new_msg_id() -> Result<String, CoreError> {
     let mut b = [0u8; 16];
-    getrandom::fill(&mut b).map_err(|_| CoreError::Protocol("the OS random generator failed".into()))?;
-    let [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13, b14, b15] = b;
-    let (b6, b8) = ((b6 & 0x0f) | 0x40, (b8 & 0x3f) | 0x80);
-    Ok(format!(
-        "{}-{}-{}-{}-{}",
-        hex::encode([b0, b1, b2, b3]),
-        hex::encode([b4, b5]),
-        hex::encode([b6, b7]),
-        hex::encode([b8, b9]),
-        hex::encode([b10, b11, b12, b13, b14, b15])
-    ))
+    getrandom::fill(&mut b)
+        .map_err(|_| CoreError::Protocol("the OS random generator failed".into()))?;
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    let mut groups = Vec::with_capacity(5);
+    let mut rest = b.as_slice();
+    for len in [4, 2, 2, 2, 6] {
+        let (group, tail) = rest.split_at_checked(len).unwrap_or((rest, &[]));
+        groups.push(hex::encode(group));
+        rest = tail;
+    }
+    Ok(groups.join("-"))
 }
 
 fn message_header(h: &Header) -> Option<MessageHeader> {
@@ -948,4 +949,23 @@ fn open_with(
         Err(_) => false,
     })?;
     text
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn message_ids_are_random_uuid_v4() {
+        let id = super::new_msg_id().unwrap();
+        let groups: Vec<&str> = id.split('-').collect();
+        assert_eq!(
+            groups.iter().map(|g| g.len()).collect::<Vec<_>>(),
+            [8, 4, 4, 4, 12]
+        );
+        assert!(groups[2].starts_with('4'), "version 4: {id}");
+        assert!(
+            matches!(&groups[3][..1], "8" | "9" | "a" | "b"),
+            "RFC 4122 variant: {id}"
+        );
+        assert_ne!(id, super::new_msg_id().unwrap());
+    }
 }

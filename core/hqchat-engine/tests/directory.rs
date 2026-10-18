@@ -177,7 +177,9 @@ fn a_write_the_store_refuses_reaches_the_app() {
         b.seen
     );
     assert!(
-        !a.seen.iter().any(|e| matches!(e, Effect::StorageFailed { .. })),
+        !a.seen
+            .iter()
+            .any(|e| matches!(e, Effect::StorageFailed { .. })),
         "a's store works"
     );
 }

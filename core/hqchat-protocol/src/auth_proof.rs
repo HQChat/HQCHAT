@@ -27,7 +27,7 @@ mod tests {
     fn the_proof_matches_node_crypto() {
         // hkdfSync("sha256", ss, "salt", "auth", 32), as auth-proof.ts computes
         // it, for ss = 255, 254, …, 224.
-        let ss = hqc::SharedSecret::from_bytes(std::array::from_fn(|i| 255 - i as u8));
+        let ss = SharedSecret::from_bytes(std::array::from_fn(|i| 255 - i as u8));
         assert_eq!(
             hex::encode(auth_proof(&ss)),
             "991f558722ac976ef5b5f26e30dc778048b6b6876c26a83dbad86b2014a09574"
