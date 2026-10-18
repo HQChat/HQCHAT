@@ -137,6 +137,17 @@ core() {
   run "cargo deny" bash -c "cd '$root/core' && cargo deny --locked check"
   run "core tests" bash -c "cd '$root/core' && cargo test --locked"
   run "node addon" bash -c "'$root/core/hqchat-node/build.sh' && cd '$server' && node --import tsx --test ../../core/hqchat-node/test/*.test.ts"
+  # Rust against TypeScript on mutated frames: same verdicts, same bytes.
+  run "verdict build" bash -c "cd '$root/core' && cargo build --locked --release -p hqchat-verdict"
+  local seed="${FUZZ_SEED:-1}" fuzz="npx tsx test/fuzz"
+  run "differential envelope" bash -c "cd '$server' && $fuzz/envelope-v3-differential.ts --iterations 50000 --seed $seed"
+  run "differential encode" bash -c "cd '$server' && $fuzz/envelope-v3-encode-differential.ts --iterations 50000 --seed $seed"
+  for mode in decode encode round; do
+    run "differential handshake $mode" bash -c "cd '$server' && $fuzz/handshake-differential.ts --mode $mode --iterations 10000 --seed $seed"
+  done
+  for mode in frames msg2; do
+    run "differential noise $mode" bash -c "cd '$server' && $fuzz/noise-differential.ts --mode $mode --iterations 10000 --seed $seed"
+  done
   finish
 }
 

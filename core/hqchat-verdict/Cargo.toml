@@ -1,0 +1,20 @@
+[package]
+name = "hqchat-verdict"
+description = "The Rust half of the differential fuzzers in services/server/test/fuzz: verdicts in the line formats of apps/apple/fuzz"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+base64 = "0.22"
+hex = "0.4"
+hqc = { path = "../hqc" }
+hqchat-protocol = { path = "../hqchat-protocol" }
+serde_json = "1"
+sha2 = "0.10"
+
+[lints]
+workspace = true

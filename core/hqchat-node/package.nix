@@ -28,9 +28,11 @@ rustPlatform.buildRustPackage {
       (root + "/hqchat-node/Cargo.toml")
       (root + "/hqchat-node/build.rs")
       (root + "/hqchat-node/src")
-      # A workspace member: cargo reads its manifest even when not building it.
+      # Workspace members: cargo reads them even when not building them.
       (root + "/hqchat-ffi/Cargo.toml")
       (root + "/hqchat-ffi/src")
+      (root + "/hqchat-verdict/Cargo.toml")
+      (root + "/hqchat-verdict/src")
     ];
   };
 

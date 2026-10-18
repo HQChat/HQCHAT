@@ -797,6 +797,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hqchat-verdict"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "hex",
+ "hqc",
+ "hqchat-protocol",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "indexmap"
 version = "2.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

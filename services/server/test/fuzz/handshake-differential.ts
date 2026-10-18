@@ -19,9 +19,12 @@
  *   round   decode(encode(f)) == f on each side: self-consistent halves can
  *           still fail to be inverses.
  *
- * Run:
- *   cd apps/apple/fuzz && ./run.sh handshake-verdict
+ * Run against the Rust core (the default; scripts/check.sh core does this):
+ *   cd core && cargo build --release -p hqchat-verdict
  *   cd services/server && npx tsx test/fuzz/handshake-differential.ts --iterations 20000
+ * or against the Swift app, on a Mac:
+ *   cd apps/apple/fuzz && ./run.sh handshake-verdict
+ *   cd services/server && npx tsx test/fuzz/handshake-differential.ts --iterations 20000 --oracle swift
  *   …                                                                 --mode encode
  */
 
@@ -38,8 +41,9 @@ import {
   HANDSHAKE_VERSION,
   type HandshakeFrame,
 } from "../../src/protocol/handshake";
+import { type Oracle, oracle } from "./oracle";
 
-const SWIFT = path.join(__dirname, "../../../../apps/apple/fuzz/build/handshake-verdict");
+let ORACLE: Oracle;
 const VECTORS = path.join(__dirname, "..", "helpers", "handshake-vectors.json");
 const FINDINGS = path.join(__dirname, "findings");
 const BATCH = 1000;
@@ -258,7 +262,10 @@ function swiftVerdicts(mode: string, lines: string[]): string[] {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "handshake-batch-"));
   const file = path.join(dir, "batch.jsonl");
   fs.writeFileSync(file, `${lines.join("\n")}\n`);
-  const stdout = execFileSync(SWIFT, [mode, file], { maxBuffer: 512 * 1024 * 1024, encoding: "utf8" });
+  const stdout = execFileSync(ORACLE.command, [...ORACLE.args, mode, file], {
+    maxBuffer: 512 * 1024 * 1024,
+    encoding: "utf8",
+  });
   fs.rmSync(dir, { recursive: true, force: true });
   return stdout.split("\n").filter((l) => l.length > 0);
 }
@@ -278,11 +285,7 @@ function main() {
     console.error("--mode must be decode, encode or round");
     process.exit(2);
   }
-  if (!fs.existsSync(SWIFT)) {
-    console.error(`❌ no Swift half at ${SWIFT}`);
-    console.error("   build it:  cd apps/apple/fuzz && ./run.sh handshake-verdict");
-    process.exit(2);
-  }
+  ORACLE = oracle("handshake-verdict", "handshake");
 
   console.log(
     `handshake differential · mode ${mode} · ${iterations} iterations · seed ${seed} · v${HANDSHAKE_VERSION}`,
@@ -323,7 +326,7 @@ function main() {
 
     const swift = swiftVerdicts(mode, lines);
     if (swift.length !== n) {
-      console.error(`❌ Swift returned ${swift.length} verdicts for ${n} inputs`);
+      console.error(`❌ ${ORACLE.name} returned ${swift.length} verdicts for ${n} inputs`);
       process.exit(2);
     }
 
@@ -355,7 +358,7 @@ function main() {
       } else {
         console.error(`  ${lines[i]!.slice(0, 160)}`);
       }
-      console.error(`  swift  ${sw.slice(0, 160)}`);
+      console.error(`  ${ORACLE.name.padEnd(5)}  ${sw.slice(0, 160)}`);
       console.error(`  ts     ${ts.slice(0, 160)}`);
       console.error(`  saved  ${path.relative(process.cwd(), file)}`);
       if (mismatches >= 10) {
