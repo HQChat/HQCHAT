@@ -276,39 +276,269 @@ pub fn start_as_initiator(
     bundle: &PrekeyBundle,
     now: i64,
 ) -> Result<(SessionState, InitHeader), Error> {
-    todo!("lib/protocol-ratchet")
+    let (ct_id, ss_id) = kem.encapsulate(&bundle.identity_pk)?;
+    let (ct_mt, ss_mt) = kem.encapsulate(&bundle.medium_pk)?;
+    let one_time = match &bundle.one_time {
+        Some((pk, id)) => Some((kem.encapsulate(pk)?, *id)),
+        None => None,
+    };
+    let start = init_root(&ss_id, &ss_mt, one_time.as_ref().map(|((_, ss), _)| ss));
+    let mine = kem.generate_keypair()?;
+    let header = InitHeader {
+        ct_id,
+        ct_mt,
+        one_time: one_time.map(|((ct, _), id)| (ct, id)),
+        cid: chain_id(mine.public.as_bytes()),
+        rk: mine.public.clone(),
+    };
+    let state = SessionState {
+        root: start.root,
+        rk: mine,
+        peer_rk: None,
+        send: Some(Chain {
+            ck: start.chain,
+            n: 0,
+        }),
+        recv: None,
+        prev_send_n: 0,
+        skipped: Vec::new(),
+        pending_init: Some(header.clone()),
+        seen_chains: Vec::new(),
+        sent_on_chain: 0,
+        chain_started_at: now,
+    };
+    Ok((state, header))
 }
 
-/// Responder side: rebuilds the root from an `init`. `None` when a
-/// ciphertext does not open or the one-time secret is gone; callers keep any
-/// existing session then, so a replayed init cannot reset a conversation.
+/// Responder side: rebuilds the root from an `init` and opens the matching
+/// receiving chain. `None` when the one-time secret is gone or the KEM fails;
+/// callers keep any existing session then, so a replayed init cannot reset a
+/// conversation.
 pub fn start_as_responder(
     kem: &dyn Kem,
     secrets: &dyn PrekeySecrets,
     init: &InitHeader,
     now: i64,
 ) -> Option<SessionState> {
-    todo!("lib/protocol-ratchet")
+    let ss_id = kem.decapsulate(secrets.identity_sk(), &init.ct_id).ok()?;
+    let ss_mt = kem.decapsulate(secrets.medium_sk(), &init.ct_mt).ok()?;
+    let ss_ot = match &init.one_time {
+        Some((ct, id)) => Some(kem.decapsulate(secrets.one_time_sk(*id)?, ct).ok()?),
+        None => None,
+    };
+    let start = init_root(&ss_id, &ss_mt, ss_ot.as_ref());
+    let mine = kem.generate_keypair().ok()?;
+    Some(SessionState {
+        root: start.root,
+        rk: mine,
+        peer_rk: Some(init.rk.clone()),
+        send: None,
+        recv: Some(Chain {
+            ck: start.chain,
+            n: 0,
+        }),
+        prev_send_n: 0,
+        skipped: Vec::new(),
+        pending_init: None,
+        seen_chains: vec![chain_id(init.rk.as_bytes())],
+        sent_on_chain: 0,
+        chain_started_at: now,
+    })
 }
 
-/// Whether the next send steps the ratchet.
+/// Whether the next send steps: always when there is no sending chain yet,
+/// never before the peer has advertised a key or on an unused chain,
+/// otherwise once the chain is full or old (the post-compromise window).
 pub fn should_step(state: &SessionState, now: i64) -> bool {
-    todo!("lib/protocol-ratchet")
+    if state.peer_rk.is_none() {
+        return false;
+    }
+    if state.send.is_none() {
+        return true;
+    }
+    if state.sent_on_chain == 0 {
+        return false;
+    }
+    if state.sent_on_chain >= RATCHET_MAX_MESSAGES_PER_CHAIN {
+        return true;
+    }
+    now - state.chain_started_at >= RATCHET_MIN_STEP_INTERVAL_MS
 }
 
 /// Takes the next sending key, stepping first when [`should_step`] says so.
+/// The header must be bound as the payload's AAD.
 pub fn seal(kem: &dyn Kem, state: &mut SessionState, now: i64) -> Result<Sealed, Error> {
-    todo!("lib/protocol-ratchet")
+    let mut stepped = None;
+    if should_step(state, now) {
+        let peer_rk = state
+            .peer_rk
+            .as_ref()
+            .expect("should_step requires a peer key");
+        let (ct, ss) = kem.encapsulate(peer_rk)?;
+        let next = root_step(&state.root, &ss);
+        let mine = kem.generate_keypair()?;
+        state.root = next.root;
+        state.prev_send_n = state.send.as_ref().map_or(0, |c| c.n);
+        state.send = Some(Chain {
+            ck: next.chain,
+            n: 0,
+        });
+        stepped = Some((mine.public.clone(), ct));
+        state.rk = mine;
+        state.sent_on_chain = 0;
+        state.chain_started_at = now;
+    }
+    let cid = chain_id(state.rk.public.as_bytes());
+    let send = state.send.as_mut().ok_or(Error::Invalid(
+        "seal: no sending chain and no peer key to step against",
+    ))?;
+    let n = send.n;
+    send.n = n
+        .checked_add(1)
+        .ok_or(Error::Invalid("seal: chain exhausted"))?;
+    let key = message_key(&send.ck);
+    send.ck = chain_next(&send.ck);
+    state.sent_on_chain += 1;
+    let (rk, kem_ct) = match stepped {
+        Some((rk, ct)) => (Some(rk), Some(ct)),
+        None => (None, None),
+    };
+    Ok(Sealed {
+        key,
+        header: MessageHeader {
+            cid,
+            rk,
+            kem_ct,
+            n,
+            pn: state.prev_send_n,
+        },
+        init: state.pending_init.clone(),
+    })
 }
 
-/// Finds the key for `header`. `verify` is the AEAD open and the only
-/// authenticator (HQC rejects implicitly), so `state` is written only after
-/// it returns true. `None` when nothing verifies.
+/// Keys left on a retiring chain: its id and the (index, key) pairs.
+type ChainTail = ([u8; 16], Vec<(u32, SymmetricKey)>);
+
+/// A receiving step computed from a header, not yet committed.
+struct PendingStep {
+    root: SymmetricKey,
+    peer_rk: PublicKey,
+    recv: Chain,
+    entered: [u8; 16],
+    /// Keys left on the retiring chain (up to `pn`), cached once committed.
+    tail: Option<ChainTail>,
+}
+
+/// The step a header asks for into a new chain, or `None` unless it is a
+/// well-formed step to an unseen chain whose ciphertext decapsulates.
+fn compute_step(
+    kem: &dyn Kem,
+    state: &SessionState,
+    header: &MessageHeader,
+    current: Option<[u8; 16]>,
+) -> Option<PendingStep> {
+    let (rk, kem_ct) = (header.rk.as_ref()?, header.kem_ct.as_ref()?);
+    if chain_id(rk.as_bytes()) != header.cid || state.seen_chains.contains(&header.cid) {
+        return None;
+    }
+    let ss = kem.decapsulate(&state.rk.secret, kem_ct).ok()?;
+
+    // `pn` is attacker-chosen and caching evicts, so the tail is only computed here.
+    let mut tail = None;
+    if let (Some(recv), Some(current)) = (&state.recv, current)
+        && header.pn > recv.n
+        && (header.pn - recv.n) as usize <= MAX_SKIPPED
+    {
+        let walked = walk_chain(&recv.ck, recv.n, header.pn - 1).ok()?;
+        let mut keys = walked.skipped;
+        keys.push((header.pn - 1, walked.key));
+        tail = Some((current, keys));
+    }
+    let next = root_step(&state.root, &ss);
+    Some(PendingStep {
+        root: next.root,
+        peer_rk: rk.clone(),
+        recv: Chain {
+            ck: next.chain,
+            n: 0,
+        },
+        entered: header.cid,
+        tail,
+    })
+}
+
+fn cache_skipped(state: &mut SessionState, chain: [u8; 16], keys: Vec<(u32, SymmetricKey)>) {
+    state.skipped.extend(
+        keys.into_iter()
+            .map(|(n, key)| SkippedKey { chain, n, key }),
+    );
+    if state.skipped.len() > MAX_SKIPPED {
+        let excess = state.skipped.len() - MAX_SKIPPED;
+        state.skipped.drain(..excess);
+    }
+}
+
+fn remember_chain(state: &mut SessionState, cid: [u8; 16]) {
+    state.seen_chains.push(cid);
+    if state.seen_chains.len() > MAX_SEEN_CHAINS {
+        let excess = state.seen_chains.len() - MAX_SEEN_CHAINS;
+        state.seen_chains.drain(..excess);
+    }
+}
+
+/// The message key for an inbound header, or `None`: a replay, a retired
+/// chain, a gap too large, or a payload that does not authenticate (none is
+/// an error). `verify` is the AEAD open and the only authenticator; `state`
+/// is written only after it returns true.
 pub fn open(
     kem: &dyn Kem,
     state: &mut SessionState,
     header: &MessageHeader,
     verify: &mut dyn FnMut(&SymmetricKey) -> bool,
 ) -> Option<SymmetricKey> {
-    todo!("lib/protocol-ratchet")
+    // Skipped keys first, so a late message resolves without touching live state.
+    if let Some(i) = state
+        .skipped
+        .iter()
+        .position(|s| s.chain == header.cid && s.n == header.n)
+    {
+        if !verify(&state.skipped[i].key) {
+            return None;
+        }
+        return Some(state.skipped.remove(i).key);
+    }
+
+    let current = state.peer_rk.as_ref().map(|rk| chain_id(rk.as_bytes()));
+    let step = if Some(header.cid) == current {
+        None
+    } else {
+        Some(compute_step(kem, state, header, current)?)
+    };
+    let recv = match &step {
+        Some(step) => &step.recv,
+        None => state.recv.as_ref()?,
+    };
+    if header.n < recv.n {
+        return None;
+    }
+    let walk = walk_chain(&recv.ck, recv.n, header.n).ok()?;
+    if !verify(&walk.key) {
+        return None;
+    }
+
+    if let Some(step) = step {
+        state.root = step.root;
+        state.peer_rk = Some(step.peer_rk);
+        if let Some((cid, keys)) = step.tail {
+            cache_skipped(state, cid, keys);
+        }
+        remember_chain(state, step.entered);
+    }
+    cache_skipped(state, header.cid, walk.skipped);
+    state.recv = Some(Chain {
+        ck: walk.next_ck,
+        n: walk.next_n,
+    });
+    state.pending_init = None;
+    Some(walk.key)
 }
