@@ -72,22 +72,35 @@
           };
         in
         p.mkShellNoCC {
-          packages = with p; [
-            nodejs_22
-            (callPackage ./infra/nixos/pkgs/terraform-bin.nix { })
-            tflint
-            shellcheck
-            shfmt
-            actionlint
-            biome
-            nixfmt
-            statix
-            deadnix
-            jq
-            age
-            awscli2
-            gitleaks
-          ];
+          # The prepared HQC tree that core/hqc-sys compiles: the same bytes as
+          # the Nix library and the Apple builds.
+          HQC_SOURCE = (p.callPackage ./native/hqc/package.nix { }).source;
+          packages =
+            with p;
+            [
+              rustc
+              cargo
+              clippy
+              rustfmt
+            ]
+            # cc for core/hqc-sys; macOS uses the Xcode toolchain already on PATH.
+            ++ lib.optional stdenv.hostPlatform.isLinux gcc
+            ++ [
+              nodejs_22
+              (callPackage ./infra/nixos/pkgs/terraform-bin.nix { })
+              tflint
+              shellcheck
+              shfmt
+              actionlint
+              biome
+              nixfmt
+              statix
+              deadnix
+              jq
+              age
+              awscli2
+              gitleaks
+            ];
         };
     in
     {
