@@ -175,6 +175,8 @@ export interface CoreAddon {
   authProof(ss: Buffer): Buffer;
   authProofMatches(expected: Buffer, offered: Buffer): boolean;
   parseConnectProof(password: string): ConnectProof | null;
+  /** 32 bytes, a canonical Ed25519 point, not of small order. */
+  isSigningKey(raw: Buffer): boolean;
   isFreshTimestamp(ts: number, nowSec: number): boolean;
   verifyConnectProof(publicKey: Buffer, clientid: string, proof: ConnectProof): boolean;
   peerId(publicKeyHex: string): string;
@@ -185,6 +187,9 @@ export interface CoreAddon {
   gatewayPublicKey(key: GatewayKey): GatewayPublicKey;
   hqnMsg1Length(payloadLen: number): number;
   hqnFrame(body: Buffer): Buffer;
+  readonly MQTT_PROOF_NONCE_TTL_SECONDS: number;
+  readonly PEER_ID_LENGTH: number;
+  readonly HQC_PUBLIC_KEY_BYTES: number;
   HqnGatewayHandshake: HqnGatewayHandshakeClass;
   HqnMessage2: unknown;
   HqnTransport: unknown;
@@ -199,6 +204,7 @@ export const CORE_EXPORTS: readonly (keyof CoreAddon)[] = [
   "authProof",
   "authProofMatches",
   "parseConnectProof",
+  "isSigningKey",
   "isFreshTimestamp",
   "verifyConnectProof",
   "peerId",
@@ -209,6 +215,9 @@ export const CORE_EXPORTS: readonly (keyof CoreAddon)[] = [
   "gatewayPublicKey",
   "hqnMsg1Length",
   "hqnFrame",
+  "MQTT_PROOF_NONCE_TTL_SECONDS",
+  "PEER_ID_LENGTH",
+  "HQC_PUBLIC_KEY_BYTES",
   "HqnGatewayHandshake",
   "HqnMessage2",
   "HqnTransport",
@@ -235,3 +244,8 @@ function load(): CoreAddon {
 }
 
 export const core: CoreAddon = load();
+
+/** Whether `value` is an id (64 lowercase hex), for values from JSON. */
+export function isPeerId(value: unknown): value is string {
+  return typeof value === "string" && core.isPeerId(value);
+}

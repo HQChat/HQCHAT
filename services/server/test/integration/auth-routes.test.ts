@@ -135,6 +135,9 @@ test("/auth/refresh refuses a malformed signing key with a 400", async () => {
     crypto.randomBytes(31).toString("base64"),
     crypto.randomBytes(33).toString("base64"),
     42,
+    // 32 bytes but small order: the identity point, and an order-4 point.
+    Buffer.concat([Buffer.from([1]), Buffer.alloc(31)]).toString("base64"),
+    Buffer.alloc(32).toString("base64"),
   ]) {
     const r = await call("POST", "/auth/refresh", { mqttSigningKey }, { authorization: `Bearer ${session}` });
     assert.equal(r.status, 400, JSON.stringify(mqttSigningKey));

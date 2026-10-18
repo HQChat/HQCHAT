@@ -113,6 +113,39 @@ pub fn is_fresh_timestamp(ts: i64, now_sec: i64) -> bool {
     mqtt_proof::is_fresh_timestamp(ts, now_sec)
 }
 
+/// How long a spent CONNECT nonce must be remembered, in seconds: past it,
+/// no timestamp that could accept the nonce is still fresh.
+#[napi]
+pub const MQTT_PROOF_NONCE_TTL_SECONDS: i64 = mqtt_proof::MQTT_PROOF_NONCE_TTL_SECONDS;
+
+/// An id's length in hex characters.
+#[napi]
+pub const PEER_ID_LENGTH: u32 = u32_of(hqchat_protocol::identity::PEER_ID_LENGTH);
+
+/// An HQC-256 public key's length in bytes.
+#[napi]
+pub const HQC_PUBLIC_KEY_BYTES: u32 = u32_of(hqc::PUBLIC_KEY_BYTES);
+
+/// A core size as a JS number, at compile time: one that did not fit would
+/// fail the build rather than wrap.
+const fn u32_of(n: usize) -> u32 {
+    assert!(n <= 0xffff_ffff, "does not fit a u32");
+    #[expect(
+        clippy::as_conversions,
+        clippy::cast_possible_truncation,
+        reason = "the assertion above proves the value fits; const fns cannot call try_from"
+    )]
+    let n = n as u32;
+    n
+}
+
+/// Whether `raw` is an Ed25519 public key worth registering for CONNECT
+/// proofs: 32 bytes, a canonical point, not of small order (`ed25519PublicKey`).
+#[napi]
+pub fn is_signing_key(raw: Buffer) -> bool {
+    <[u8; 32]>::try_from(raw.as_ref()).is_ok_and(|key| mqtt_proof::is_valid_public_key(&key))
+}
+
 /// Whether the proof's signature verifies for `clientid` under the raw
 /// 32-byte Ed25519 key (`verifyProofSignature` over `proofMessage`).
 #[napi]

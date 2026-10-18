@@ -1,4 +1,4 @@
-import { isPeerId } from "../../protocol/identity";
+import { isPeerId } from "../../common/core";
 import { one, q, tx } from "./pg";
 
 const RESERVED_USERNAMES = new Set([

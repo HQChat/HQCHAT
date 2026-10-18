@@ -1,16 +1,7 @@
 import * as crypto from "node:crypto";
 import type * as http from "node:http";
+import { core } from "../common/core";
 import { logger } from "../common/logger";
-import { authProof } from "../protocol/auth-proof";
-import { peerId } from "../protocol/identity";
-import {
-  ed25519PublicKey,
-  isFreshTimestamp,
-  MQTT_PROOF_NONCE_TTL_SECONDS,
-  parseProofPassword,
-  proofMessage,
-  verifyProofSignature,
-} from "../protocol/mqtt-proof";
 import { DB } from "./db/api";
 import { bearer, clientIp, HttpError, type JsonBody, readJson, send, textField } from "./http";
 import { resolveTransportInfo } from "./transport-config";
@@ -53,7 +44,7 @@ async function befriendBot(id: string): Promise<void> {
 function readSigningKey(body: JsonBody): Buffer {
   const encoded = textField(body, "mqttSigningKey");
   const raw = Buffer.from(encoded, "base64");
-  if (raw.length !== 32 || raw.toString("base64") !== encoded || !ed25519PublicKey(raw)) {
+  if (raw.length !== 32 || raw.toString("base64") !== encoded || !core.isSigningKey(raw)) {
     throw new HttpError(
       400,
       "INVALID_MQTT_SIGNING_KEY",
@@ -71,7 +62,7 @@ async function signingKeyFields(id: string, signingKey: Buffer) {
 async function handleInit(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const pkHex = textField(await readJson(req), "pk").toLowerCase();
   if (!/^[0-9a-f]+$/.test(pkHex)) return send(res, 400, { error: "bad public key" });
-  const id = peerId(pkHex);
+  const id = core.peerId(pkHex);
 
   const [ipHits, pkHits] = await Promise.all([
     DB.bumpCounter(`init:ip:${clientIp(req)}`, 60),
@@ -82,10 +73,9 @@ async function handleInit(req: http.IncomingMessage, res: http.ServerResponse): 
     return send(res, 429, { error: "RATE_LIMITED" });
   }
 
-  const { HqcWrapper, HQC_CONSTANTS } = await import("../protocol/hqc");
-  if (pkHex.length !== HQC_CONSTANTS.PUBLIC_KEY_BYTES * 2) return send(res, 400, { error: "bad public key" });
-  const { ct, ss } = HqcWrapper.encapsulate(Buffer.from(pkHex, "hex"));
-  await DB.startAuthChallenge(id, authProof(ss).toString("hex"));
+  if (pkHex.length !== core.HQC_PUBLIC_KEY_BYTES * 2) return send(res, 400, { error: "bad public key" });
+  const { ct, ss } = core.hqcEncapsulate(Buffer.from(pkHex, "hex"));
+  await DB.startAuthChallenge(id, core.authProof(ss).toString("hex"));
   return send(res, 200, { ct: ct.toString("base64") });
 }
 
@@ -93,7 +83,7 @@ async function handleVerify(req: http.IncomingMessage, res: http.ServerResponse)
   const body = await readJson(req);
   const signingKey = readSigningKey(body);
   const pkHex = textField(body, "pk").toLowerCase();
-  const id = peerId(pkHex);
+  const id = core.peerId(pkHex);
   const solutionHex = Buffer.from(textField(body, "solution"), "base64").toString("hex");
 
   const expectedHex = await DB.takeAuthChallenge(id);
@@ -123,15 +113,13 @@ async function handleVerify(req: http.IncomingMessage, res: http.ServerResponse)
  * signature, then the nonce, spent last so only a valid proof consumes one.
  */
 async function verifyConnect(id: string, clientid: string, password: string): Promise<number | null> {
-  const proof = parseProofPassword(password);
+  const proof = core.parseConnectProof(password);
   if (!proof || clientid !== id) return null;
-  if (!isFreshTimestamp(proof.ts, Math.floor(Date.now() / 1000))) return null;
+  if (!core.isFreshTimestamp(proof.ts, Math.floor(Date.now() / 1000))) return null;
   const key = await DB.getMqttSessionKey(id, proof.keyId);
   if (!key) return null;
-  if (!verifyProofSignature(key.publicKey, proofMessage(clientid, proof.keyId, proof.ts, proof.nonce), proof.sig)) {
-    return null;
-  }
-  if (!(await DB.useNonce(`v1:${id}:${proof.nonce.toString("hex")}`, MQTT_PROOF_NONCE_TTL_SECONDS))) {
+  if (!core.verifyConnectProof(key.publicKey, clientid, proof)) return null;
+  if (!(await DB.useNonce(`v1:${id}:${proof.nonce.toString("hex")}`, core.MQTT_PROOF_NONCE_TTL_SECONDS))) {
     logger.warn(`[auth] replayed CONNECT for ${id.slice(0, 12)}…`);
     return null;
   }

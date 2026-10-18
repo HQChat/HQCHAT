@@ -178,6 +178,14 @@ pub fn sign_connect(
     }))
 }
 
+/// Whether `public_key` is an Ed25519 key worth registering: a canonical
+/// point that is not of small order. A small-order key could never pass
+/// [`verify_signature`], so it is refused when it is registered rather than
+/// at every CONNECT.
+pub fn is_valid_public_key(public_key: &[u8; 32]) -> bool {
+    VerifyingKey::from_bytes(public_key).is_ok_and(|key| !key.is_weak())
+}
+
 /// Whether `signature` over `message` verifies under the raw `public_key`.
 /// Strict: small-order and non-canonical keys or signatures are refused.
 pub fn verify_signature(public_key: &[u8; 32], message: &[u8], signature: &[u8; 64]) -> bool {
@@ -190,6 +198,20 @@ pub fn verify_signature(public_key: &[u8; 32], message: &[u8], signature: &[u8; 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_real_key_is_valid_and_a_small_order_one_is_not() {
+        let key = SigningKey::from_seed([7; 32]).public_key();
+        assert!(is_valid_public_key(&key));
+        // The identity point (y = 1) has order 1.
+        let mut identity = [0u8; 32];
+        identity[0] = 1;
+        assert!(!is_valid_public_key(&identity));
+        // y = 2 is not on the curve.
+        let mut off_curve = [0u8; 32];
+        off_curve[0] = 2;
+        assert!(!is_valid_public_key(&off_curve));
+    }
 
     #[test]
     fn the_window_is_plus_or_minus_skew_inclusive() {
