@@ -27,6 +27,9 @@ pub struct EngineOptions {
     pub dir: String,
     /// The device key from a previous run (`deviceKey`), if any.
     pub device_key: Option<Buffer>,
+    /// Whether to reach the broker over hqn/1 when the server offers it
+    /// (default true); false keeps to WSS.
+    pub hqn: Option<bool>,
 }
 
 /// A message as the UI shows it.
@@ -308,6 +311,7 @@ impl JsEngine {
             server_url: o.server_url,
             profile_id: o.profile_id,
             device: Device::Headless,
+            allow_hqn: o.hqn.unwrap_or(true),
         };
         Ok(Self {
             engine: Engine::new(config, vault.clone(), store).map_err(err)?,

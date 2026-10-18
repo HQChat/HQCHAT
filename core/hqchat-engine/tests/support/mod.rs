@@ -26,6 +26,7 @@ pub fn config(profile: &str) -> Config {
         server_url: "https://hqchat.test".into(),
         profile_id: profile.into(),
         device: Device::Headless,
+        allow_hqn: true,
     }
 }
 
@@ -399,9 +400,13 @@ pub struct Client {
 
 impl Client {
     pub fn new(server: &Rc<RefCell<FakeServer>>, profile: &str) -> Client {
+        Client::with_config(server, profile, config(profile))
+    }
+
+    pub fn with_config(server: &Rc<RefCell<FakeServer>>, profile: &str, config: Config) -> Client {
         let vault = Arc::new(SoftwareVault::default());
         let store = Arc::new(MemoryStore::default());
-        let engine = Engine::new(config(profile), vault.clone(), store.clone()).unwrap();
+        let engine = Engine::new(config, vault.clone(), store.clone()).unwrap();
         Client {
             engine,
             vault,
@@ -416,7 +421,15 @@ impl Client {
 
     /// A client with an identity, started and signed in.
     pub fn signed_in(server: &Rc<RefCell<FakeServer>>, profile: &str) -> Client {
-        let mut c = Client::new(server, profile);
+        Client::signed_in_with(server, profile, config(profile))
+    }
+
+    pub fn signed_in_with(
+        server: &Rc<RefCell<FakeServer>>,
+        profile: &str,
+        config: Config,
+    ) -> Client {
+        let mut c = Client::with_config(server, profile, config);
         let e = c.engine.create_identity().unwrap();
         c.pump(e);
         let before: Vec<String> = server.borrow().users.keys().cloned().collect();
