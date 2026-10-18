@@ -1,5 +1,5 @@
 {
-  "_comment": "hqn/1 hybrid Noise handshake (src/protocol/noise.ts). Every random input is pinned, including the KEM's (ct, ss). Asserted by services/server/test/noise.test.ts and apps/apple/tests/NoiseHQNTests.swift, both of which READ this file. Regenerate with scripts/gen-noise-hqn-vectors.ts.",
+  "_comment": "hqn/1 hybrid Noise handshake (test/reference/protocol/noise.ts). Every random input is pinned, including the KEM's (ct, ss). Asserted by services/server/test/noise.test.ts and apps/apple/tests/NoiseHQNTests.swift, both of which READ this file. Regenerate with test/reference/vectors/gen-noise-hqn-vectors.ts.",
   "version": 1,
   "protocolName": "Noise_pqNK_25519+HQC256_ChaChaPoly_SHA256",
   "prologueLabel": "hqchat-noise/1",

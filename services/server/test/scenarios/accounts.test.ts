@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ApiError } from "../../src/client";
+import { ApiError } from "../reference/client";
 import { BASE_URL, BOT_USERNAME, friends, newClient, pause, signedUp, signIn, stackUp, tag } from "./stack";
 
 const rejectsWith = (status: number, code?: string) => (e: unknown) =>

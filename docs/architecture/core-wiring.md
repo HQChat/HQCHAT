@@ -23,7 +23,7 @@ flowchart LR
 |---|---|---|
 | UI | SwiftUI views over SwiftData rows (`ChatView`, `FriendListView`) | the same views, fed by `Engine` effects and reads (`history`, `friends`) |
 | Client logic | Swift `Services/` (~9.5k lines); the TS client in `services/server/src/client` | `hqchat-engine`: one implementation, reached through `hqchat-ffi` (Swift, Kotlin) or `hqchat-node` (the bot) |
-| Protocol | Swift (`RatchetSession`, `ConversationEnvelopeV3`, `Handshake`, `NoiseHQN`, `MQTTWireClient` …) and TS (`src/protocol/*.ts`), held together by vectors | `hqchat-protocol`, checked against the same vectors |
+| Protocol | Swift (`RatchetSession`, `ConversationEnvelopeV3`, `Handshake`, `NoiseHQN`, `MQTTWireClient` …) and TS (`test/reference/protocol/*.ts`), held together by vectors | `hqchat-protocol`, checked against the same vectors |
 | HQC-256 | `libhqc_wrap` via the bridging header (Swift) and koffi (TS) | `hqc` over `hqc-sys`, the same C at the same commit |
 | I/O | inside the Swift services (URLSession, Network.framework) | the shell, which carries out effects: `Http`, `Open`, `Write`, `Close`, `Timer` |
 | Keys at rest | `MessageKeyStore` (Secure Enclave), `AESKeyStore` (Keychain) | the shell's `KeyVault` (Secure Enclave, Keystore, TPM): `device_public_key`, `agree` |
@@ -199,15 +199,15 @@ today is the importer's job (phase 3).
 | `parseConnectProof`, `isFreshTimestamp`, `verifyConnectProof` | `protocol/mqtt-proof.ts` in `auth.ts verifyConnect` |
 | `peerId`, `isPeerId`, `keyMatchesId`, `conversationTopic`, `handshakeTopic` | `protocol/identity.ts`, `topics.ts` in `api.ts`, `emqx.ts` |
 | `HqnGatewayHandshake`, `HqnTransport`, `gatewayPublicKey`, `hqnMsg1Length`, `hqnFrame` | `protocol/noise.ts` in `gateway/gateway.ts`, `gateway/keys.ts` |
-| `Engine` (with a software vault and a directory store) | `src/client/*` for `hqcat-bot`, `provision-client.ts`, the scenarios |
+| `Engine` (with a software vault and a directory store) | `test/reference/client/*` for `hqcat-bot`, `provision-client.ts`, the scenarios |
 
 ## What goes and what stays
 
 | Where | Deleted once the core is wired in | Kept |
 |---|---|---|
 | `apps/apple/HQChat/Services/` | `ChatSession` internals, `ConversationRouter`, `RatchetSession`, `DoubleRatchet`, `Handshake`, `ConversationEnvelopeV3`, `ConversationFrame`, `NoiseHQN`, `MQTTWireClient`, `MQTTService`, `MQTTConnectProof`, `MQTTTopics`, `PrekeyService`, `InboundQueue`, `AESService`, `HQCKem`, `HQCService`, `AuthService`, `DirectorySync`, `FriendService` logic, `KeyFingerprint` | an effect loop (`CoreShell`), `TLSPinning`, `PushManager`, `NotificationService`, `Reachability`, a `KeyVault` on the Secure Enclave (from `MessageKeyStore`), a `Store`, the importer, the views |
-| `services/server/src/protocol/` | everything | none |
-| `services/server/src/client/` | `conversation.ts`, `auth.ts`, `transport.ts`, `hqn-stream.ts`, `store.ts` | a thin effect loop over the napi `Engine` (fetch, `net`, `ws`) for the bot |
+| `services/server/test/reference/protocol/` | everything | none |
+| `services/server/test/reference/client/` | `conversation.ts`, `auth.ts`, `transport.ts`, `hqn-stream.ts`, `store.ts` | a thin effect loop over the napi `Engine` (fetch, `net`, `ws`) for the bot |
 | `services/server/src/server/`, `gateway/` | the koffi loader | everything else, calling napi |
 | `native/hqc/` | nothing (the Rust build compiles it) | all |
 

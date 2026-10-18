@@ -24,7 +24,6 @@
   "license": "AGPL-3.0-only",
   "dependencies": {
     "@sentry/node": "^10.75.3",
-    "koffi": "^2.15.0",
     "mqtt": "^5.15.2",
     "pg": "^8.13.1",
     "stripe": "^17.5.0",

@@ -3,7 +3,7 @@
 // hqn/1 — the client half of the hybrid post-quantum Noise handshake that
 // carries MQTT over raw TCP to the gateway in front of the broker.
 //
-// The protocol is specified in services/server/src/protocol/noise.ts; this mirrors it
+// The protocol is specified in services/server/test/reference/protocol/noise.ts; this mirrors it
 // byte for byte. In short:
 //
 //   Noise_pqNK_25519+HQC256_ChaChaPoly_SHA256

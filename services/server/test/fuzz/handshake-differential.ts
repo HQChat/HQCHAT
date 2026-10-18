@@ -40,7 +40,7 @@ import {
   HANDSHAKE_PROOF_BYTES,
   HANDSHAKE_VERSION,
   type HandshakeFrame,
-} from "../../src/protocol/handshake";
+} from "../reference/protocol/handshake";
 import { type Oracle, oracle } from "./oracle";
 
 let ORACLE: Oracle;

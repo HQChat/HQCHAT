@@ -1,5 +1,5 @@
 //! The state file of the TS reference client (`FileStore` in
-//! services/server/src/client/store.ts), which the bot wrote until it moved
+//! services/server/test/reference/client/store.ts), which the bot wrote until it moved
 //! to the core: friends with their pinned keys, topics and ratchet sessions,
 //! and the prekey secrets. Read once, into an [`Import`].
 

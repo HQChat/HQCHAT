@@ -26,7 +26,7 @@ import {
   msg1Length,
   sealFrames,
   type Transport,
-} from "../../src/protocol/noise";
+} from "../reference/protocol/noise";
 
 // --- fixtures ----------------------------------------------------------------
 

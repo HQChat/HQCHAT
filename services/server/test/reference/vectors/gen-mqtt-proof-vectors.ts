@@ -1,8 +1,8 @@
 // Regenerates test/helpers/mqtt-proof-vectors.json.
 //
-//   npx tsx scripts/gen-mqtt-proof-vectors.ts > test/helpers/mqtt-proof-vectors.json
+//   npx tsx test/reference/vectors/gen-mqtt-proof-vectors.ts > test/helpers/mqtt-proof-vectors.json
 //
-// The v1 MQTT CONNECT proof (src/protocol/mqtt-proof.ts) is built by the Swift client and
+// The v1 MQTT CONNECT proof (test/reference/protocol/mqtt-proof.ts) is built by the Swift client and
 // checked by the auth hook. Disagree about one byte of the signed message and
 // every CONNECT is refused with nothing in either log but "deny" — so both
 // sides READ this file: services/server/test/mqtt-proof.test.ts and
@@ -18,12 +18,7 @@
 // "password" beside a long token trips generic secret scanners on every PR.
 
 import * as crypto from "node:crypto";
-import {
-  formatProofPassword,
-  MQTT_PROOF_CONTEXT,
-  MQTT_PROOF_SKEW_SECONDS,
-  proofMessage,
-} from "../src/protocol/mqtt-proof";
+import { formatProofPassword, MQTT_PROOF_CONTEXT, MQTT_PROOF_SKEW_SECONDS, proofMessage } from "../protocol/mqtt-proof";
 
 const PKCS8_ED25519_PREFIX = Buffer.from("302e020100300506032b657004220420", "hex");
 
@@ -77,7 +72,7 @@ process.stdout.write(
         "v1 MQTT CONNECT proof: password = v1.<keyId>.<ts>.<nonce b64url>.<Ed25519 sig b64url> over " +
         "context 0x00 clientid 0x00 keyId 0x00 ts 0x00 nonce. Asserted by services/server/test/mqtt-proof.test.ts " +
         "and apps/apple/tests/MQTTProofTests.swift, both of which READ this file. " +
-        "Regenerate with scripts/gen-mqtt-proof-vectors.ts.",
+        "Regenerate with test/reference/vectors/gen-mqtt-proof-vectors.ts.",
       version: 1,
       context: MQTT_PROOF_CONTEXT,
       skewSeconds: MQTT_PROOF_SKEW_SECONDS,

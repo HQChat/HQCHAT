@@ -1,4 +1,4 @@
-// The client identifier — the Swift twin of services/server/src/protocol/identity.ts.
+// The client identifier — the Swift twin of services/server/test/reference/protocol/identity.ts.
 // Both sides assert the SAME test/helpers/identity-vectors.json, and the SQL
 // side asserts it too (`encode(pk_digest(pk),'hex')`), so this construction is
 // pinned three ways.

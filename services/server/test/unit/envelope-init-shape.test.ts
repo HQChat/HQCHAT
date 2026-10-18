@@ -35,8 +35,8 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { type Frame, validateFrame } from "../../src/protocol/envelope";
-import { peerId } from "../../src/protocol/identity";
+import { type Frame, validateFrame } from "../reference/protocol/envelope";
+import { peerId } from "../reference/protocol/identity";
 
 /** A well-formed init, built rather than loaded: the fields a test mutates are
  *  binary in v3, and the vector file carries the frame as hex rather than as an

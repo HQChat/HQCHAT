@@ -9,8 +9,8 @@ import { createRequire } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
-import { FileStore } from "../../../services/server/src/client/store";
-import { type Kem, startAsInitiator, startAsResponder } from "../../../services/server/src/protocol/ratchet";
+import { FileStore } from "../../../services/server/test/reference/client/store";
+import { type Kem, startAsInitiator, startAsResponder } from "../../../services/server/test/reference/protocol/ratchet";
 
 const require = createRequire(__filename);
 const core = require("../hqchat_node.node");

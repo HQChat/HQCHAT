@@ -5,7 +5,7 @@ import Foundation
 // `id = sha256(lowercase-hex(publicKey))` is what names a contact everywhere:
 // the MQTT client id, the topic strings, the friend graph, the envelope's
 // `sender`. FOUR implementations have to agree about it byte-for-byte — this
-// one, services/server/src/protocol/identity.ts, Postgres's `pk_digest`, and the EMQX
+// one, services/server/test/reference/protocol/identity.ts, Postgres's `pk_digest`, and the EMQX
 // authorizer query — and a disagreement is not a crash. It is a client that
 // names itself something the broker holds no grant for, and gets dropped with
 // `0x87 NOT AUTHORIZED` and nothing in the log about encoding.

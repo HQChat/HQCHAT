@@ -19,8 +19,8 @@ import {
   frameHeader,
   looksLikeFrame,
   validateFrame,
-} from "../../src/protocol/envelope";
-import { peerId } from "../../src/protocol/identity";
+} from "../reference/protocol/envelope";
+import { peerId } from "../reference/protocol/identity";
 
 const V = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "helpers", "envelope-v3-vectors.json"), "utf8"));
 const caseNames = ["msg", "stepping", "init", "initNoOneTime", "unicode", "receipt"] as const;

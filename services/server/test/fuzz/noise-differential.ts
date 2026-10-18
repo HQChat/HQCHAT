@@ -1,6 +1,6 @@
 /**
  * Differential fuzzing of hqn/1 — the raw-TCP transport's Noise handshake and
- * framing — src/protocol/noise.ts (TypeScript, the gateway) against NoiseHQN.swift (the
+ * framing — test/reference/protocol/noise.ts (TypeScript, the gateway) against NoiseHQN.swift (the
  * app), plus the gateway's own responder on hostile input.
  *
  * WHY. The pinned vectors (test/helpers/noise-hqn-vectors.json) show the two
@@ -46,7 +46,7 @@ import {
   NoiseError,
   type ServerStatic,
   x25519KeyPair,
-} from "../../src/protocol/noise";
+} from "../reference/protocol/noise";
 import { type Oracle, oracle } from "./oracle";
 
 let ORACLE: Oracle;

@@ -60,7 +60,7 @@ the hardware key.
 |---|---|---|
 | `hqc-sys` | FFI declarations for `libhqc`; `build.rs` compiles `native/hqc` with the `cc` crate for whatever target is being built | the only crate with `unsafe` |
 | `hqc` | safe HQC-256: sized `PublicKey`, `SecretKey`, `Ciphertext`, `SharedSecret`; keygen, encaps, decaps | secrets `zeroize` on drop |
-| `hqchat-protocol` | everything in `services/server/src/protocol/` today, plus the MQTT 3.1.1 codec | `forbid(unsafe_code)`; no I/O, no clock, no global RNG (passed in, so vectors replay exactly) |
+| `hqchat-protocol` | everything in `services/server/test/reference/protocol/` today, plus the MQTT 3.1.1 codec | `forbid(unsafe_code)`; no I/O, no clock, no global RNG (passed in, so vectors replay exactly) |
 | `hqchat-engine` | the client: identity, sign-in and refresh, prekey upkeep, friends, sessions, the inbound queue, the MQTT client over hqn/1 or WebSocket, messages sealed at rest | sans-IO: commands in, effects out |
 | `hqchat-ffi` | uniffi exports for Swift and Kotlin | the only crate that knows about bindings; thin |
 | `hqchat-node` | napi-rs exports for the server, gateway, bot and reference client | thin |
@@ -209,7 +209,7 @@ The fallback tier:
 | `native/hqc/` | the C wrapper, unchanged, consumed by `hqc-sys` | AGPL-3.0 |
 | `apps/apple/` | Swift shell; `Services/` keeps the vault, byte pipes, push and UI glue, loses the protocol, MQTT and session code | PolyForm Strict |
 | `apps/kotlin/` | `shared/` (Compose UI, view models, the effect loop), `android/`, `desktop/` | PolyForm Strict |
-| `services/server/` | `src/protocol/` and most of `src/client/` replaced by the napi binding; koffi and mqtt.js dropped | AGPL-3.0 |
+| `services/server/` | `test/reference/protocol/` and most of `test/reference/client/` replaced by the napi binding; koffi and mqtt.js dropped | AGPL-3.0 |
 
 The core is AGPL for everyone else; the official apps link it because the
 maintainer holds the copyright. That only stays true if every contribution to

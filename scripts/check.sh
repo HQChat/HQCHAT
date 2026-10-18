@@ -71,16 +71,6 @@ lint() {
   finish
 }
 
-# The HQC library the server loads, built from the pinned source when HQC_LIB is unset.
-hqc() {
-  [[ -n "${HQC_LIB:-}" ]] && return 0
-  local ext=so
-  [[ "$(uname)" == Darwin ]] && ext=dylib
-  HQC_LIB="$(nix build "$root#hqc" --no-link --print-out-paths)/lib/libhqc_wrap.$ext"
-  export HQC_LIB
-  core_addon
-}
-
 # The core's Node addon the server loads, built by Nix when HQCHAT_NODE is unset.
 core_addon() {
   [[ -n "${HQCHAT_NODE:-}" ]] && return 0
@@ -89,7 +79,7 @@ core_addon() {
 }
 
 unit() {
-  hqc
+  core_addon
   run "server unit" bash -c "cd '$server' && npm run --silent test:unit"
   run "envelope fuzz" bash -c "cd '$server' && npx tsx test/fuzz/envelope-v3-invariants.ts --iterations 200000 --seed ${FUZZ_SEED:-1}"
   run "http body fuzz" bash -c "cd '$server' && npx tsx test/fuzz/http-body.ts --iterations 400 --seed ${FUZZ_SEED:-1}"
@@ -99,7 +89,7 @@ unit() {
 }
 
 integration() {
-  hqc
+  core_addon
   : "${DATABASE_URL:?integration needs DATABASE_URL}"
   run "migrate" bash -c "cd '$server' && npm run --silent migrate"
   run "server integration" bash -c "cd '$server' && npm run --silent test:integration"
@@ -107,7 +97,7 @@ integration() {
 }
 
 scenarios() {
-  hqc
+  core_addon
   run "scenarios" bash "$server/test/scenarios/run-local.sh"
   finish
 }

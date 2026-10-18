@@ -12,7 +12,7 @@
 
 import * as crypto from "node:crypto";
 import { after, type TestContext } from "node:test";
-import { ApiError, Client, type Endpoint, identityFromSeed, newSeed } from "../../src/client";
+import { ApiError, Client, type Endpoint, identityFromSeed, newSeed } from "../reference/client";
 
 export const BASE_URL = (process.env.TEST_BASE_URL || "http://127.0.0.1:8090").replace(/\/$/, "");
 export const MQTT_URL = process.env.TEST_MQTT_URL || "ws://127.0.0.1:8083/mqtt";

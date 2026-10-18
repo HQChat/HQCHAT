@@ -1,5 +1,5 @@
 {
-  "_comment": "Client ids: sha256(lowercase hex public key). Regenerate with scripts/gen-identity-vectors.ts.",
+  "_comment": "Client ids: sha256(lowercase hex public key). Regenerate with test/reference/vectors/gen-identity-vectors.ts.",
   "version": 1,
   "publicKeyBytes": 7237,
   "keys": [

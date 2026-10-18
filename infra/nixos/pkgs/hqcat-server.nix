@@ -5,7 +5,6 @@
   buildNpmPackage,
   nodejs_22,
   makeWrapper,
-  hqc,
   hqchat-node,
   version,
 }:
@@ -39,7 +38,7 @@ buildNpmPackage {
   inherit src;
 
   nodejs = nodejs_22;
-  npmDepsHash = "sha256-JJqT3enuDtBmPbElTp+djOcBu5Wl7qzlQZwHgUmvwZY=";
+  npmDepsHash = "sha256-VjOWGJQH7E2cLRz5jI4Vb01b855R/xzDSNK+F9zx09A=";
 
   dontNpmBuild = true;
 
@@ -48,18 +47,12 @@ buildNpmPackage {
   postInstall = ''
     pkg=$out/lib/node_modules/hqchat-server
 
-    if [ -d "$pkg/node_modules/koffi/build/koffi" ]; then
-      find "$pkg/node_modules/koffi/build/koffi" -mindepth 1 -maxdepth 1 -type d \
-        ! -name linux_x64 -exec rm -rf {} +
-    fi
-
     mkdir -p $out/bin
     ${lib.concatStrings (
       lib.mapAttrsToList (name: entry: ''
         makeWrapper ${nodejs_22}/bin/node $out/bin/hqcat-${name} \
           --chdir "$pkg" \
           --set-default NODE_ENV production \
-          --set-default HQC_LIB "${hqc}/lib/libhqc_wrap.so" \
           --set-default HQCHAT_NODE "${hqchat-node}/lib/hqchat_node.node" \
           --add-flags "--import tsx $pkg/${entry}"
         test -f "$pkg/${entry}"

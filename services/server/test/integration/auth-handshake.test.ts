@@ -4,12 +4,12 @@ import assert from "node:assert/strict";
 import * as crypto from "node:crypto";
 import { test } from "node:test";
 import { setLogLevel } from "../../src/common/logger";
-import { authProof } from "../../src/protocol/auth-proof";
-import { peerId } from "../../src/protocol/identity";
 import { createAuthHandler } from "../../src/server/auth";
 import { q } from "../../src/server/db/pg";
 import { call as request } from "../helpers/http";
 import { closePg, requirePg } from "../pg-helper";
+import { authProof } from "../reference/protocol/auth-proof";
+import { peerId } from "../reference/protocol/identity";
 
 test.before(requirePg);
 
@@ -22,14 +22,14 @@ const call = (path: string, body: unknown, headers: Record<string, string> = {})
 
 /** A real HQC identity. Deterministic from a seed so a failure is reproducible. */
 function identity(seed?: Buffer) {
-  const { HqcWrapper } = require("../../src/protocol/hqc") as typeof import("../../src/protocol/hqc");
+  const { HqcWrapper } = require("../reference/protocol/hqc") as typeof import("../reference/protocol/hqc");
   const { pk, sk } = HqcWrapper.keypairFromSeed(seed ?? crypto.randomBytes(32));
   return { pk, sk, pkHex: pk.toString("hex"), id: peerId(pk.toString("hex")) };
 }
 
 /** What a client does with the server's challenge: decapsulate, then HKDF. */
 function solve(sk: Buffer, ctB64: string): string {
-  const { HqcWrapper } = require("../../src/protocol/hqc") as typeof import("../../src/protocol/hqc");
+  const { HqcWrapper } = require("../reference/protocol/hqc") as typeof import("../reference/protocol/hqc");
   const ss = HqcWrapper.decapsulate(sk, Buffer.from(ctB64, "base64"));
   return authProof(ss).toString("base64");
 }
@@ -100,7 +100,7 @@ test("the challenge never carries the secret, only something derived from it", a
   const me = identity();
   created.push(me.id);
   const init = await call("/auth/init", { pk: me.pkHex });
-  const { HqcWrapper } = require("../../src/protocol/hqc") as typeof import("../../src/protocol/hqc");
+  const { HqcWrapper } = require("../reference/protocol/hqc") as typeof import("../reference/protocol/hqc");
   const ss = HqcWrapper.decapsulate(me.sk, Buffer.from(init.body.ct, "base64"));
 
   assert.ok(!init.text.includes(ss.toString("base64")), "the shared secret was returned");
@@ -121,7 +121,7 @@ test("the stored challenge is the proof, not the secret", async () => {
   const me = identity();
   created.push(me.id);
   const init = await call("/auth/init", { pk: me.pkHex });
-  const { HqcWrapper } = require("../../src/protocol/hqc") as typeof import("../../src/protocol/hqc");
+  const { HqcWrapper } = require("../reference/protocol/hqc") as typeof import("../reference/protocol/hqc");
   const ss = HqcWrapper.decapsulate(me.sk, Buffer.from(init.body.ct, "base64"));
 
   const rows = await q<{ c: string }>(`SELECT * FROM auth_challenges WHERE id = $1`, [me.id]);

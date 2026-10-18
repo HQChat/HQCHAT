@@ -1,4 +1,4 @@
-// hqn/1 (src/protocol/noise.ts): the hybrid Noise handshake the raw-TCP transport runs.
+// hqn/1 (test/reference/protocol/noise.ts): the hybrid Noise handshake the raw-TCP transport runs.
 //
 // Three layers of evidence, weakest first:
 //   - it round-trips, with the real HQC-256 library;
@@ -33,7 +33,7 @@ import {
   type ServerStatic,
   sealFrames,
   x25519KeyPair,
-} from "../../src/protocol/noise";
+} from "../reference/protocol/noise";
 
 // --- Fixtures -------------------------------------------------------------------
 
@@ -104,9 +104,9 @@ test("each direction has its own key", () => {
 });
 
 test("the real HQC-256 library completes a handshake", async (t) => {
-  let HqcWrapper: typeof import("../../src/protocol/hqc").HqcWrapper;
+  let HqcWrapper: typeof import("../reference/protocol/hqc").HqcWrapper;
   try {
-    ({ HqcWrapper } = await import("../../src/protocol/hqc"));
+    ({ HqcWrapper } = await import("../reference/protocol/hqc"));
   } catch (e) {
     return t.skip(`native HQC library unavailable: ${(e as Error).message}`);
   }

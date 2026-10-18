@@ -3,7 +3,7 @@ import CryptoKit
 
 // hqn/1 from the Swift side (Services/NoiseHQN.swift).
 //
-// The gateway runs the TypeScript implementation (services/server/src/protocol/noise.ts)
+// The gateway runs the TypeScript implementation (services/server/test/reference/protocol/noise.ts)
 // and one byte of disagreement anywhere in the transcript is a handshake that
 // fails with "decryption failed" on both ends and nothing else. So the vectors
 // are READ from the file the TypeScript suite reads: every random input is

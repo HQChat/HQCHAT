@@ -15,7 +15,7 @@
 // captured CONNECT is dead on arrival. It also takes the refresh round trip out
 // of every reconnect: the proof needs no server.
 //
-// Mirrors services/server/src/protocol/mqtt-proof.ts; pinned between the two by
+// Mirrors services/server/test/reference/protocol/mqtt-proof.ts; pinned between the two by
 // services/server/test/helpers/mqtt-proof-vectors.json
 // (apps/apple/tests/MQTTProofTests.swift reads it).
 

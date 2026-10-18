@@ -63,7 +63,7 @@ const emqxStub = {
 // Required AFTER the stub, so the handler closes over it.
 const { createApiHandler } = require("../../src/server/api") as typeof import("../../src/server/api");
 const { DB } = require("../../src/server/db/api") as typeof import("../../src/server/db/api");
-const { peerId } = require("../../src/protocol/identity") as typeof import("../../src/protocol/identity");
+const { peerId } = require("../reference/protocol/identity") as typeof import("../reference/protocol/identity");
 
 const { REPORT_CATEGORIES } = require("../../src/server/db/api") as typeof import("../../src/server/db/api");
 

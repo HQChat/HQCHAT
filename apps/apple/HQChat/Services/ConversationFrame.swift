@@ -1,5 +1,5 @@
 // One frame: what the app calls a conversation message. Mirrors
-// services/server/src/protocol/envelope.ts. `ConversationEnvelopeV3` is the
+// services/server/test/reference/protocol/envelope.ts. `ConversationEnvelopeV3` is the
 // codec (magic, offsets, blob framing); this is the shape the ratchet, the
 // router and the store see.
 //

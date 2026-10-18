@@ -1,5 +1,5 @@
 //! What two HQChat clients and the server say to each other, byte for byte:
-//! the port of `services/server/src/protocol/` plus the MQTT 3.1.1 codec.
+//! the port of `services/server/test/reference/protocol/` plus the MQTT 3.1.1 codec.
 //!
 //! Pure: no I/O, no clock (callers pass `now`), no global randomness
 //! (callers pass an [`Entropy`]), so every function replays its vectors

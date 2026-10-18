@@ -6,10 +6,10 @@
 import assert from "node:assert/strict";
 import * as crypto from "node:crypto";
 import { test } from "node:test";
-import { isPeerId, PEER_ID_LENGTH, peerId } from "../../src/protocol/identity";
 import { DB } from "../../src/server/db/api";
 import { HttpError, requireString } from "../../src/server/http";
 import { closePg, requirePg } from "../pg-helper";
+import { isPeerId, PEER_ID_LENGTH, peerId } from "../reference/protocol/identity";
 
 test.before(requirePg);
 

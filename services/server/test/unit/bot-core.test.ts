@@ -9,8 +9,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
 import { idOfSeed, openBot } from "../../src/bot/bot";
-import { FileStore } from "../../src/client/store";
 import { core } from "../../src/common/core";
+import { FileStore } from "../reference/client/store";
 
 const OPTS = { serverUrl: "https://hqchat.test", hqn: false };
 

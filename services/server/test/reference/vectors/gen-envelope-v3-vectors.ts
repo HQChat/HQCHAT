@@ -1,6 +1,6 @@
 // Regenerates test/helpers/envelope-v3-vectors.json.
 //
-//   npx tsx scripts/gen-envelope-v3-vectors.ts > test/helpers/envelope-v3-vectors.json
+//   npx tsx test/reference/vectors/gen-envelope-v3-vectors.ts > test/helpers/envelope-v3-vectors.json
 //
 // Same job as gen-envelope-vectors.ts, and for the same reason: the AAD is the
 // one place where a single byte of difference between the Swift client and the
@@ -12,10 +12,10 @@
 // that too. There is no second construction to drift.
 
 import * as crypto from "node:crypto";
-import { encodeFrame, type Frame, frameHeader } from "../src/protocol/envelope";
-import { peerId } from "../src/protocol/identity";
+import { encodeFrame, type Frame, frameHeader } from "../protocol/envelope";
+import { peerId } from "../protocol/identity";
 
-/** HQC-256 sizes (src/protocol/hqc.ts). */
+/** HQC-256 sizes (test/reference/protocol/hqc.ts). */
 const PUBLIC_KEY_BYTES = 7237;
 const CIPHERTEXT_BYTES = 14421;
 

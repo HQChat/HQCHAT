@@ -13,16 +13,16 @@
 import assert from "node:assert/strict";
 import * as crypto from "node:crypto";
 import { test } from "node:test";
-import { peerId } from "../../src/protocol/identity";
 import { DB } from "../../src/server/db/api";
 import { q } from "../../src/server/db/pg";
 import { createUser } from "../helpers/fixtures";
 import { closePg, requirePg } from "../pg-helper";
+import { peerId } from "../reference/protocol/identity";
 
 test.before(requirePg);
 
 // As in db-full-size-key.test.ts: the literal rather than an import, because
-// src/protocol/hqc.ts loads a native library built for one platform.
+// test/reference/protocol/hqc.ts loads a native library built for one platform.
 const PUBLIC_KEY_BYTES = 7237;
 
 /** A key of exactly the size the wire carries, random so it cannot compress. */

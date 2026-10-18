@@ -5,8 +5,8 @@
 import assert from "node:assert/strict";
 import * as crypto from "node:crypto";
 import { test } from "node:test";
-import { decodeFrame, encodeFrame, type Frame, frameHeader } from "../../src/protocol/envelope";
-import { peerId } from "../../src/protocol/identity";
+import { decodeFrame, encodeFrame, type Frame, frameHeader } from "../reference/protocol/envelope";
+import { peerId } from "../reference/protocol/identity";
 import {
   type Kem,
   open,
@@ -14,7 +14,7 @@ import {
   seal,
   startAsInitiator,
   startAsResponder,
-} from "../../src/protocol/ratchet";
+} from "../reference/protocol/ratchet";
 
 /** The stub KEM from ratchet-session.test.ts: implicit rejection and all. */
 function stubKem(): Kem {

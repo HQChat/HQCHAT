@@ -43,7 +43,7 @@ import * as crypto from "node:crypto";
 import * as http from "node:http";
 import { test } from "node:test";
 import { setLogLevel } from "../../src/common/logger";
-import { peerId } from "../../src/protocol/identity";
+import { peerId } from "../reference/protocol/identity";
 
 setLogLevel("silent");
 

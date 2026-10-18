@@ -1,5 +1,5 @@
 {
-  "_comment": "The published Noise_NK_25519_ChaChaPoly_SHA256 test vector, copied verbatim from the cacophony project (https://github.com/haskell-cryptography/cacophony, vectors/cacophony.txt, fetched 2026-09-28). NOT generated here: it is the independent check that src/protocol/noise.ts's core is Noise and not merely self-consistent. Asserted by test/noise.test.ts.",
+  "_comment": "The published Noise_NK_25519_ChaChaPoly_SHA256 test vector, copied verbatim from the cacophony project (https://github.com/haskell-cryptography/cacophony, vectors/cacophony.txt, fetched 2026-09-28). NOT generated here: it is the independent check that test/reference/protocol/noise.ts's core is Noise and not merely self-consistent. Asserted by test/noise.test.ts.",
   "source": "https://raw.githubusercontent.com/haskell-cryptography/cacophony/master/vectors/cacophony.txt",
   "vector": {
     "protocol_name": "Noise_NK_25519_ChaChaPoly_SHA256",

@@ -1,6 +1,6 @@
 // The client-to-client wire format: length-prefixed binary whose header is the
 // frame's own prefix, so the AAD is a byte range of what arrived and has no
-// second encoding to disagree with. Mirrors services/server/src/protocol/envelope.ts
+// second encoding to disagree with. Mirrors services/server/test/reference/protocol/envelope.ts
 // byte-for-byte; both sides assert envelope-v3-vectors.json.
 //
 // The header binds the version and the recipient (`to`), so a frame cannot be

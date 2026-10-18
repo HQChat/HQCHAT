@@ -3,13 +3,13 @@
  * hex of the public key), for full-size and edge-case keys. Read by the
  * TypeScript and Swift identity tests.
  *
- *   npx tsx scripts/gen-identity-vectors.ts > test/helpers/identity-vectors.json
+ *   npx tsx test/reference/vectors/gen-identity-vectors.ts > test/helpers/identity-vectors.json
  */
 
 import * as crypto from "node:crypto";
-import { peerId } from "../src/protocol/identity";
+import { peerId } from "../protocol/identity";
 
-/** HQC-256 public key size (src/protocol/hqc.ts). */
+/** HQC-256 public key size (test/reference/protocol/hqc.ts). */
 const PUBLIC_KEY_BYTES = 7237;
 
 /** A deterministic key of the real HQC-256 size. */
@@ -45,7 +45,8 @@ const keys = [
 console.log(
   JSON.stringify(
     {
-      _comment: "Client ids: sha256(lowercase hex public key). Regenerate with scripts/gen-identity-vectors.ts.",
+      _comment:
+        "Client ids: sha256(lowercase hex public key). Regenerate with test/reference/vectors/gen-identity-vectors.ts.",
       version: 1,
       publicKeyBytes: PUBLIC_KEY_BYTES,
       keys: keys.map((k) => ({ ...k, id: peerId(k.publicKeyHex) })),

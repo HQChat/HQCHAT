@@ -407,8 +407,9 @@ test("the crypto copy describes v2, not the protocol it replaced", async () => {
  * one shipping.
  */
 test("the ratchet numbers on the page are the ones in the code", async () => {
-  const src = readFileSync(join(REPO, "services/server/src/protocol/double-ratchet.ts"), "utf8");
-  const num = (name) => Number(src.match(new RegExp(`${name}\\s*=\\s*([0-9_]+)`))?.[1].replace(/_/g, ""));
+  // The Rust core is the implementation every client and the server run.
+  const src = readFileSync(join(REPO, "core/hqchat-protocol/src/ratchet.rs"), "utf8");
+  const num = (name) => Number(src.match(new RegExp(`${name}: \\w+\\s*=\\s*([0-9_]+)`))?.[1].replace(/_/g, ""));
   const maxMessages = num("RATCHET_MAX_MESSAGES_PER_CHAIN");
   const intervalMin = num("RATCHET_MIN_STEP_INTERVAL_MS") / 60_000;
   assert.ok(maxMessages > 0 && intervalMin > 0, "could not read the RATCHET_* constants");
@@ -435,8 +436,8 @@ test("the ratchet numbers on the page are the ones in the code", async () => {
  * not promise one flight.
  */
 test("the page does not still promise a one-flight first contact", async () => {
-  const src = readFileSync(join(REPO, "services/server/src/protocol/handshake.ts"), "utf8");
-  const info = src.match(/INFO_PREFIX = Buffer\.from\("([^"]+)"/)?.[1];
+  const src = readFileSync(join(REPO, "core/hqchat-protocol/src/handshake.rs"), "utf8");
+  const info = src.match(/INFO_PREFIX: &\[u8\] = b"([^"]+)"/)?.[1];
   assert.ok(info, "could not read the handshake info prefix");
 
   const crypto = await (await get("/crypto")).text();

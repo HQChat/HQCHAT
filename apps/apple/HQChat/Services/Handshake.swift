@@ -1,5 +1,5 @@
 // Proof that an `init` came from the peer it names. Mirrors
-// services/server/src/protocol/handshake.ts; both sides assert handshake-vectors.json.
+// services/server/test/reference/protocol/handshake.ts; both sides assert handshake-vectors.json.
 //
 // ── The hole this closes ────────────────────────────────────────────────────
 // `startAsInitiator` encapsulates three times, and every one of them is to the

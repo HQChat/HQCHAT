@@ -3,12 +3,12 @@
 import assert from "node:assert/strict";
 import * as crypto from "node:crypto";
 import { test } from "node:test";
-import { formatProofPassword, proofMessage } from "../../src/protocol/mqtt-proof";
 import { createAuthHandler } from "../../src/server/auth";
 import { DB } from "../../src/server/db/api";
 import { q } from "../../src/server/db/pg";
 import { call as request } from "../helpers/http";
 import { closePg, requirePg } from "../pg-helper";
+import { formatProofPassword, proofMessage } from "../reference/protocol/mqtt-proof";
 
 test.before(requirePg);
 
@@ -71,7 +71,7 @@ test("/mqtt/authn does not grant superuser without the internal secret", async (
 
 // --- /mqtt/authn: the v1 signed CONNECT proof --------------------------------
 //
-// src/protocol/mqtt-proof.ts. The client registers the public half of a per-session
+// test/reference/protocol/mqtt-proof.ts. The client registers the public half of a per-session
 // Ed25519 key at sign-in or refresh, then signs every CONNECT. These drive the
 // whole path: registration over /auth/refresh, then the hook.
 

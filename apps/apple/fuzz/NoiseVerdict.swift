@@ -5,7 +5,7 @@ import CryptoKit
 /// services/server/test/fuzz/noise-differential.ts.
 ///
 /// WHY. The raw-TCP transport's handshake and framing are implemented twice —
-/// services/server/src/protocol/noise.ts for the gateway, Services/NoiseHQN.swift for the
+/// services/server/test/reference/protocol/noise.ts for the gateway, Services/NoiseHQN.swift for the
 /// app — and the pinned vectors only show they agree on VALID input. What an
 /// attacker controls is the invalid input: a gateway (or anything on the path)
 /// that sends a msg2 one implementation accepts and the other refuses is a

@@ -15,12 +15,12 @@ import { test } from "node:test";
 const ROOT = path.join(__dirname, "..", "..");
 
 const VECTORS: Array<{ generator: string; file: string }> = [
-  { generator: "scripts/gen-identity-vectors.ts", file: "test/helpers/identity-vectors.json" },
-  { generator: "scripts/gen-envelope-v3-vectors.ts", file: "test/helpers/envelope-v3-vectors.json" },
-  { generator: "scripts/gen-handshake-vectors.ts", file: "test/helpers/handshake-vectors.json" },
-  { generator: "scripts/gen-ratchet-vectors.ts", file: "test/helpers/double-ratchet-vectors.json" },
-  { generator: "scripts/gen-mqtt-proof-vectors.ts", file: "test/helpers/mqtt-proof-vectors.json" },
-  { generator: "scripts/gen-noise-hqn-vectors.ts", file: "test/helpers/noise-hqn-vectors.json" },
+  { generator: "test/reference/vectors/gen-identity-vectors.ts", file: "test/helpers/identity-vectors.json" },
+  { generator: "test/reference/vectors/gen-envelope-v3-vectors.ts", file: "test/helpers/envelope-v3-vectors.json" },
+  { generator: "test/reference/vectors/gen-handshake-vectors.ts", file: "test/helpers/handshake-vectors.json" },
+  { generator: "test/reference/vectors/gen-ratchet-vectors.ts", file: "test/helpers/double-ratchet-vectors.json" },
+  { generator: "test/reference/vectors/gen-mqtt-proof-vectors.ts", file: "test/helpers/mqtt-proof-vectors.json" },
+  { generator: "test/reference/vectors/gen-noise-hqn-vectors.ts", file: "test/helpers/noise-hqn-vectors.json" },
 ];
 
 function generate(generator: string): string {
@@ -52,9 +52,9 @@ test("every generator has a committed file, and every file has a generator", () 
   // covered; a vector file with no generator cannot be checked by the tests
   // above and would drift silently, which is the whole failure being guarded.
   const generators = fs
-    .readdirSync(path.join(ROOT, "scripts"))
+    .readdirSync(path.join(ROOT, "test/reference/vectors"))
     .filter((f) => f.startsWith("gen-") && f.endsWith(".ts"))
-    .map((f) => `scripts/${f}`);
+    .map((f) => `test/reference/vectors/${f}`);
   assert.deepEqual(
     generators.sort(),
     VECTORS.map((v) => v.generator).sort(),
@@ -72,7 +72,7 @@ test("the generators are deterministic, or this file proves nothing", () => {
   // A generator that reseeded per run would make every comparison above fail
   // for a reason that has nothing to do with drift — and the obvious response
   // would be to delete the check. Asserted on the cheapest one.
-  const a = generate("scripts/gen-identity-vectors.ts");
-  const b = generate("scripts/gen-identity-vectors.ts");
+  const a = generate("test/reference/vectors/gen-identity-vectors.ts");
+  const b = generate("test/reference/vectors/gen-identity-vectors.ts");
   assert.equal(a, b, "gen-identity-vectors is not deterministic; the freshness check cannot work");
 });

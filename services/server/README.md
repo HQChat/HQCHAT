@@ -13,10 +13,10 @@ Licensed **AGPL-3.0** ([LICENSE](./LICENSE)).
 
 | Path | What it is |
 |---|---|
-| `src/protocol/` | the wire protocol shared by everything: identity, frames, the KEM double ratchet, the handshake proof, CONNECT proofs, hqn/1 Noise, topics |
+| `test/reference/protocol/` | the wire protocol shared by everything: identity, frames, the KEM double ratchet, the handshake proof, CONNECT proofs, hqn/1 Noise, topics |
 | `src/server/` | the server (`npm run server`): auth and the EMQX authn hooks, the REST API, the push bridge and the broker watch, in one process on one port |
 | `src/gateway/` | noise-gw (`npm run gateway`), the hqn/1 raw-TCP gateway in front of EMQX |
-| `src/client/` | the reference TypeScript client: sign-in, the typed REST API, conversations, MQTT over WSS or hqn/1 |
+| `test/reference/client/` | the reference TypeScript client: sign-in, the typed REST API, conversations, MQTT over WSS or hqn/1 |
 | `src/bot/` | the helper bot (`npm run bot`), built on the client and nothing else |
 | `src/common/` | configuration, logging, scrubbing, Sentry, the health monitor |
 
@@ -32,8 +32,12 @@ DATABASE_URL=postgres://… npm run migrate && npm run test:integration
 bash test/scenarios/run-local.sh    # the full stack in Docker, then the functional scenarios
 ```
 
-The server needs `DATABASE_URL` pointing at a migrated database and the native
-HQC library (`HQC_LIB`, or `nix build .#hqc -o native/hqc/result`).
+The server needs `DATABASE_URL` pointing at a migrated database and the Rust
+core's Node addon (`HQCHAT_NODE`, or `core/hqchat-node/build.sh` inside
+`nix develop`), which carries the protocol, the hqn/1 gateway and the bot's
+engine. `test/reference/` holds the TS protocol and client the server used to
+run on, kept as an independent implementation for the differential fuzzers
+and the scenarios.
 Configuration is environment variables, with `FOO_FILE` naming a file to read
 `FOO` from; there are no defaults pointing at anyone's deployment.
 

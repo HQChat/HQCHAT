@@ -1,5 +1,5 @@
 // The Node addon against the shared vectors, Node's own crypto, and the TS
-// hqn/1 initiator (services/server/src/protocol/noise.ts) driving the Rust
+// hqn/1 initiator (services/server/test/reference/protocol/noise.ts) driving the Rust
 // gateway. Run from services/server after core/hqchat-node/build.sh:
 //
 //   node --import tsx --test ../../core/hqchat-node/test/*.test.ts
@@ -11,7 +11,7 @@ import { createRequire } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
-import { FrameReader, HqnInitiator, type Kem, x25519KeyPair } from "../../../services/server/src/protocol/noise";
+import { FrameReader, HqnInitiator, type Kem, x25519KeyPair } from "../../../services/server/test/reference/protocol/noise";
 
 const require = createRequire(__filename);
 const core = require("../hqchat_node.node");

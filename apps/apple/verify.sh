@@ -106,7 +106,7 @@ bash fuzz/run.sh ratchet-state --iterations "${FUZZ_RATCHET_ITERATIONS:-10000}" 
 # 5. Cross-implementation frame fuzzing.
 #
 # This is the check CI cannot run. `ConversationEnvelopeV3.decodeReporting`
-# and services/server/src/protocol/envelope.ts `decodeFrame` must be the same
+# and services/server/test/reference/protocol/envelope.ts `decodeFrame` must be the same
 # predicate over the same bytes; a divergence passes both suites while one
 # end silently drops the other's frames.
 #

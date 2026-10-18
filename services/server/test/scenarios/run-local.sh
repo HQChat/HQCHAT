@@ -5,8 +5,8 @@
 #
 #   bash services/server/test/scenarios/run-local.sh        # LOAD=1 adds the load test
 #
-# Needs Docker, the native HQC library and the core's Node addon (built with
-# Nix when HQCHAT_NODE is unset).
+# Needs Docker and the core's Node addon (built with Nix when HQCHAT_NODE is
+# unset).
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
