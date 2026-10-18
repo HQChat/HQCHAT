@@ -34,3 +34,6 @@ tfplan.json
 # Built from native/hqc (nix build .#hqc). The Apple builds of it
 # (native/hqc/dist/apple, apps/apple/libhqc_wrap.dylib) are committed.
 native/hqc/result
+
+# Cargo build output
+core/target/

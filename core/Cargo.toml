@@ -1,0 +1,26 @@
+# The HQChat core: the protocol and the client every app and the server link.
+# See docs/architecture/multiplatform.md and docs/architecture/core-wiring.md.
+[workspace]
+resolver = "3"
+members = []
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "AGPL-3.0-only"
+repository = "https://github.com/HQChat/HQCHAT"
+publish = false
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.release]
+# Bindings turn a panic into an error; an abort would kill the app with no report.
+panic = "unwind"
+lto = "thin"
+codegen-units = 1
