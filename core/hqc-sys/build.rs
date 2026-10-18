@@ -6,6 +6,9 @@
 //! library is byte-compatible with every shipped client. Never
 //! `-march=native`: the reference C is portable and has no CPU-specific path.
 
+// A build script fails the build by panicking: that is its error channel.
+#![allow(clippy::panic, clippy::expect_used)]
+
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -47,10 +50,13 @@ fn main() {
         .warnings(false);
     if build.get_compiler().is_like_msvc() {
         build.flag(format!("/FI{}", portability.display()));
+        // Stack cookies and Control Flow Guard.
+        build.flag("/GS").flag("/guard:cf");
     } else {
         build
             .flag("-include")
             .flag(portability.display().to_string());
+        harden(&mut build);
     }
 
     let mut files = c_files(&src.join("src/common"));
@@ -63,6 +69,33 @@ fn main() {
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         // hqc_getrandom (hqc_portability.h) calls BCryptGenRandom.
         println!("cargo:rustc-link-lib=bcrypt");
+    }
+}
+
+/// Exploit mitigations that change nothing the code computes, so the keys
+/// and ciphertexts stay byte-identical with the shipped clients: stack
+/// canaries, fortified libc calls, stack-clash probes, zero-initialized
+/// locals (no uninitialized stack read can leak an earlier secret), zeroed
+/// call-used registers on return, and CET or BTI/PAC landing pads. Each
+/// flag is passed only when this compiler accepts it.
+fn harden(build: &mut cc::Build) {
+    build.flag("-U_FORTIFY_SOURCE").flag("-D_FORTIFY_SOURCE=2");
+    for flag in [
+        "-fstack-protector-strong",
+        "-fstack-clash-protection",
+        "-ftrivial-auto-var-init=zero",
+        "-fzero-call-used-regs=used-gpr",
+    ] {
+        build.flag_if_supported(flag);
+    }
+    match env::var("CARGO_CFG_TARGET_ARCH").as_deref() {
+        Ok("x86_64") => {
+            build.flag_if_supported("-fcf-protection=full");
+        }
+        Ok("aarch64") => {
+            build.flag_if_supported("-mbranch-protection=standard");
+        }
+        _ => {}
     }
 }
 
