@@ -3,16 +3,9 @@
 //!
 //! Pure: no I/O, no clock (callers pass `now`), no global randomness
 //! (callers pass an [`Entropy`]), so every function replays its vectors
-//! exactly. Each module is pinned by its vector file in `core/vectors/`.
-//!
-//! **API surface only.** HQC is implemented ([`kem::HqcKem`]); every other
-//! body is `todo!()` naming the feature branch that implements it (see the
-//! branch table in `docs/architecture/multiplatform.md`).
-
-// The bodies are todo!() until each module's branch lands: parameters are
-// named for the reader and private fields are placeholders, not used yet.
-// Each branch removes what it no longer needs.
-#![allow(unused_variables, dead_code)]
+//! exactly. The tests read the vector files in
+//! `services/server/test/helpers/` in place, so the TS, Swift and Rust suites
+//! share one copy of each.
 
 pub mod aead;
 pub mod auth_proof;
