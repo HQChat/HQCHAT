@@ -238,7 +238,7 @@ main                       releases only
 
 | Area | Feature branches, in order |
 |---|---|
-| `lib` | `lib/hqc-sys` (workspace, `hqc-sys`, `hqc`, KATs) → `lib/protocol-identity-topics` → `lib/protocol-aead-envelope` → `lib/protocol-handshake` → `lib/protocol-ratchet` → `lib/protocol-mqtt-proof` → `lib/protocol-noise` → `lib/protocol-mqtt-codec` → `lib/fuzz-differential` → `lib/engine-conversations` → `lib/engine-auth` → `lib/engine-prekeys-friends` → `lib/engine-mqtt-session` → `lib/engine-at-rest` → `lib/node-binding` → `lib/ffi-binding` → `lib/conformance` → `lib/vault-desktop` |
+| `lib` | `lib/hqc-sys` (workspace, `hqc-sys`, `hqc`, KATs) → `lib/api-surface` (every crate's types and signatures, bodies `todo!()` naming their branch) → `lib/protocol-identity-topics` → `lib/protocol-aead-envelope` → `lib/protocol-handshake` → `lib/protocol-ratchet` → `lib/protocol-mqtt-proof` → `lib/protocol-noise` → `lib/protocol-mqtt-codec` → `lib/fuzz-differential` → `lib/engine-conversations` → `lib/engine-auth` → `lib/engine-prekeys-friends` → `lib/engine-mqtt-session` → `lib/engine-at-rest` → `lib/node-binding` → `lib/ffi-binding` → `lib/conformance` → `lib/vault-desktop` |
 | `server` | `server/napi-protocol` → `server/napi-gateway` → `server/engine-client` (bot, scenarios) → `server/push-fcm-unifiedpush` |
 | `apple` | `apple/core-xcframework` → `apple/effect-loop` → `apple/enclave-vault` → `apple/importer` → `apple/views-on-engine` → `apple/remove-swift-protocol` |
 | `android` | `android/scaffold` → `android/effect-loop` → `android/keystore-vault` → `android/push` → `android/ui` → `android/release` |
@@ -250,7 +250,7 @@ Each phase ships on its own and leaves every existing client working.
 
 | # | Phase | Branches | Done when |
 |---|---|---|---|
-| 1 | **Protocol.** `hqc-sys`, `hqc`, `hqchat-protocol` with the MQTT codec; vectors moved to `core/vectors/`; differential fuzzing against TS and Swift | `lib/hqc-sys` … `lib/fuzz-differential` | every vector passes on every target; differential fuzz clean |
+| 1 | **Protocol.** `hqc-sys`, `hqc`, the API surface, `hqchat-protocol` with the MQTT codec; vectors moved to `core/vectors/`; differential fuzzing against TS and Swift | `lib/hqc-sys`, `lib/api-surface` … `lib/fuzz-differential` | every vector passes on every target; differential fuzz clean |
 | 1b | **Engine.** `hqchat-engine`, `hqchat-ffi`, `hqchat-node`; the binding conformance suite | `lib/engine-*`, `lib/*-binding`, `lib/conformance` | the bot runs on the `Engine` against staging |
 | 2 | **Server on the core.** napi binding replaces `src/protocol` and koffi in the server, gateway, bot and reference client | `server/napi-*`, `server/engine-client` | unit, integration and scenario layers green; deployed to staging, then production |
 | 3 | **Apple on the core.** xcframework behind a flag; the importer rewrites existing identity, sessions and messages on first launch; the identity key moves under the enclave seal; Swift protocol, MQTT and session files deleted once `verify.sh` passes both ways | `apple/*` | an App Store update with no visible change |
