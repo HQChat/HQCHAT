@@ -59,8 +59,15 @@ export interface HqnGatewayHandshake {
   writeMessage2(payload: Buffer): HqnMessage2;
 }
 
+/** A gateway key pair, derived once from its seeds (HQC keygen takes milliseconds). */
+export interface GatewayKeyPair {
+  readonly keyId: number;
+  publicKey(): GatewayPublicKey;
+}
+
 export interface HqnGatewayHandshakeClass {
-  new (key: GatewayKey): HqnGatewayHandshake;
+  new (key: GatewayKeyPair): HqnGatewayHandshake;
+  /** The client's ephemeral key, for the replay cache, before any work. */
   ephemeralOf(msg1: Buffer): Buffer;
 }
 
@@ -184,12 +191,13 @@ export interface CoreAddon {
   keyMatchesId(publicKeyHex: string, id: string): boolean;
   conversationTopic(convoId: string): string;
   handshakeTopic(handshakeId: string): string;
-  gatewayPublicKey(key: GatewayKey): GatewayPublicKey;
   hqnMsg1Length(payloadLen: number): number;
   hqnFrame(body: Buffer): Buffer;
   readonly MQTT_PROOF_NONCE_TTL_SECONDS: number;
   readonly PEER_ID_LENGTH: number;
   readonly HQC_PUBLIC_KEY_BYTES: number;
+  readonly HQN_VERSION: number;
+  GatewayKeyPair: new (key: GatewayKey) => GatewayKeyPair;
   HqnGatewayHandshake: HqnGatewayHandshakeClass;
   HqnMessage2: unknown;
   HqnTransport: unknown;
@@ -212,12 +220,13 @@ export const CORE_EXPORTS: readonly (keyof CoreAddon)[] = [
   "keyMatchesId",
   "conversationTopic",
   "handshakeTopic",
-  "gatewayPublicKey",
   "hqnMsg1Length",
   "hqnFrame",
   "MQTT_PROOF_NONCE_TTL_SECONDS",
   "PEER_ID_LENGTH",
   "HQC_PUBLIC_KEY_BYTES",
+  "HQN_VERSION",
+  "GatewayKeyPair",
   "HqnGatewayHandshake",
   "HqnMessage2",
   "HqnTransport",

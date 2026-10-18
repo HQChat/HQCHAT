@@ -53,15 +53,43 @@ fn server_static(k: &GatewayKey) -> napi::Result<ServerStatic> {
     })
 }
 
-/// The public keys of a gateway key (`publicKeys` in gateway/keys.ts).
+/// The `hqn/1` version byte that opens every connection.
 #[napi]
-pub fn gateway_public_key(key: GatewayKey) -> napi::Result<GatewayPublicKey> {
-    let p = server_static(&key)?.public();
-    Ok(GatewayPublicKey {
-        key_id: p.key_id,
-        x25519: p.x25519.to_vec().into(),
-        hqc: p.hqc.as_bytes().to_vec().into(),
-    })
+pub const HQN_VERSION: u8 = noise::HQN_VERSION;
+
+/// A gateway key pair, derived once from its seeds: the HQC key generation
+/// takes milliseconds, so it happens at startup and never per connection.
+#[napi]
+pub struct GatewayKeyPair {
+    server: ServerStatic,
+}
+
+#[napi]
+impl GatewayKeyPair {
+    /// Derives the key pair from the key file's seeds.
+    #[napi(constructor)]
+    pub fn new(key: GatewayKey) -> napi::Result<Self> {
+        Ok(Self {
+            server: server_static(&key)?,
+        })
+    }
+
+    /// Which key pair, during a rotation.
+    #[napi(getter)]
+    pub fn key_id(&self) -> u8 {
+        self.server.key_id
+    }
+
+    /// The public half, as `/auth/transport` advertises it and the app pins it.
+    #[napi]
+    pub fn public_key(&self) -> GatewayPublicKey {
+        let p = self.server.public();
+        GatewayPublicKey {
+            key_id: p.key_id,
+            x25519: p.x25519.to_vec().into(),
+            hqc: p.hqc.as_bytes().to_vec().into(),
+        }
+    }
 }
 
 /// msg1's exact length for a payload of `payloadLen` bytes.
@@ -82,10 +110,10 @@ pub struct HqnGatewayHandshake {
 impl HqnGatewayHandshake {
     /// A handshake as `key`.
     #[napi(constructor)]
-    pub fn new(key: GatewayKey) -> napi::Result<Self> {
-        Ok(Self {
-            responder: Some(HqnResponder::new(server_static(&key)?)),
-        })
+    pub fn new(key: &GatewayKeyPair) -> Self {
+        Self {
+            responder: Some(HqnResponder::new(key.server.clone())),
+        }
     }
 
     /// The client's ephemeral key, for the replay cache, before any work.

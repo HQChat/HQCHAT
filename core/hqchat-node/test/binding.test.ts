@@ -70,7 +70,8 @@ test("CONNECT proofs from mqtt-proof-vectors.json parse and verify, and nothing 
 
 test("the Rust gateway completes a handshake with the TS initiator", () => {
   const key = { keyId: 1, x25519: randomBytes(32), hqcSeed: randomBytes(32) };
-  const pub = core.gatewayPublicKey(key);
+  const pair = new core.GatewayKeyPair(key);
+  const pub = pair.publicKey();
   const { sk } = core.hqcKeypairFromSeed(key.hqcSeed);
   const kem: Kem = {
     encapsulate: (pk) => core.hqcEncapsulate(pk),
@@ -81,7 +82,7 @@ test("the Rust gateway completes a handshake with the TS initiator", () => {
   const msg1 = client.writeMessage1(connect);
   assert.equal(msg1.length, core.hqnMsg1Length(connect.length));
 
-  const gw = new core.HqnGatewayHandshake(key);
+  const gw = new core.HqnGatewayHandshake(pair);
   assert.ok(core.HqnGatewayHandshake.ephemeralOf(msg1).equals(msg1.subarray(0, 32)));
   const ct = gw.openMessage1(msg1);
   // The decapsulation a worker would run, with the gateway's HQC secret.
@@ -102,7 +103,9 @@ test("the Rust gateway completes a handshake with the TS initiator", () => {
 });
 
 test("random bytes fail the gateway's first phase", () => {
-  const gw = new core.HqnGatewayHandshake({ keyId: 1, x25519: randomBytes(32), hqcSeed: randomBytes(32) });
+  const gw = new core.HqnGatewayHandshake(
+    new core.GatewayKeyPair({ keyId: 1, x25519: randomBytes(32), hqcSeed: randomBytes(32) }),
+  );
   assert.throws(() => gw.openMessage1(randomBytes(core.hqnMsg1Length(10))));
 });
 
