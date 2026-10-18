@@ -585,24 +585,6 @@ impl Core {
             self.emit(Effect::Timer { at });
         }
     }
-
-    // ── Hooks the conversation layer fills ─────────────────────────────────
-
-    /// An inbound frame on an inbox, conversation or handshake topic.
-    pub fn on_frame(&mut self, topic: &str, _payload: Vec<u8>, _now: i64) {
-        self.emit(Effect::Dropped {
-            reason: format!("a frame on {topic} with no conversation layer"),
-        });
-    }
-
-    /// The broker acknowledged a message of ours.
-    pub fn on_puback(&mut self, _peer: &PeerId, _msg_id: &str, _now: i64) {}
-
-    /// The link came up: send what waited.
-    pub fn on_link_up(&mut self, _now: i64) {}
-
-    /// The link went down with these publishes unacknowledged.
-    pub fn on_link_down(&mut self, _unacked: HashMap<u16, InFlight>, _now: i64) {}
 }
 
 /// The gateway from `/auth/transport`, when enabled and well-formed.

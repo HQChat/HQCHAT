@@ -16,6 +16,7 @@
 #![allow(unused_variables, dead_code)]
 
 mod auth;
+mod convo;
 mod core;
 mod directory;
 mod effect;

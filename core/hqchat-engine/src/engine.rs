@@ -77,9 +77,11 @@ impl Engine {
         self.run(|c| {
             c.open_state()?;
             c.emit(Effect::FriendsChanged);
+            c.drain_pending(now);
             if c.started {
                 c.ensure_signed_in(now);
             }
+            c.flush_all(now);
             Ok(())
         })
     }
@@ -109,12 +111,13 @@ impl Engine {
         text: String,
         now: i64,
     ) -> Result<Vec<Effect>, CoreError> {
-        todo!("lib/engine-conversations")
+        let peer = hqchat_protocol::PeerId::parse(&peer)?;
+        self.run(|c| c.send_text(&peer, &text, now))
     }
 
     /// Resends a failed message under its id.
     pub fn retry(&self, msg_id: String, now: i64) -> Vec<Effect> {
-        todo!("lib/engine-conversations")
+        self.run(|c| c.retry(&msg_id, now)).unwrap_or_default()
     }
 
     /// Sends a friend request to a username.

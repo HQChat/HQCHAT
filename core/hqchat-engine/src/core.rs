@@ -71,7 +71,10 @@ pub(crate) struct Core {
     pub me: Option<PeerId>,
     pub unlocked: Option<Unlocked>,
     pub peers: BTreeMap<PeerId, Peer>,
-    pub next_pending: u64,
+    pub convo: crate::convo::Convo,
+    /// The last message time handed out: stamps are strictly increasing, so
+    /// two messages in one millisecond keep their order at rest.
+    pub last_stamp: i64,
     pub auth: crate::auth::Auth,
     pub http_next: u64,
     pub http_pending: HashMap<u64, crate::http::Pending>,
@@ -98,7 +101,8 @@ impl Core {
             me: None,
             unlocked: None,
             peers: BTreeMap::new(),
-            next_pending: 0,
+            convo: Default::default(),
+            last_stamp: 0,
             auth: Default::default(),
             http_next: 0,
             http_pending: HashMap::new(),
@@ -182,7 +186,12 @@ impl Core {
                     pinned_pk: p.pinned.as_ref().map(|k| k.as_bytes().to_vec()),
                 })
                 .collect(),
-            next_pending: self.next_pending,
+            outbox: self
+                .convo
+                .outbox
+                .iter()
+                .map(|o| (o.peer.to_string(), o.msg_id.clone()))
+                .collect(),
         };
         let plain = persist::encode(&state)?;
         let blob = persist::seal_device(&self.vault.device_public_key()?, persist::STATE, &plain)?;
@@ -250,7 +259,17 @@ impl Core {
         }
         self.me = Some(PeerId::of(&identity.public));
         self.peers = peers;
-        self.next_pending = state.next_pending;
+        self.convo.outbox = state
+            .outbox
+            .iter()
+            .filter_map(|(peer, msg_id)| {
+                Some(crate::convo::Outgoing {
+                    peer: PeerId::parse(peer).ok()?,
+                    msg_id: msg_id.clone(),
+                    in_flight: false,
+                })
+            })
+            .collect();
         self.unlocked = Some(Unlocked {
             identity,
             data_key: Zeroizing::new(state.data_key),
@@ -316,6 +335,12 @@ impl Core {
     }
 
     // ── Messages ───────────────────────────────────────────────────────────
+
+    /// A message time at or after `now`, after every one handed out before.
+    pub fn stamp(&mut self, now: i64) -> i64 {
+        self.last_stamp = now.max(self.last_stamp + 1);
+        self.last_stamp
+    }
 
     pub fn put_message(&self, peer: &PeerId, m: &StoredMessage) -> Result<(), CoreError> {
         let u = self.unlocked()?;

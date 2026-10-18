@@ -50,8 +50,10 @@ pub(crate) fn message_slot(peer: &PeerId, at: i64, msg_id: &str) -> String {
 
 pub(crate) const PENDING_PREFIX: &str = "pending/";
 
-pub(crate) fn pending_slot(seq: u64) -> String {
-    format!("pending/{seq:020}")
+/// Sorted by arrival: the device clock, then a per-process counter. A
+/// counter in `state` would not do: `state` cannot be rewritten while locked.
+pub(crate) fn pending_slot(at: i64, seq: u64) -> String {
+    format!("pending/{:020}/{seq:010}", at.max(0))
 }
 
 // ── Sealing ────────────────────────────────────────────────────────────────
@@ -188,8 +190,8 @@ pub(crate) struct StoredState {
     pub data_key: [u8; 32],
     pub prekeys: Option<StoredPrekeys>,
     pub peers: Vec<StoredPeer>,
-    /// Next `pending/` sequence number.
-    pub next_pending: u64,
+    /// Outgoing messages not yet acknowledged by the broker: (peer, msg id).
+    pub outbox: Vec<(String, String)>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]

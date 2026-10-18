@@ -24,6 +24,8 @@ pub(crate) enum Pending {
     Invites,
     PrekeyCount,
     Transport,
+    PeerKey(hqchat_protocol::PeerId),
+    Claim(hqchat_protocol::PeerId),
     DeleteAccount,
 }
 
@@ -104,6 +106,8 @@ impl Core {
             Pending::Invites => self.on_invites(answer),
             Pending::PrekeyCount => self.on_prekey_count(answer, now),
             Pending::Transport => self.on_transport(answer, now),
+            Pending::PeerKey(peer) => self.on_peer_key(peer, answer, now),
+            Pending::Claim(peer) => self.on_claim(peer, answer, now),
         }
     }
 
