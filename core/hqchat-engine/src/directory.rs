@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 
 use hqc::KeyPair;
 use hqchat_protocol::PeerId;
+use hqchat_protocol::mqtt::QoS;
 use hqchat_protocol::topics::TopicId;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -103,8 +104,8 @@ impl Core {
             live.insert(id, (username, convo, handshake));
         }
 
-        let mut subscribe = Vec::new();
-        let mut unsubscribe = Vec::new();
+        let mut subscribe: Vec<(String, QoS)> = Vec::new();
+        let mut unsubscribe: Vec<String> = Vec::new();
         let mut changed = false;
         let gone: Vec<PeerId> = self
             .peers
@@ -136,7 +137,7 @@ impl Core {
                 unsubscribe.extend(peer_topics(peer));
                 peer.convo = Some(convo);
                 peer.handshake = Some(handshake);
-                subscribe.extend(peer_topics(peer));
+                subscribe.extend(peer_filters(peer));
                 changed = true;
             }
         }
@@ -148,10 +149,6 @@ impl Core {
             self.on_topics_changed(subscribe, unsubscribe);
         }
     }
-
-    /// What the connection does when the friend topics change. The MQTT
-    /// session hooks in here.
-    pub fn on_topics_changed(&mut self, _subscribe: Vec<String>, _unsubscribe: Vec<String>) {}
 
     pub fn on_invites(&mut self, a: Answer) {
         let Some(rows) = a
@@ -346,15 +343,21 @@ impl Core {
     }
 }
 
-fn peer_topics(p: &Peer) -> Vec<String> {
+/// A friend's topics as MQTTService.swift follows them: conversation and
+/// handshake at QoS 1, presence at QoS 0.
+pub(crate) fn peer_filters(p: &Peer) -> Vec<(String, QoS)> {
+    use hqchat_protocol::topics;
     let mut t = Vec::new();
-    if let Some(c) = &p.convo {
-        t.push(hqchat_protocol::topics::conversation_topic(c));
+    if let (Some(c), Some(h)) = (&p.convo, &p.handshake) {
+        t.push((topics::conversation_topic(c), QoS::AtLeastOnce));
+        t.push((topics::handshake_topic(h), QoS::AtLeastOnce));
     }
-    if let Some(h) = &p.handshake {
-        t.push(hqchat_protocol::topics::handshake_topic(h));
-    }
+    t.push((topics::presence_topic(&p.id), QoS::AtMostOnce));
     t
+}
+
+fn peer_topics(p: &Peer) -> Vec<String> {
+    peer_filters(p).into_iter().map(|(t, _)| t).collect()
 }
 
 #[cfg(test)]

@@ -23,6 +23,7 @@ pub(crate) enum Pending {
     Friends,
     Invites,
     PrekeyCount,
+    Transport,
     DeleteAccount,
 }
 
@@ -102,6 +103,7 @@ impl Core {
             Pending::Friends => self.on_friends(answer),
             Pending::Invites => self.on_invites(answer),
             Pending::PrekeyCount => self.on_prekey_count(answer, now),
+            Pending::Transport => self.on_transport(answer, now),
         }
     }
 

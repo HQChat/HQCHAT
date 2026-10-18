@@ -19,7 +19,7 @@ fn paths(server: &std::rc::Rc<std::cell::RefCell<FakeServer>>) -> Vec<String> {
         .log
         .iter()
         .map(|(_, p)| p.clone())
-        .filter(|p| p.starts_with("/auth/"))
+        .filter(|p| p.starts_with("/auth/") && p != "/auth/transport")
         .collect()
 }
 

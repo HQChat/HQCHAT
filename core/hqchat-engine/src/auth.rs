@@ -178,11 +178,12 @@ impl Core {
         self.fail(Action::SignIn, a);
     }
 
-    /// What follows a sign-in or refresh: the directory and the prekeys,
-    /// then (later features) the connection.
+    /// What follows a sign-in or refresh: the directory, the prekeys and
+    /// the connection.
     pub fn on_signed_in(&mut self, now: i64) {
         self.sync_directory();
         self.ensure_prekeys(now);
+        self.connect(now);
     }
 
     /// A fresh CONNECT password; `None` without a usable signing key.

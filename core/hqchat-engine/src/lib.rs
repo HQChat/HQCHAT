@@ -21,6 +21,7 @@ mod directory;
 mod effect;
 mod engine;
 mod http;
+mod net;
 mod persist;
 mod ports;
 pub mod software;

@@ -92,7 +92,11 @@ impl Engine {
 
     /// A timer fired, or the shell resumed: keep-alive, refresh, retries.
     pub fn tick(&self, now: i64) -> Vec<Effect> {
-        todo!("lib/engine-mqtt-session")
+        self.run(|c| {
+            c.tick(now);
+            Ok(())
+        })
+        .unwrap_or_default()
     }
 
     // ── User actions ─────────────────────────────────────────────────────
@@ -239,22 +243,38 @@ impl Engine {
 
     /// A connection from [`Effect::Open`] is up.
     pub fn on_opened(&self, conn: u64, now: i64) -> Vec<Effect> {
-        todo!("lib/engine-mqtt-session")
+        self.run(|c| {
+            c.on_opened(conn, now);
+            Ok(())
+        })
+        .unwrap_or_default()
     }
 
     /// Bytes arrived on a connection.
     pub fn on_bytes(&self, conn: u64, bytes: Vec<u8>, now: i64) -> Vec<Effect> {
-        todo!("lib/engine-mqtt-session")
+        self.run(|c| {
+            c.on_bytes(conn, &bytes, now);
+            Ok(())
+        })
+        .unwrap_or_default()
     }
 
     /// A connection closed or failed to open.
     pub fn on_closed(&self, conn: u64, reason: CloseReason, now: i64) -> Vec<Effect> {
-        todo!("lib/engine-mqtt-session")
+        self.run(|c| {
+            c.on_closed(conn, &reason, now);
+            Ok(())
+        })
+        .unwrap_or_default()
     }
 
     /// The device moved to another network.
     pub fn on_network_changed(&self, network: NetworkInfo, now: i64) -> Vec<Effect> {
-        todo!("lib/engine-mqtt-session")
+        self.run(|c| {
+            c.on_network_changed(network, now);
+            Ok(())
+        })
+        .unwrap_or_default()
     }
 }
 

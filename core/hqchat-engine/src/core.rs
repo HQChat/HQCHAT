@@ -79,6 +79,7 @@ pub(crate) struct Core {
     pub started: bool,
     pub network: Option<crate::types::NetworkInfo>,
     pub invites: Vec<crate::types::InviteView>,
+    pub net: crate::net::Net,
     /// Effects of the call in progress, in order.
     pub out: Vec<Effect>,
 }
@@ -104,6 +105,7 @@ impl Core {
             started: false,
             network: None,
             invites: Vec::new(),
+            net: Default::default(),
             out: Vec::new(),
         }
     }

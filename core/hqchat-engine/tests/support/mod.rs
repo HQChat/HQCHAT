@@ -4,6 +4,8 @@
 
 #![allow(dead_code)]
 
+pub mod broker;
+
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -63,6 +65,7 @@ pub struct FakeServer {
     /// Friendships by the sorted pair of ids.
     pub friendships: HashMap<(String, String), Friendship>,
     pub reports: Vec<Value>,
+    pub broker: broker::Broker,
 }
 
 type Reply = (u16, Value);
@@ -84,6 +87,20 @@ impl FakeServer {
     fn topic_id(&mut self) -> String {
         self.next += 1;
         hex::encode(sha2::Sha256::digest(self.next.to_be_bytes()))
+    }
+
+    pub fn pair_of(a: &str, b: &str) -> (String, String) {
+        Self::pair(a, b)
+    }
+
+    /// Turns the hqn/1 gateway on, with fresh keys, and advertises it.
+    pub fn enable_hqn(&mut self) {
+        use hqchat_protocol::noise::{ServerStatic, X25519Secret};
+        self.broker.gateway = Some(ServerStatic {
+            key_id: 1,
+            x25519: X25519Secret::generate(&mut hqchat_protocol::OsEntropy).unwrap(),
+            hqc: hqc::generate_keypair().unwrap(),
+        });
     }
 
     fn pair(a: &str, b: &str) -> (String, String) {
@@ -217,6 +234,18 @@ impl FakeServer {
                 self.tokens.retain(|_, v| *v != id);
                 (200, json!({ "ok": true }))
             }
+            (Method::Get, "/auth/transport") => match &self.broker.gateway {
+                Some(g) => {
+                    let p = g.public();
+                    (
+                        200,
+                        json!({ "hqn": { "enabled": true, "host": "gw.hqchat.test", "port": 443, "keys": [{
+                        "keyId": p.key_id, "x25519": STANDARD.encode(p.x25519), "hqc": STANDARD.encode(p.hqc.as_bytes())
+                    }] } }),
+                    )
+                }
+                None => (200, json!({ "hqn": null })),
+            },
             (Method::Get, "/friends") => {
                 let Some(id) = self.session(authorization) else {
                     return err(401, "");
@@ -278,6 +307,7 @@ impl FakeServer {
                     handshake: self.topic_id(),
                 };
                 self.friendships.insert(Self::pair(&id, &from), f);
+                self.nudge(&id, &from);
                 (200, json!({ "ok": true }))
             }
             (Method::Post, "/friends/remove") | (Method::Post, "/friends/block") => {
@@ -286,6 +316,7 @@ impl FakeServer {
                 };
                 let peer = body["peer"].as_str().unwrap_or("").to_owned();
                 self.friendships.remove(&Self::pair(&id, &peer));
+                self.nudge(&id, &peer);
                 if path.ends_with("block") {
                     self.users.get_mut(&id).unwrap().blocked.push(peer);
                 }
@@ -358,9 +389,12 @@ pub struct Client {
     pub vault: Arc<SoftwareVault>,
     pub store: Arc<MemoryStore>,
     pub server: Rc<RefCell<FakeServer>>,
+    pub profile: String,
     /// Every effect that reached the "UI", in order.
     pub seen: Vec<Effect>,
     pub engine_id: String,
+    /// The device clock this client's shell reports.
+    pub now: i64,
 }
 
 impl Client {
@@ -373,8 +407,10 @@ impl Client {
             vault,
             store,
             server: server.clone(),
+            profile: profile.into(),
             seen: Vec::new(),
             engine_id: String::new(),
+            now: NOW,
         }
     }
 
@@ -397,6 +433,7 @@ impl Client {
 
     /// `start` at `now`, as a shell does on launch and on every resume.
     pub fn start(&mut self, now: i64) {
+        self.now = now;
         let e = self.engine.start(
             now,
             hqchat_engine::NetworkInfo {
@@ -407,40 +444,100 @@ impl Client {
         self.pump(e);
     }
 
+    /// A timer fired at `now`.
+    pub fn tick(&mut self, now: i64) {
+        self.now = now;
+        let e = self.engine.tick(now);
+        self.pump(e);
+    }
+
     /// Makes `a` and `b` friends through the API, as two users would.
     pub fn befriend(a: &mut Client, b: &mut Client) {
         let e = a.engine.invite(b.id());
         a.pump(e);
-        b.start(NOW);
+        b.start(b.now);
         let e = b.engine.accept(a.id());
         b.pump(e);
-        a.start(NOW);
+        a.start(a.now);
+        settle(&mut [a, b]);
     }
 
-    /// Plays the shell: answers every request until none is left; keeps the rest.
+    fn has_delivery(&self) -> bool {
+        self.server
+            .borrow()
+            .broker
+            .outbox
+            .iter()
+            .any(|(p, _, _)| *p == self.profile)
+    }
+
+    /// Plays the shell: carries out every effect, answers requests, moves
+    /// bytes to and from the broker, until nothing is left for this client.
     pub fn pump(&mut self, effects: Vec<Effect>) {
         let mut queue: std::collections::VecDeque<Effect> = effects.into();
-        while let Some(effect) = queue.pop_front() {
-            match effect {
-                Effect::Http {
-                    req,
-                    method,
-                    path,
-                    authorization,
-                    body,
-                } => {
-                    let (status, reply) =
+        loop {
+            while let Some(effect) = queue.pop_front() {
+                let now = self.now;
+                match effect {
+                    Effect::Http {
+                        req,
+                        method,
+                        path,
+                        authorization,
+                        body,
+                    } => {
+                        let (status, reply) =
+                            self.server
+                                .borrow_mut()
+                                .http(method, &path, &authorization, &body);
+                        queue.extend(self.engine.on_http(
+                            req,
+                            status,
+                            reply.to_string().into_bytes(),
+                            now,
+                        ));
+                    }
+                    Effect::Open { conn, endpoint } => {
+                        let tcp = matches!(endpoint, hqchat_engine::Endpoint::Tcp { .. });
+                        self.seen.push(Effect::Open { conn, endpoint });
+                        if self.server.borrow_mut().mqtt_open(&self.profile, conn, tcp) {
+                            queue.extend(self.engine.on_opened(conn, now));
+                        } else {
+                            let reason = hqchat_engine::CloseReason::Failed("refused".into());
+                            queue.extend(self.engine.on_closed(conn, reason, now));
+                        }
+                    }
+                    Effect::Write { conn, bytes } => {
                         self.server
                             .borrow_mut()
-                            .http(method, &path, &authorization, &body);
-                    queue.extend(self.engine.on_http(
-                        req,
-                        status,
-                        reply.to_string().into_bytes(),
-                        NOW,
-                    ));
+                            .mqtt_bytes(&self.profile, conn, &bytes);
+                    }
+                    Effect::Close { conn } => {
+                        self.server.borrow_mut().mqtt_closed(&self.profile, conn);
+                    }
+                    other => self.seen.push(other),
                 }
-                other => self.seen.push(other),
+            }
+            let deliveries: Vec<(u64, broker::Out)> = {
+                let mut s = self.server.borrow_mut();
+                let (mine, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut s.broker.outbox)
+                    .into_iter()
+                    .partition(|(p, _, _)| *p == self.profile);
+                s.broker.outbox = rest;
+                mine.into_iter().map(|(_, c, o)| (c, o)).collect()
+            };
+            if deliveries.is_empty() {
+                break;
+            }
+            for (conn, out) in deliveries {
+                let now = self.now;
+                match out {
+                    broker::Out::Bytes(b) => queue.extend(self.engine.on_bytes(conn, b, now)),
+                    broker::Out::Close => {
+                        let reason = hqchat_engine::CloseReason::Remote;
+                        queue.extend(self.engine.on_closed(conn, reason, now));
+                    }
+                }
             }
         }
     }
@@ -448,5 +545,21 @@ impl Client {
     /// This client's id, as the server registered it.
     pub fn id(&self) -> String {
         self.engine_id.clone()
+    }
+}
+
+/// Pumps every client until the broker has nothing left for any of them.
+pub fn settle(clients: &mut [&mut Client]) {
+    loop {
+        let mut moved = false;
+        for c in clients.iter_mut() {
+            if c.has_delivery() {
+                c.pump(Vec::new());
+                moved = true;
+            }
+        }
+        if !moved {
+            break;
+        }
     }
 }
