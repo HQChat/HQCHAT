@@ -78,6 +78,14 @@ hqc() {
   [[ "$(uname)" == Darwin ]] && ext=dylib
   HQC_LIB="$(nix build "$root#hqc" --no-link --print-out-paths)/lib/libhqc_wrap.$ext"
   export HQC_LIB
+  core_addon
+}
+
+# The core's Node addon the server loads, built by Nix when HQCHAT_NODE is unset.
+core_addon() {
+  [[ -n "${HQCHAT_NODE:-}" ]] && return 0
+  HQCHAT_NODE="$(nix build "$root#hqchat-node" --no-link --print-out-paths)/lib/hqchat_node.node"
+  export HQCHAT_NODE
 }
 
 unit() {

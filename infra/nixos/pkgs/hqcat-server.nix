@@ -6,6 +6,7 @@
   nodejs_22,
   makeWrapper,
   hqc,
+  hqchat-node,
   version,
 }:
 let
@@ -59,6 +60,7 @@ buildNpmPackage {
           --chdir "$pkg" \
           --set-default NODE_ENV production \
           --set-default HQC_LIB "${hqc}/lib/libhqc_wrap.so" \
+          --set-default HQCHAT_NODE "${hqchat-node}/lib/hqchat_node.node" \
           --add-flags "--import tsx $pkg/${entry}"
         test -f "$pkg/${entry}"
       '') entrypoints
