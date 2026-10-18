@@ -19,6 +19,7 @@
 use hqc::{Ciphertext, KeyPair, PublicKey, SecretKey};
 use hqchat_protocol::ratchet::{Chain, InitHeader, SessionState, SkippedKey, SymmetricKey};
 use hqchat_protocol::kdf::hkdf_sha256;
+use hqchat_protocol::wire::Reader;
 use hqchat_protocol::{OsEntropy, PeerId, aead};
 use p256::elliptic_curve::sec1::ToEncodedPoint;
 use serde::{Deserialize, Serialize};
@@ -92,7 +93,7 @@ pub(crate) fn seal_device(
     let key = device_kdf(shared.raw_secret_bytes(), &ephemeral_public, device_public);
     let sealed =
         aead::seal_payload(plaintext, &key, slot.as_bytes(), &mut OsEntropy).map_err(protocol)?;
-    let mut out = Vec::with_capacity(1 + P256_POINT + sealed.len());
+    let mut out = Vec::with_capacity((1 + P256_POINT).saturating_add(sealed.len()));
     out.push(SEAL_VERSION);
     out.extend_from_slice(&ephemeral_public);
     out.extend_from_slice(&sealed);
@@ -105,16 +106,16 @@ pub(crate) fn open_device(
     slot: &str,
     blob: &[u8],
 ) -> Result<Zeroizing<Vec<u8>>, CoreError> {
-    if blob.len() < 1 + P256_POINT || blob[0] != SEAL_VERSION {
-        return Err(CoreError::State(format!(
-            "{slot}: not a sealed blob of this version"
-        )));
+    let not_sealed = || CoreError::State(format!("{slot}: not a sealed blob of this version"));
+    let mut r = Reader::new(blob, "sealed blob too short");
+    if r.u8().map_err(|_| not_sealed())? != SEAL_VERSION {
+        return Err(not_sealed());
     }
-    let ephemeral = &blob[1..1 + P256_POINT];
+    let ephemeral = r.take(P256_POINT).map_err(|_| not_sealed())?;
     let device = vault.device_public_key()?;
     let shared = Zeroizing::new(vault.agree(ephemeral.to_vec())?);
     let key = device_kdf(&shared, ephemeral, &device);
-    aead::open_payload(&blob[1 + P256_POINT..], &key, slot.as_bytes())
+    aead::open_payload(r.rest(), &key, slot.as_bytes())
         .map(Zeroizing::new)
         .map_err(|_| CoreError::State(format!("{slot}: does not open")))
 }

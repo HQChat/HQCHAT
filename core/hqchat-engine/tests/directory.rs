@@ -161,3 +161,23 @@ fn the_safety_number_needs_a_pinned_key() {
     );
     assert_eq!(safety_number(&[1], &[2]), safety_number(&[2], &[1]));
 }
+
+#[test]
+fn a_write_the_store_refuses_reaches_the_app() {
+    let server = FakeServer::shared();
+    let mut a = Client::signed_in(&server, "a");
+    let mut b = Client::signed_in(&server, "b");
+    b.store.set_full(true);
+    Client::befriend(&mut a, &mut b);
+    assert!(
+        b.seen
+            .iter()
+            .any(|e| matches!(e, Effect::StorageFailed { reason } if reason.contains("state"))),
+        "the friend list changed and could not be saved: {:?}",
+        b.seen
+    );
+    assert!(
+        !a.seen.iter().any(|e| matches!(e, Effect::StorageFailed { .. })),
+        "a's store works"
+    );
+}

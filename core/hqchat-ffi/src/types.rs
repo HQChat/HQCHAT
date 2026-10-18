@@ -517,6 +517,11 @@ pub enum Effect {
         /// Why.
         reason: String,
     },
+    /// The store refused a write; warn the user.
+    StorageFailed {
+        /// What, and why.
+        reason: String,
+    },
 }
 
 fn delivery(d: core::Delivery) -> Delivery {
@@ -641,6 +646,7 @@ impl From<core::Effect> for Effect {
             },
             core::Effect::AccountDeleted => Effect::AccountDeleted,
             core::Effect::Dropped { reason } => Effect::Dropped { reason },
+            core::Effect::StorageFailed { reason } => Effect::StorageFailed { reason },
         }
     }
 }

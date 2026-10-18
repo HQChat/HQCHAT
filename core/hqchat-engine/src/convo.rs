@@ -73,20 +73,21 @@ pub(crate) struct Convo {
     pending_seq: u64,
 }
 
-fn new_msg_id() -> String {
+/// A random UUID v4, as the other clients make message ids. Fails rather
+/// than hand out a predictable id when the OS generator does.
+fn new_msg_id() -> Result<String, CoreError> {
     let mut b = [0u8; 16];
-    let _ = getrandom::fill(&mut b);
-    b[6] = (b[6] & 0x0f) | 0x40;
-    b[8] = (b[8] & 0x3f) | 0x80;
-    let h = hex::encode(b);
-    format!(
+    getrandom::fill(&mut b).map_err(|_| CoreError::Protocol("the OS random generator failed".into()))?;
+    let [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13, b14, b15] = b;
+    let (b6, b8) = ((b6 & 0x0f) | 0x40, (b8 & 0x3f) | 0x80);
+    Ok(format!(
         "{}-{}-{}-{}-{}",
-        &h[..8],
-        &h[8..12],
-        &h[12..16],
-        &h[16..20],
-        &h[20..]
-    )
+        hex::encode([b0, b1, b2, b3]),
+        hex::encode([b4, b5]),
+        hex::encode([b6, b7]),
+        hex::encode([b8, b9]),
+        hex::encode([b10, b11, b12, b13, b14, b15])
+    ))
 }
 
 fn message_header(h: &Header) -> Option<MessageHeader> {
@@ -146,7 +147,7 @@ impl Core {
         {
             return Err(CoreError::NotAFriend);
         }
-        let msg_id = new_msg_id();
+        let msg_id = new_msg_id()?;
         let at = self.stamp(now);
         let record = StoredMessage {
             format: persist::FORMAT,
@@ -362,7 +363,7 @@ impl Core {
                 if let Some(p) = self.peers.get_mut(&peer) {
                     p.pinned = Some(key);
                 }
-                let _ = self.save_state();
+                self.persist_state();
                 self.claim(&peer);
             }
             None => {
@@ -426,7 +427,7 @@ impl Core {
             .map(|o| o.msg_id.clone())
             .collect();
         self.convo.outbox.retain(|o| o.peer != *peer);
-        let _ = self.save_state();
+        self.persist_state();
         for msg_id in failed {
             self.set_status(peer, &msg_id, Delivery::Failed);
         }
@@ -463,8 +464,8 @@ impl Core {
     pub fn on_puback(&mut self, peer: &PeerId, msg_id: &str, _now: i64) {
         let before = self.convo.outbox.len();
         self.convo.outbox.retain(|o| o.msg_id != msg_id);
-        if self.convo.outbox.len() != before && self.unlocked.is_some() {
-            let _ = self.save_state();
+        if self.convo.outbox.len() != before {
+            self.persist_state();
         }
         let online = self.peers.get(peer).is_some_and(|p| p.online);
         self.set_status(
@@ -536,7 +537,7 @@ impl Core {
             Ok((f, _)) if f.header.kind != Kind::Receipt => Some(f.header.sender),
             _ => None,
         };
-        self.convo.pending_seq += 1;
+        self.convo.pending_seq = self.convo.pending_seq.wrapping_add(1);
         let slot = persist::pending_slot(now, self.convo.pending_seq);
         let record = StoredPending {
             format: persist::FORMAT,
@@ -548,7 +549,9 @@ impl Core {
         });
         match sealed {
             Ok(blob) => {
-                let _ = self.store.put(slot, blob);
+                if let Err(e) = self.store.put(slot, blob) {
+                    self.storage_failed("a frame for the unlock", &e.into());
+                }
             }
             Err(e) => {
                 return self.drop_frame(format!("could not keep a frame for the unlock: {e:?}"));
@@ -557,7 +560,7 @@ impl Core {
         if let Some(sender) = notify
             && let Some(p) = self.peers.get_mut(&sender)
         {
-            p.unread += 1;
+            p.unread = p.unread.saturating_add(1);
             self.emit(Effect::Notify {
                 peer: sender.to_string(),
             });
@@ -601,7 +604,9 @@ impl Core {
         let has_session = matches!(self.session(sender), Ok(Some(_)));
         if has_session {
             let heard = matches!(self.session(sender), Ok(Some(s)) if s.pending_init.is_none());
-            let me = self.me.clone().expect("checked by on_frame");
+            let Some(me) = self.me.clone() else {
+                return self.drop_frame("init before an identity exists");
+            };
             if heard {
                 // An initiator repeats its init until answered: the payload is a message.
                 return self.open_message(sender, &frame, &aad, now);
@@ -613,7 +618,9 @@ impl Core {
             self.forget_session(sender);
             self.convo.yielded.insert(sender.clone());
         }
-        let me = self.me.clone().expect("checked by on_frame");
+        let Some(me) = self.me.clone() else {
+            return self.drop_frame("init before an identity exists");
+        };
         let transcript = handshake::init_transcript(sender, &me, &init);
         if self.convo.proven.contains(&transcript) {
             self.open_init(sender, &frame, &aad, now);
@@ -657,7 +664,9 @@ impl Core {
         if for_peer.len() >= MAX_CHALLENGES_PER_PEER {
             // The oldest goes: the real initiator re-sends, so its newest init always gets one.
             for_peer.sort_by_key(|(_, at)| *at);
-            self.convo.challenges.remove(&for_peer[0].0);
+            if let Some((oldest, _)) = for_peer.first() {
+                self.convo.challenges.remove(oldest);
+            }
         }
         let Ok(nonce) = handshake::handshake_nonce(&mut OsEntropy) else {
             return;
@@ -666,7 +675,9 @@ impl Core {
         let Ok((ct, ss)) = kem.encapsulate(&sender_pk) else {
             return;
         };
-        let me = self.me.clone().expect("checked by on_frame");
+        let Some(me) = self.me.clone() else {
+            return self.drop_frame("init before an identity exists");
+        };
         let expected = handshake::handshake_proof(&ss, &nonce, &me, peer, &transcript);
         self.convo.challenges.insert(
             transcript,
@@ -675,7 +686,7 @@ impl Core {
                 nonce,
                 expected,
                 held: vec![(frame, aad)],
-                expires_at: now + CHALLENGE_TTL_MS,
+                expires_at: now.saturating_add(CHALLENGE_TTL_MS),
             },
         );
         let chal = HandshakeFrame::Challenge {
@@ -759,11 +770,9 @@ impl Core {
                 else {
                     return self.drop_frame("proof for no open challenge");
                 };
-                let challenge = self
-                    .convo
-                    .challenges
-                    .remove(&transcript)
-                    .expect("found above");
+                let Some(challenge) = self.convo.challenges.remove(&transcript) else {
+                    return self.drop_frame("proof for no open challenge");
+                };
                 if !handshake::proof_matches(&challenge.expected, &proof) {
                     return self.drop_frame("handshake proof did not match");
                 }
@@ -912,7 +921,7 @@ impl Core {
                 });
             }
         }
-        let _ = self.save_state();
+        self.persist_state();
         self.flush(peer, now);
     }
 }

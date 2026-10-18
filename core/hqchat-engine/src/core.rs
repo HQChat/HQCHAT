@@ -199,6 +199,25 @@ impl Core {
         Ok(())
     }
 
+    /// Saves the state, or tells the app it could not: a write that fails
+    /// quietly would lose ratchet, prekey or outbox state at the next launch.
+    /// While locked there is nothing to save with; the unlock saves.
+    pub fn persist_state(&mut self) {
+        if self.unlocked.is_none() {
+            return;
+        }
+        if let Err(e) = self.save_state() {
+            self.storage_failed("state", &e);
+        }
+    }
+
+    /// Reports a store write that failed.
+    pub fn storage_failed(&mut self, what: &str, e: &CoreError) {
+        self.emit(Effect::StorageFailed {
+            reason: format!("could not save {what}: {e:?}"),
+        });
+    }
+
     /// Opens `state` (one hardware ECDH) and adopts it.
     pub fn open_state(&mut self) -> Result<(), CoreError> {
         if !self.has_identity {
@@ -338,7 +357,7 @@ impl Core {
 
     /// A message time at or after `now`, after every one handed out before.
     pub fn stamp(&mut self, now: i64) -> i64 {
-        self.last_stamp = now.max(self.last_stamp + 1);
+        self.last_stamp = now.max(self.last_stamp.saturating_add(1));
         self.last_stamp
     }
 
@@ -378,9 +397,10 @@ impl Core {
             let cut = format!("{}{:020}", persist::messages_prefix(peer), before.max(0));
             slots.retain(|s| *s < cut);
         }
-        let skip = slots.len().saturating_sub(limit as usize);
+        let limit = usize::try_from(limit).unwrap_or(usize::MAX);
+        let skip = slots.len().saturating_sub(limit);
         let mut out = Vec::new();
-        for slot in &slots[skip..] {
+        for slot in slots.iter().skip(skip) {
             if let Some(m) = self.get_message(slot)? {
                 out.push(Message {
                     msg_id: m.msg_id,

@@ -33,13 +33,13 @@ pub(crate) struct Auth {
 impl Auth {
     /// Unix seconds on the server's clock.
     pub fn server_now_sec(&self, now: i64) -> i64 {
-        (now + self.clock_offset_ms).div_euclid(1000)
+        now.saturating_add(self.clock_offset_ms).div_euclid(1000)
     }
 
     pub fn fresh(&self, now: i64) -> bool {
         self.token.is_some()
             && self.signing.is_some()
-            && self.key_expires_at - now > KEY_REFRESH_MARGIN_MS
+            && self.key_expires_at.saturating_sub(now) > KEY_REFRESH_MARGIN_MS
     }
 }
 
@@ -141,7 +141,7 @@ impl Core {
     pub fn on_auth_refresh(&mut self, a: Answer, signing: SigningKey, now: i64) {
         if a.status == 401 {
             // The session lapsed: a full sign-in.
-            self.auth = crate::auth::Auth {
+            self.auth = Auth {
                 clock_offset_ms: self.auth.clock_offset_ms,
                 ..Default::default()
             };
@@ -157,14 +157,14 @@ impl Core {
             return self.auth_failed(a);
         };
         if let Some(server_time) = a.body.get("serverTime").and_then(|v| v.as_i64()) {
-            self.auth.clock_offset_ms = server_time * 1000 - now;
+            self.auth.clock_offset_ms = server_time.saturating_mul(1000).saturating_sub(now);
         }
         let expires = a
             .body
             .get("mqttKeyExpiresAt")
             .and_then(|v| v.as_i64())
-            .map_or(now + 12 * 3600 * 1000, |s| {
-                s * 1000 - self.auth.clock_offset_ms
+            .map_or(now.saturating_add(12 * 3600 * 1000), |s| {
+                s.saturating_mul(1000).saturating_sub(self.auth.clock_offset_ms)
             });
         self.auth.signing = Some(signing);
         self.auth.key_id = Some(key_id);

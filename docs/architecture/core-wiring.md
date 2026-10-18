@@ -184,7 +184,7 @@ today is the importer's job (phase 3).
 - Effects: `Http`, `Open`, `Write`, `Close`, `Timer`, `NeedUnlock`,
   `MessageAdded`, `MessageStatus`, `FriendsChanged`, `InvitesChanged`,
   `PresenceChanged`, `Connection`, `TierChanged`, `Notify`, `ActionFailed`,
-  `AccountDeleted`, `Dropped`.
+  `AccountDeleted`, `Dropped`, `StorageFailed`.
 - What the app implements: `KeyVault` (`create`, `device_public_key`,
   `agree`, `tier`) and `Store` (`get`, `put`, `delete`, `list`).
 - Errors: `CoreError` (`NoIdentity`, `NotAFriend`, `NoPrekeys`, `Locked`,

@@ -40,9 +40,12 @@ pub fn safety_number(mine: &[u8], theirs: &[u8]) -> String {
     h.update(second);
     let hash = h.finalize();
     let groups: Vec<String> = hash
-        .chunks(2)
+        .chunks_exact(2)
         .take(12)
-        .map(|p| format!("{:05}", u16::from_be_bytes([p[0], p[1]])))
+        .filter_map(|p| match *p {
+            [a, b] => Some(format!("{:05}", u16::from_be_bytes([a, b]))),
+            _ => None,
+        })
         .collect();
     groups
         .chunks(4)
@@ -114,7 +117,9 @@ impl Core {
             .cloned()
             .collect();
         for id in gone {
-            let peer = self.peers.remove(&id).expect("listed above");
+            let Some(peer) = self.peers.remove(&id) else {
+                continue;
+            };
             unsubscribe.extend(peer_topics(&peer));
             self.forget_session(&id);
             changed = true;
@@ -142,9 +147,7 @@ impl Core {
             }
         }
         if changed {
-            if self.unlocked.is_some() {
-                let _ = self.save_state();
-            }
+            self.persist_state();
             self.emit(Effect::FriendsChanged);
             self.on_topics_changed(subscribe, unsubscribe);
         }
@@ -219,13 +222,17 @@ impl Core {
                 }
             }
         }
-        let mut body = json!({ "conversation": convo.as_str(), "peer": peer_id.as_str(), "category": r.reason });
+        let mut body = serde_json::Map::new();
+        body.insert("conversation".into(), json!(convo.as_str()));
+        body.insert("peer".into(), json!(peer_id.as_str()));
+        body.insert("category".into(), json!(r.reason));
         if !excerpt.is_empty() {
-            body["excerpt"] = json!(excerpt.join("\n"));
+            body.insert("excerpt".into(), json!(excerpt.join("\n")));
         }
         if let Some(first) = r.msg_ids.first() {
-            body["messageId"] = json!(first);
+            body.insert("messageId".into(), json!(first));
         }
+        let body = Value::Object(body);
         self.request(
             Method::Post,
             "/report",
@@ -260,7 +267,7 @@ impl Core {
         let due = u
             .prekeys
             .as_ref()
-            .is_none_or(|p| now - p.rotated_at > MEDIUM_TERM_LIFETIME_MS);
+            .is_none_or(|p| now.saturating_sub(p.rotated_at) > MEDIUM_TERM_LIFETIME_MS);
         if due {
             self.publish_prekeys(now, true, PREKEY_POOL);
         } else {
@@ -278,7 +285,12 @@ impl Core {
         if !a.ok() {
             return;
         }
-        let remaining = a.body.get("remaining").and_then(Value::as_u64).unwrap_or(0) as u32;
+        // A count past u32 is absurd; read it as "plenty" rather than truncate it.
+        let remaining = a
+            .body
+            .get("remaining")
+            .and_then(Value::as_u64)
+            .map_or(0, |n| u32::try_from(n).unwrap_or(u32::MAX));
         if remaining <= PREKEY_REPLENISH_AT {
             self.publish_prekeys(now, false, PREKEY_POOL.saturating_sub(remaining));
         }
@@ -307,7 +319,10 @@ impl Core {
                     next_id,
                 });
             }
-            let p = u.prekeys.as_mut().expect("set above");
+            let p = u
+                .prekeys
+                .as_mut()
+                .ok_or_else(|| CoreError::State("no prekeys to extend".into()))?;
             for _ in 0..count {
                 let KeyPair { public, secret } = hqc::generate_keypair()?;
                 let id = p.next_id;
@@ -320,14 +335,13 @@ impl Core {
         if result.is_err() {
             return;
         }
-        let medium = hex::encode(
-            u.prekeys
-                .as_ref()
-                .expect("set above")
-                .medium
-                .public
-                .as_bytes(),
-        );
+        let Some(medium) = u
+            .prekeys
+            .as_ref()
+            .map(|p| hex::encode(p.medium.public.as_bytes()))
+        else {
+            return;
+        };
         // Secrets are saved before the public halves leave.
         if self.save_state().is_err() {
             return;

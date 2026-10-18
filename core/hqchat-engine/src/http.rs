@@ -64,7 +64,7 @@ impl Core {
         with_session: bool,
         pending: Pending,
     ) {
-        self.http_next += 1;
+        self.http_next = self.http_next.wrapping_add(1);
         let req = self.http_next;
         self.http_pending.insert(req, pending);
         let authorization = if with_session {

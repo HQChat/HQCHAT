@@ -181,4 +181,10 @@ pub enum Effect {
         /// Why, as the TS and Swift clients word it.
         reason: String,
     },
+    /// The store refused a write: warn the user, since what was not saved
+    /// (a message, a session, the outbox) is lost if the app stops now.
+    StorageFailed {
+        /// What could not be saved, and why.
+        reason: String,
+    },
 }

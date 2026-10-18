@@ -25,9 +25,11 @@ use crate::effect::{CloseReason, ConnState, Effect, Endpoint, Method};
 use crate::http::{Answer, Pending};
 
 pub(crate) const KEEP_ALIVE_SECS: u16 = 60;
+/// [`KEEP_ALIVE_SECS`] in milliseconds; a test keeps the two equal.
+const KEEP_ALIVE_MS: i64 = 60_000;
 const CONNACK_TIMEOUT_MS: i64 = 15_000;
 /// No byte for this long on a live connection means it is dead.
-const READ_TIMEOUT_MS: i64 = 2 * KEEP_ALIVE_SECS as i64 * 1000;
+const READ_TIMEOUT_MS: i64 = 2 * KEEP_ALIVE_MS;
 const BACKOFF_START_MS: i64 = 2_000;
 const BACKOFF_MAX_MS: i64 = 30_000;
 pub(crate) const DIRECTORY_POLL_MS: i64 = 60_000;
@@ -141,7 +143,7 @@ impl Core {
             return;
         }
         self.net.retry_at = None;
-        self.net.next_conn += 1;
+        self.net.next_conn = self.net.next_conn.wrapping_add(1);
         let id = self.net.next_conn;
         let use_hqn = self.net.hqn.is_some() && !self.net.hqn_failed.contains(&self.network_key());
         let endpoint = match (&self.net.hqn, use_hqn) {
@@ -181,7 +183,9 @@ impl Core {
         let Some(password) = self.connect_password(now) else {
             return self.drop_conn(conn, now, true);
         };
-        let me = self.me.clone().expect("connect requires an identity");
+        let Some(me) = self.me.clone() else {
+            return self.drop_conn(conn, now, false);
+        };
         let connect = Packet::Connect {
             client_id: me.to_string(),
             username: Some(me.to_string()),
@@ -323,7 +327,7 @@ impl Core {
         let Some(c) = self.current(conn) else { return };
         c.up = true;
         self.net.backoff_ms = 0;
-        self.net.next_poll = Some(now + DIRECTORY_POLL_MS);
+        self.net.next_poll = Some(now.saturating_add(DIRECTORY_POLL_MS));
         self.emit(Effect::Connection(ConnState::Connected));
         let mut filters = vec![
             (topics::inbox_topic(&me), QoS::AtLeastOnce),
@@ -496,8 +500,12 @@ impl Core {
             self.net.hqn_failed.insert(key);
             self.net.retry_at = Some(now);
         } else if retry {
-            self.net.backoff_ms = (self.net.backoff_ms * 2).clamp(BACKOFF_START_MS, BACKOFF_MAX_MS);
-            self.net.retry_at = Some(now + self.net.backoff_ms);
+            self.net.backoff_ms = self
+                .net
+                .backoff_ms
+                .saturating_mul(2)
+                .clamp(BACKOFF_START_MS, BACKOFF_MAX_MS);
+            self.net.retry_at = Some(now.saturating_add(self.net.backoff_ms));
         }
         self.net.next_poll = None;
         self.emit(Effect::Connection(ConnState::Offline));
@@ -541,16 +549,16 @@ impl Core {
     pub fn tick(&mut self, now: i64) {
         if let Some(c) = self.net.conn.as_ref() {
             let id = c.id;
-            let connack_late = !c.up && now - c.opened_at >= CONNACK_TIMEOUT_MS;
-            let silent = c.up && now - c.last_read >= READ_TIMEOUT_MS;
+            let connack_late = !c.up && now.saturating_sub(c.opened_at) >= CONNACK_TIMEOUT_MS;
+            let silent = c.up && now.saturating_sub(c.last_read) >= READ_TIMEOUT_MS;
             if connack_late || silent {
                 self.drop_conn(id, now, true);
-            } else if c.up && now - c.last_write >= i64::from(KEEP_ALIVE_SECS) * 1000 {
+            } else if c.up && now.saturating_sub(c.last_write) >= KEEP_ALIVE_MS {
                 self.send_packet(&Packet::Pingreq, now);
             }
         }
         if self.link_up() && self.net.next_poll.is_some_and(|t| now >= t) {
-            self.net.next_poll = Some(now + DIRECTORY_POLL_MS);
+            self.net.next_poll = Some(now.saturating_add(DIRECTORY_POLL_MS));
             self.sync_directory();
         }
         if self.net.conn.is_none() && self.net.retry_at.is_some_and(|t| now >= t) {
@@ -566,10 +574,10 @@ impl Core {
         let mut at = |t: i64| next = Some(next.map_or(t, |n: i64| n.min(t)));
         if let Some(c) = self.net.conn.as_ref() {
             if c.up {
-                at(c.last_write + i64::from(KEEP_ALIVE_SECS) * 1000);
-                at(c.last_read + READ_TIMEOUT_MS);
+                at(c.last_write.saturating_add(KEEP_ALIVE_MS));
+                at(c.last_read.saturating_add(READ_TIMEOUT_MS));
             } else {
-                at(c.opened_at + CONNACK_TIMEOUT_MS);
+                at(c.opened_at.saturating_add(CONNACK_TIMEOUT_MS));
             }
         }
         if let Some(t) = self.net.retry_at {
@@ -617,6 +625,11 @@ fn parse_hqn(a: &Answer) -> Option<HqnInfo> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_keep_alive_is_the_same_in_both_units() {
+        assert_eq!(i64::from(KEEP_ALIVE_SECS) * 1000, KEEP_ALIVE_MS);
+    }
 
     #[test]
     fn the_wss_url_follows_the_server_url() {

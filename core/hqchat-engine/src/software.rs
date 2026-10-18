@@ -110,9 +110,15 @@ impl KeyVault for SoftwareVault {
 #[derive(Default)]
 pub struct MemoryStore {
     blobs: Mutex<BTreeMap<String, Vec<u8>>>,
+    full: AtomicBool,
 }
 
 impl MemoryStore {
+    /// Refuses every write while `full`, as a full disk would.
+    pub fn set_full(&self, full: bool) {
+        self.full.store(full, Ordering::SeqCst);
+    }
+
     /// A copy of every blob, for tests that inspect or tamper with storage.
     pub fn snapshot(&self) -> BTreeMap<String, Vec<u8>> {
         self.blobs.lock().unwrap_or_else(|e| e.into_inner()).clone()
@@ -129,6 +135,9 @@ impl Store for MemoryStore {
     }
 
     fn put(&self, key: String, value: Vec<u8>) -> Result<(), StoreError> {
+        if self.full.load(Ordering::SeqCst) {
+            return Err(StoreError::Write("the disk is full".into()));
+        }
         self.blobs
             .lock()
             .unwrap_or_else(|e| e.into_inner())

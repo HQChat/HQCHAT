@@ -219,6 +219,10 @@ fn js(effect: Effect) -> JsEffect {
             reason: Some(reason),
             ..k("dropped")
         },
+        Effect::StorageFailed { reason } => JsEffect {
+            reason: Some(reason),
+            ..k("storageFailed")
+        },
     }
 }
 
