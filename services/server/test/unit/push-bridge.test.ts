@@ -110,6 +110,23 @@ test("…and never someone who is online", async () => {
   assert.deepEqual(woke, [ID_B, ID_A, ID_B], "once offline again, they are woken");
 });
 
+test("a first message to an offline inbox wakes its owner, and an online owner is left alone", async () => {
+  // A new conversation starts with an init on the recipient's inbox, before
+  // either side uses the conversation topic: without this, a friend's first
+  // message reaches an offline phone silently.
+  const { deps, woke } = spy({});
+  const b = createPushBridge(deps);
+  await b.handleMessage(`u/${ID_A}/inbox`, Buffer.from("init ciphertext"));
+  assert.deepEqual(woke, [ID_A]);
+  await b.handleMessage(`u/${ID_A}/presence`, presence("online"));
+  await b.handleMessage(`u/${ID_A}/inbox`, Buffer.from("init ciphertext"));
+  assert.deepEqual(woke, [ID_A], "an online owner is reading already");
+  for (const topic of [`u/${ID_A}x/inbox`, "u/short/inbox", `u/${ID_A.toUpperCase()}/inbox`, `u/${ID_A}/inbox/x`]) {
+    await b.handleMessage(topic, Buffer.from("x"));
+  }
+  assert.deepEqual(woke, [ID_A], "a malformed inbox topic wakes nobody");
+});
+
 test("an unknown conversation id wakes nobody", async () => {
   // No members means a retired topic (an ex-friend still holds its id) or a
   // disagreement with friendships.convo_id. The wrong answer here would be to
