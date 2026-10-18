@@ -1,7 +1,8 @@
 # Multiplatform: one core, four platforms
 
-**Status: the core (phases 1 and 1b) is built in `core/`; the server and the
-apps do not use it yet.** How HQChat goes from two Apple targets to
+**Status: the core (phases 1 and 1b) is built in `core/`, and the server,
+the hqn/1 gateway and the helper bot run on it (phase 2, built; deployment to
+staging and production pending). The apps do not use it yet (phase 3 next).** How HQChat goes from two Apple targets to
 iOS, macOS, Android, Linux and Windows without a second or third copy of the
 protocol. Moving an account between devices is a separate plan, built on top
 of this one. The flow of one message through the core, function by function,
@@ -118,20 +119,25 @@ Every function, and what it replaces in the Apple app and the server, is in
 
 ### The server surface
 
-Stateless functions, plus two objects:
+The Node addon (`core/hqchat-node`, packaged by `core/hqchat-node/package.nix`
+and loaded through `src/common/core.ts`, whose types a unit test keeps equal to
+the exports):
 
 | Export | Used by |
 |---|---|
-| `hqcEncaps`, `hqcDecaps`, `hqcKeypairFromSeed` | `/auth/init`, the gateway's keys and decap worker |
-| `authProof`, constant-time compare | `/auth/verify` |
-| `parseConnectProof`, `verifyConnectProof` | `/mqtt/authn` |
-| `peerId`, `isPeerId`, topic builders | routes, EMQX helpers |
-| `HqnResponder` (stateful) | `hqcat-noise-gw` |
-| `Engine` (same as the apps') | `hqcat-bot`, the reference client, scenario tests |
+| `hqcKeypairFromSeed`, `hqcEncapsulate`, `hqcDecapsulate`, `authProof`, `HQC_PUBLIC_KEY_BYTES` | `/auth/init`, the gateway's decapsulation workers |
+| `parseConnectProof`, `isFreshTimestamp`, `verifyConnectProof`, `isSigningKey`, `MQTT_PROOF_NONCE_TTL_SECONDS` | `/mqtt/authn`, `/auth/verify` and `/auth/refresh` (a registered key must be a canonical, non-small-order Ed25519 point) |
+| `peerId`, `isPeerId`, `conversationTopic`, `handshakeTopic`, `PEER_ID_LENGTH` | routes, the users table, EMQX revocation |
+| `GatewayKeyPair` (derived once at startup), `HqnGatewayHandshake`, `HqnTransport`, `hqnMsg1Length`, `hqnFrame`, `HQN_VERSION` | `hqcat-noise-gw` |
+| `Engine`, with `importLegacy` | `hqcat-bot` (through `src/common/core-client.ts`), the core scenario |
 
-TypeScript keeps HTTP, Postgres, EMQX hooks and the push bridge. Because the
-bot runs the apps' own `Engine`, every scenario test exercises real client
-code.
+TypeScript keeps HTTP, Postgres, EMQX hooks and the push bridge. The bot runs
+the apps' own `Engine`, so every scenario that talks to it exercises real
+client code; `test/scenarios/core.test.ts` also puts an engine user and a
+user on the TS reference client in one conversation. The TS protocol and
+client the server used to run on live on in `services/server/test/reference/`
+as an independent implementation: the differential fuzzers compare it with
+the core (`hqchat-verdict`), as they compare it with the Swift app.
 
 ### Crossing the boundary
 
@@ -209,7 +215,7 @@ The fallback tier:
 | `native/hqc/` | the C wrapper, unchanged, consumed by `hqc-sys` | AGPL-3.0 |
 | `apps/apple/` | Swift shell; `Services/` keeps the vault, byte pipes, push and UI glue, loses the protocol, MQTT and session code | PolyForm Strict |
 | `apps/kotlin/` | `shared/` (Compose UI, view models, the effect loop), `android/`, `desktop/` | PolyForm Strict |
-| `services/server/` | `test/reference/protocol/` and most of `test/reference/client/` replaced by the napi binding; koffi and mqtt.js dropped | AGPL-3.0 |
+| `services/server/` | the server on the napi binding; `src/protocol` and `src/client` moved to `test/reference/` (test-only); koffi and `HQC_LIB` dropped; mqtt.js kept for the push bridge and the reference client | AGPL-3.0 |
 
 The core is AGPL for everyone else; the official apps link it because the
 maintainer holds the copyright. That only stays true if every contribution to
@@ -246,7 +252,7 @@ main                       releases only
 | Area | Feature branches, in order |
 |---|---|
 | `lib` | **Done, in `lib/main`:** `lib/hqc-sys` → `lib/api-surface` → `lib/protocol-identity-topics` → `lib/protocol-aead-envelope` → `lib/protocol-handshake` → `lib/protocol-ratchet` → `lib/protocol-mqtt-proof` → `lib/protocol-noise` → `lib/protocol-mqtt-codec` → `lib/engine-at-rest` → `lib/engine-auth` → `lib/engine-prekeys-friends` → `lib/engine-mqtt-session` → `lib/engine-conversations` → `lib/node-binding` → `lib/ffi-binding` → `lib/hostile-input` → `lib/ci-core`. **Later:** `lib/vault-desktop` (phase 6), `lib/fuzz-differential` (cargo-fuzz needs a nightly toolchain the dev shell does not pin) |
-| `server` | `server/napi-protocol` → `server/napi-gateway` → `server/engine-client` (bot, scenarios) → `server/push-fcm-unifiedpush` |
+| `server` | **Done, in `server/main`:** `server/core-node-package` → `server/differential-rust-ts` → `server/napi-protocol` → `server/napi-gateway` → `server/engine-client` (bot, scenarios) → `server/remove-ts-protocol` → `server/push-inbox-wake` → `server/docs-phase2`. **Later:** `server/push-fcm-unifiedpush` (phase 4) |
 | `apple` | `apple/core-xcframework` → `apple/effect-loop` → `apple/enclave-vault` → `apple/importer` → `apple/views-on-engine` → `apple/remove-swift-protocol` |
 | `android` | `android/scaffold` → `android/effect-loop` → `android/keystore-vault` → `android/push` → `android/ui` → `android/release` |
 | `desktop` | `desktop/scaffold` → `desktop/effect-loop` → `desktop/linux-packaging` → `desktop/windows-msix` |
@@ -259,7 +265,7 @@ Each phase ships on its own and leaves every existing client working.
 |---|---|---|---|
 | 1 | **Protocol (built).** `hqc-sys`, `hqc`, the API surface, `hqchat-protocol` with the MQTT codec; the shared vectors read in place; hostile input to every decoder | `lib/hqc-sys` … `lib/protocol-mqtt-codec`, `lib/hostile-input` | every vector passes: on macOS arm64 and in CI (Linux x86_64); the other targets with their phases |
 | 1b | **Engine and bindings (built).** `hqchat-engine`, `hqchat-node`, `hqchat-ffi`; `scripts/check.sh core` in CI | `lib/engine-*`, `lib/*-binding`, `lib/ci-core` | two engines converse through a fake server and broker; Node and Swift run the bindings; the bot on staging comes with phase 2 |
-| 2 | **Server on the core.** napi binding replaces `src/protocol` and koffi in the server, gateway, bot and reference client | `server/napi-*`, `server/engine-client` | unit, integration and scenario layers green; deployed to staging, then production |
+| 2 | **Server on the core (built; deployment pending).** The napi binding replaces `src/protocol` and koffi in the server, gateway and bot; the bot imports its TS state into the core on its first start, keeping its seed-derived id and its sessions | `server/*` (done list above) | unit, integration and scenario layers green (done, locally and with the Swift live check); deployed to staging, then production |
 | 3 | **Apple on the core.** xcframework behind a flag; the importer rewrites existing identity, sessions and messages on first launch; the identity key moves under the enclave seal; Swift protocol, MQTT and session files deleted once `verify.sh` passes both ways | `apple/*` | an App Store update with no visible change |
 | 4 | **Server for new platforms.** Push bridge gains FCM and UnifiedPush; push tokens carry a platform | `server/push-fcm-unifiedpush` | scenarios cover each provider with a fake |
 | 5 | **Android.** Kotlin shell, Android target; Keystore vault; FCM + UnifiedPush + foreground-service fallback; `allowBackup=false`, `FLAG_SECURE` | `android/*` | Play internal testing; interop with iOS and the bot |
@@ -278,7 +284,7 @@ Windows gets runner jobs for the vault and the MSIX; Apple stays on
 | Late messages on Android (Doze, OEM battery killers, FCM deprioritising silent pushes) | 5 | content-free visible notification on every push; UnifiedPush; foreground-service option; dontkillmyapp guidance in-app |
 | Ratchet state copied off the device by backup | 5, 6 | `allowBackup=false`; Store excluded from OneDrive / Windows backup paths; everything sealed regardless |
 | HQC on arm64 Android: build flags, 16 KB pages, constant time | 1, 5 | known-answer digests on device in CI; timing test on a real arm64 device |
-| HQC's large stack buffers on small thread stacks (512 KB on iOS secondary threads) | 1, 3, 5 | measure peak stack; run HQC on a core-owned thread with an explicit stack size if needed |
+| HQC's large stack buffers on small thread stacks (512 KB on iOS secondary threads) | 1, 3, 5 | measured: about 210 KiB at peak (`crypto_kem_dec` → `hqc_pke_encrypt` → `vect_mul`), then the 256 KiB stack scrub after each call; under 512 KB, to confirm on device in phases 3 and 5 |
 | The importer loses or corrupts an existing Apple install | 3 | importer keeps the old items until the new ones open; tested against stores captured from every shipped version; staged rollout |
 | A marshalling bug the Rust tests cannot see | 1b, 3, 5 | the binding conformance suite runs the vectors through Swift, Kotlin and Node |
 | TPM access denied on Linux (`tss` group, Flatpak sandbox) | 6 | detect and say so; fallback tier; document the one command that fixes it |
@@ -291,18 +297,22 @@ Windows gets runner jobs for the vault and the MSIX; Apple stays on
 - The Linux baseline the desktop build targets (oldest glibc; which
   distributions are tested).
 - The account-transfer plan, written separately.
-- The push bridge (`src/server/push.ts`) wakes on `cv/+` only, so an `init`
-  sent to an offline peer's inbox wakes nobody. Intentional or not, it
-  matters before Android.
+- Settled: an offline user gets a content-free wake for any message,
+  including a first one on their inbox (`src/server/push.ts`); reading it
+  still needs the unlock. Handshake traffic wakes nobody.
 - HQC's PRNG is one global SHAKE-256 state (`symmetric.c`), and after an
   encapsulation it still holds the sponge that produced the message and the
   salt; Keccak is invertible, so that memory gives the shared secret away.
-  `core/hqc-sys` wipes it after each encapsulation. The shipped
-  `hqc_kem_enc_wrap` does not; the fix ships with the core (phases 2 and 3),
-  not as a separate patch.
+  `core/hqc-sys` wipes it after each encapsulation, and zeroes the stack HQC
+  used after every call. The shipped `hqc_kem_enc_wrap` does not; the server
+  stops calling it when phase 2 deploys, the apps in phase 3, with no
+  separate patch. The C reference itself stays untouched: it is the standard.
 - The Kotlin bindings generate but are first compiled in phase 5; the Swift
   ones are compiled and run by `core/hqchat-ffi/swift/run.sh`.
 - The at-rest format is the core's own: opening what the Apple app sealed
-  (its Secure Enclave ECIES rows) is the importer's job in phase 3.
+  (its Secure Enclave ECIES rows) is the importer's job in phase 3. The
+  engine's side of it exists: `Engine::import` takes an identity (seed or key
+  pair), prekey secrets, and each friend's pinned key, topics and ratchet
+  session, and the bot already moves through it.
 - The server accepts APNs tokens only; FCM and UnifiedPush registrations fail
   until phase 4.

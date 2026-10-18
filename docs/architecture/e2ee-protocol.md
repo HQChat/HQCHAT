@@ -1,9 +1,12 @@
 # End-to-end encryption protocol
 
-What two clients speak to each other. The TypeScript implementation is in
-`services/server/test/reference/protocol/` (used by the bot and the tests); the Swift one
-in `apps/apple/HQChat/Services/`. Each piece below is pinned byte for byte
-between the two by a vector file in `services/server/test/helpers/`.
+What two clients speak to each other. The implementation clients and the
+server run is the Rust core (`core/hqchat-protocol`, used by the bot and,
+from phase 3, the apps); the Swift app's own is in
+`apps/apple/HQChat/Services/`, and the TypeScript reference in
+`services/server/test/reference/protocol/` (tests only). Each piece below is
+pinned byte for byte between them by a vector file in
+`services/server/test/helpers/`.
 
 ## Primitives
 
