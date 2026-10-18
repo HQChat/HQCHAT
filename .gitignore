@@ -37,3 +37,6 @@ native/hqc/result
 
 # Cargo build output
 core/target/
+
+# The Node addon, built by core/hqchat-node/build.sh
+core/hqchat-node/hqchat_node.node
