@@ -59,7 +59,12 @@ impl Engine {
             c.started = true;
             c.network = Some(network);
             if c.has_identity {
-                c.ensure_signed_in(now);
+                if c.auth.fresh(now) {
+                    // A resume: re-read what may have changed meanwhile.
+                    c.sync_directory();
+                } else {
+                    c.ensure_signed_in(now);
+                }
             }
             Ok(())
         })
@@ -110,27 +115,59 @@ impl Engine {
 
     /// Sends a friend request to a username.
     pub fn invite(&self, username: String) -> Vec<Effect> {
-        todo!("lib/engine-prekeys-friends")
+        self.run(|c| {
+            c.friendship(
+                crate::Action::Invite,
+                "/friends/invite",
+                serde_json::json!({ "to": username }),
+            );
+            Ok(())
+        })
+        .unwrap_or_default()
     }
 
     /// Accepts a friend request.
     pub fn accept(&self, peer: String) -> Vec<Effect> {
-        todo!("lib/engine-prekeys-friends")
+        self.run(|c| {
+            c.friendship(
+                crate::Action::Accept,
+                "/friends/accept",
+                serde_json::json!({ "from": peer }),
+            );
+            Ok(())
+        })
+        .unwrap_or_default()
     }
 
     /// Removes a friend and forgets the session.
     pub fn remove(&self, peer: String) -> Vec<Effect> {
-        todo!("lib/engine-prekeys-friends")
+        self.run(|c| {
+            c.friendship(
+                crate::Action::Remove,
+                "/friends/remove",
+                serde_json::json!({ "peer": peer }),
+            );
+            Ok(())
+        })
+        .unwrap_or_default()
     }
 
     /// Blocks a user.
     pub fn block(&self, peer: String) -> Vec<Effect> {
-        todo!("lib/engine-prekeys-friends")
+        self.run(|c| {
+            c.friendship(
+                crate::Action::Block,
+                "/friends/block",
+                serde_json::json!({ "peer": peer }),
+            );
+            Ok(())
+        })
+        .unwrap_or_default()
     }
 
     /// Reports a friend's messages.
     pub fn report(&self, report: ReportInput) -> Vec<Effect> {
-        todo!("lib/engine-prekeys-friends")
+        self.run(|c| c.report(&report)).unwrap_or_default()
     }
 
     /// Claims a username.
@@ -178,9 +215,15 @@ impl Engine {
         self.core().friends()
     }
 
+    /// Friend requests waiting for this user's answer.
+    pub fn invites(&self) -> Vec<crate::InviteView> {
+        self.core().invites.clone()
+    }
+
     /// The safety number for a friend's pinned key, to compare in person.
     pub fn fingerprint(&self, peer: String) -> Option<String> {
-        todo!("lib/engine-prekeys-friends")
+        let peer = hqchat_protocol::PeerId::parse(&peer).ok()?;
+        self.core().fingerprint(&peer)
     }
 
     // ── I/O results ──────────────────────────────────────────────────────

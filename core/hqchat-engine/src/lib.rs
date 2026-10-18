@@ -17,6 +17,7 @@
 
 mod auth;
 mod core;
+mod directory;
 mod effect;
 mod engine;
 mod http;
@@ -25,11 +26,13 @@ mod ports;
 pub mod software;
 mod types;
 
+pub use directory::safety_number;
 pub use effect::{Action, CloseReason, ConnState, Effect, Endpoint, Method, UnlockReason};
 pub use engine::Engine;
 pub use ports::{KeyVault, Store, StoreError, Tier, VaultError};
 pub use types::{
-    Config, CoreError, Delivery, Device, FriendView, Message, NetworkInfo, PushToken, ReportInput,
+    Config, CoreError, Delivery, Device, FriendView, InviteView, Message, NetworkInfo, PushToken,
+    ReportInput,
 };
 
 /// The version of this API; shells check it at startup against the bindings

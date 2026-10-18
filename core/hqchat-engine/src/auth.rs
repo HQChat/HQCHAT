@@ -178,8 +178,12 @@ impl Core {
         self.fail(Action::SignIn, a);
     }
 
-    /// What follows a sign-in or refresh. Later features hook in here.
-    pub fn on_signed_in(&mut self, _now: i64) {}
+    /// What follows a sign-in or refresh: the directory and the prekeys,
+    /// then (later features) the connection.
+    pub fn on_signed_in(&mut self, now: i64) {
+        self.sync_directory();
+        self.ensure_prekeys(now);
+    }
 
     /// A fresh CONNECT password; `None` without a usable signing key.
     pub fn connect_password(&self, now: i64) -> Option<String> {

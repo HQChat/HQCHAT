@@ -18,6 +18,11 @@ pub(crate) enum Pending {
     },
     /// A user action whose only answer is success or failure.
     Action(Action),
+    /// A friendship action: on success, re-read the directory.
+    ThenSync(Action),
+    Friends,
+    Invites,
+    PrekeyCount,
     DeleteAccount,
 }
 
@@ -93,6 +98,10 @@ impl Core {
                 }
             }
             Pending::DeleteAccount => self.on_account_deleted(answer),
+            Pending::ThenSync(action) => self.on_then_sync(action, answer),
+            Pending::Friends => self.on_friends(answer),
+            Pending::Invites => self.on_invites(answer),
+            Pending::PrekeyCount => self.on_prekey_count(answer, now),
         }
     }
 

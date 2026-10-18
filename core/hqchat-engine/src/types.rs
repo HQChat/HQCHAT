@@ -87,6 +87,15 @@ pub struct FriendView {
     pub unread: u32,
 }
 
+/// A friend request waiting for this user's answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InviteView {
+    /// Who sent it.
+    pub id: String,
+    /// Their username.
+    pub username: String,
+}
+
 /// A report about a friend's message (moderation, docs/runbooks/moderation.md).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReportInput {

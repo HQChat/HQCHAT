@@ -15,6 +15,7 @@ use hqchat_engine::software::{MemoryStore, SoftwareVault};
 use hqchat_engine::{Config, Device, Effect, Engine, Method};
 use hqchat_protocol::{PeerId, auth_proof};
 use serde_json::{Value, json};
+use sha2::Digest as _;
 
 pub const NOW: i64 = 1_790_000_000_000;
 
@@ -32,6 +33,16 @@ pub struct User {
     pub username: Option<String>,
     pub signing_keys: Vec<(String, [u8; 32])>,
     pub push: Option<Value>,
+    pub medium: Option<String>,
+    pub one_time: Vec<(u64, String)>,
+    pub blocked: Vec<String>,
+}
+
+/// A friendship's two topic ids.
+#[derive(Clone)]
+pub struct Friendship {
+    pub convo: String,
+    pub handshake: String,
 }
 
 /// The server's state. Shared by every client in a test.
@@ -47,6 +58,11 @@ pub struct FakeServer {
     pub log: Vec<(Method, String)>,
     /// Refuse `/auth/refresh` as if the session lapsed.
     pub expire_sessions: bool,
+    /// (from, to) invites waiting for an answer.
+    pub invites: Vec<(String, String)>,
+    /// Friendships by the sorted pair of ids.
+    pub friendships: HashMap<(String, String), Friendship>,
+    pub reports: Vec<Value>,
 }
 
 type Reply = (u16, Value);
@@ -63,6 +79,44 @@ impl FakeServer {
     fn mint(&mut self) -> String {
         self.next += 1;
         format!("{:032x}", self.next)
+    }
+
+    fn topic_id(&mut self) -> String {
+        self.next += 1;
+        hex::encode(sha2::Sha256::digest(self.next.to_be_bytes()))
+    }
+
+    fn pair(a: &str, b: &str) -> (String, String) {
+        if a < b {
+            (a.into(), b.into())
+        } else {
+            (b.into(), a.into())
+        }
+    }
+
+    pub fn friends_of(&self, id: &str) -> Vec<(String, Friendship)> {
+        self.friendships
+            .iter()
+            .filter_map(|((a, b), f)| {
+                if a == id {
+                    Some((b.clone(), f.clone()))
+                } else if b == id {
+                    Some((a.clone(), f.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn resolve(&self, to: &str) -> Option<String> {
+        if self.users.contains_key(to) {
+            return Some(to.to_owned());
+        }
+        self.users
+            .iter()
+            .find(|(_, u)| u.username.as_deref() == Some(to))
+            .map(|(id, _)| id.clone())
     }
 
     fn session(&self, authorization: &Option<String>) -> Option<String> {
@@ -163,6 +217,136 @@ impl FakeServer {
                 self.tokens.retain(|_, v| *v != id);
                 (200, json!({ "ok": true }))
             }
+            (Method::Get, "/friends") => {
+                let Some(id) = self.session(authorization) else {
+                    return err(401, "");
+                };
+                let friends: Vec<Value> = self
+                    .friends_of(&id)
+                    .into_iter()
+                    .map(|(peer, f)| {
+                        let username = self.users.get(&peer).and_then(|u| u.username.clone()).unwrap_or_default();
+                        json!({ "id": peer, "username": username, "convo_id": f.convo, "handshake_id": f.handshake })
+                    })
+                    .collect();
+                (200, json!({ "friends": friends }))
+            }
+            (Method::Get, "/friends/invites") => {
+                let Some(id) = self.session(authorization) else {
+                    return err(401, "");
+                };
+                let invites: Vec<Value> = self
+                    .invites
+                    .iter()
+                    .filter(|(_, to)| *to == id)
+                    .map(|(from, _)| {
+                        let username = self
+                            .users
+                            .get(from)
+                            .and_then(|u| u.username.clone())
+                            .unwrap_or_default();
+                        json!({ "id": from, "username": username })
+                    })
+                    .collect();
+                (200, json!({ "invites": invites }))
+            }
+            (Method::Post, "/friends/invite") => {
+                let Some(id) = self.session(authorization) else {
+                    return err(401, "");
+                };
+                let Some(to) = self.resolve(body["to"].as_str().unwrap_or("")) else {
+                    return err(404, "USER_NOT_FOUND");
+                };
+                self.invites.push((id, to));
+                (200, json!({ "ok": true }))
+            }
+            (Method::Post, "/friends/accept") => {
+                let Some(id) = self.session(authorization) else {
+                    return err(401, "");
+                };
+                let from = body["from"].as_str().unwrap_or("").to_owned();
+                let Some(i) = self
+                    .invites
+                    .iter()
+                    .position(|(f, t)| *f == from && *t == id)
+                else {
+                    return err(404, "NO_INVITE");
+                };
+                self.invites.remove(i);
+                let f = Friendship {
+                    convo: self.topic_id(),
+                    handshake: self.topic_id(),
+                };
+                self.friendships.insert(Self::pair(&id, &from), f);
+                (200, json!({ "ok": true }))
+            }
+            (Method::Post, "/friends/remove") | (Method::Post, "/friends/block") => {
+                let Some(id) = self.session(authorization) else {
+                    return err(401, "");
+                };
+                let peer = body["peer"].as_str().unwrap_or("").to_owned();
+                self.friendships.remove(&Self::pair(&id, &peer));
+                if path.ends_with("block") {
+                    self.users.get_mut(&id).unwrap().blocked.push(peer);
+                }
+                (200, json!({ "ok": true }))
+            }
+            (Method::Post, "/report") => {
+                if self.session(authorization).is_none() {
+                    return err(401, "");
+                }
+                self.reports.push(body);
+                (200, json!({ "id": "r1" }))
+            }
+            (Method::Post, "/prekeys") => {
+                let Some(id) = self.session(authorization) else {
+                    return err(401, "");
+                };
+                let user = self.users.get_mut(&id).unwrap();
+                user.medium = body["medium"].as_str().map(str::to_owned);
+                for k in body["oneTime"].as_array().cloned().unwrap_or_default() {
+                    user.one_time.push((
+                        k["id"].as_u64().unwrap(),
+                        k["prekey"].as_str().unwrap().to_owned(),
+                    ));
+                }
+                (200, json!({ "ok": true }))
+            }
+            (Method::Get, "/prekeys/count") => {
+                let Some(id) = self.session(authorization) else {
+                    return err(401, "");
+                };
+                (200, json!({ "remaining": self.users[&id].one_time.len() }))
+            }
+            (Method::Post, "/prekeys/claim") => {
+                let Some(id) = self.session(authorization) else {
+                    return err(401, "");
+                };
+                let peer = body["peer"].as_str().unwrap_or("").to_owned();
+                if !self.friendships.contains_key(&Self::pair(&id, &peer)) {
+                    return err(403, "NOT_FRIENDS");
+                }
+                let Some(user) = self.users.get_mut(&peer) else {
+                    return err(404, "NO_PREKEYS");
+                };
+                let Some(medium) = user.medium.clone() else {
+                    return err(404, "NO_PREKEYS");
+                };
+                let one_time = if user.one_time.is_empty() {
+                    Value::Null
+                } else {
+                    let (id, prekey) = user.one_time.remove(0);
+                    json!({ "id": id, "prekey": prekey })
+                };
+                (200, json!({ "medium": medium, "oneTime": one_time }))
+            }
+            (Method::Get, p) if p.starts_with("/peer/") && p.ends_with("/key") => {
+                let id = &p["/peer/".len()..p.len() - "/key".len()];
+                match self.users.get(id) {
+                    Some(u) => (200, json!({ "publicKey": u.pk_hex })),
+                    None => err(404, "NOT_FOUND"),
+                }
+            }
             _ => err(404, "NOT_FOUND"),
         }
     }
@@ -176,6 +360,7 @@ pub struct Client {
     pub server: Rc<RefCell<FakeServer>>,
     /// Every effect that reached the "UI", in order.
     pub seen: Vec<Effect>,
+    pub engine_id: String,
 }
 
 impl Client {
@@ -189,6 +374,7 @@ impl Client {
             store,
             server: server.clone(),
             seen: Vec::new(),
+            engine_id: String::new(),
         }
     }
 
@@ -197,15 +383,38 @@ impl Client {
         let mut c = Client::new(server, profile);
         let e = c.engine.create_identity(NOW).unwrap();
         c.pump(e);
-        let e = c.engine.start(
-            NOW,
+        let before: Vec<String> = server.borrow().users.keys().cloned().collect();
+        c.start(NOW);
+        c.engine_id = server
+            .borrow()
+            .users
+            .keys()
+            .find(|k| !before.contains(k))
+            .cloned()
+            .unwrap_or_default();
+        c
+    }
+
+    /// `start` at `now`, as a shell does on launch and on every resume.
+    pub fn start(&mut self, now: i64) {
+        let e = self.engine.start(
+            now,
             hqchat_engine::NetworkInfo {
                 key: "test".into(),
                 expensive: false,
             },
         );
-        c.pump(e);
-        c
+        self.pump(e);
+    }
+
+    /// Makes `a` and `b` friends through the API, as two users would.
+    pub fn befriend(a: &mut Client, b: &mut Client) {
+        let e = a.engine.invite(b.id());
+        a.pump(e);
+        b.start(NOW);
+        let e = b.engine.accept(a.id());
+        b.pump(e);
+        a.start(NOW);
     }
 
     /// Plays the shell: answers every request until none is left; keeps the rest.
@@ -236,13 +445,8 @@ impl Client {
         }
     }
 
+    /// This client's id, as the server registered it.
     pub fn id(&self) -> String {
-        let server = self.server.borrow();
-        server
-            .users
-            .keys()
-            .find(|_| true)
-            .cloned()
-            .unwrap_or_default()
+        self.engine_id.clone()
     }
 }

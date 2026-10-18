@@ -12,8 +12,15 @@ fn net() -> NetworkInfo {
     }
 }
 
+/// The sign-in requests, in order (sign-in also syncs the directory and prekeys).
 fn paths(server: &std::rc::Rc<std::cell::RefCell<FakeServer>>) -> Vec<String> {
-    server.borrow().log.iter().map(|(_, p)| p.clone()).collect()
+    server
+        .borrow()
+        .log
+        .iter()
+        .map(|(_, p)| p.clone())
+        .filter(|p| p.starts_with("/auth/"))
+        .collect()
 }
 
 #[test]

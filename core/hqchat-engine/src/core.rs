@@ -78,6 +78,7 @@ pub(crate) struct Core {
     /// `start` was called: sign in and connect whenever possible.
     pub started: bool,
     pub network: Option<crate::types::NetworkInfo>,
+    pub invites: Vec<crate::types::InviteView>,
     /// Effects of the call in progress, in order.
     pub out: Vec<Effect>,
 }
@@ -102,6 +103,7 @@ impl Core {
             http_pending: HashMap::new(),
             started: false,
             network: None,
+            invites: Vec::new(),
             out: Vec::new(),
         }
     }

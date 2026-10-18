@@ -62,6 +62,8 @@ pub enum Action {
     DeleteAccount,
     /// Registering for push.
     RegisterPush,
+    /// Publishing prekeys.
+    PublishPrekeys,
 }
 
 /// Why the engine needs the user to unlock.
@@ -145,6 +147,8 @@ pub enum Effect {
     },
     /// The friend list changed; read `Engine::friends`.
     FriendsChanged,
+    /// The pending invites changed; read `Engine::invites`.
+    InvitesChanged,
     /// A friend came online or went offline.
     PresenceChanged {
         /// The friend's id.
