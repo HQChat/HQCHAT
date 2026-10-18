@@ -155,6 +155,13 @@ impl fmt::Debug for Ciphertext {
 pub struct SharedSecret([u8; SHARED_SECRET_BYTES]);
 
 impl SharedSecret {
+    /// A secret from known bytes: vectors that pin what a KDF makes of a
+    /// given secret. A real secret comes from [`encapsulate`] or
+    /// [`decapsulate`].
+    pub fn from_bytes(bytes: [u8; SHARED_SECRET_BYTES]) -> Self {
+        Self(bytes)
+    }
+
     /// The secret's bytes, to feed a KDF.
     pub fn as_bytes(&self) -> &[u8; SHARED_SECRET_BYTES] {
         &self.0
