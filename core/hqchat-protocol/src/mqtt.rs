@@ -11,6 +11,7 @@
 //! buffered, so a hostile length cannot grow memory.
 
 use crate::Error;
+use crate::wire::Reader;
 
 /// The largest packet accepted. The largest legitimate one, a publish of an
 /// `init` frame, is about 82 kB.
@@ -280,10 +281,10 @@ pub fn encode(packet: &Packet) -> Result<Vec<u8>, Error> {
         Packet::Pingresp => 0xd0,
         Packet::Disconnect => 0xe0,
     };
-    let mut out = Vec::with_capacity(5 + body.len());
+    let mut out = Vec::with_capacity(body.len().saturating_add(5));
     out.push(header);
     put_remaining_length(&mut out, body.len())?;
-    if out.len() + body.len() > MAX_PACKET_BYTES {
+    if out.len().saturating_add(body.len()) > MAX_PACKET_BYTES {
         return Err(Error::Invalid("packet over MAX_PACKET_BYTES"));
     }
     out.extend_from_slice(&body);
@@ -296,7 +297,7 @@ fn put_remaining_length(out: &mut Vec<u8>, mut len: usize) -> Result<(), Error> 
         return Err(Error::Invalid("remaining length over four bytes"));
     }
     loop {
-        let mut byte = (len % 128) as u8;
+        let mut byte = u8::try_from(len % 128).map_err(|_| Error::Invalid("remaining length"))?;
         len /= 128;
         if len > 0 {
             byte |= 0x80;
@@ -328,15 +329,16 @@ impl Decoder {
         let Some((remaining, len_bytes)) = remaining_length(&self.buffer)? else {
             return Ok(None);
         };
-        let total = 1 + len_bytes + remaining;
+        let header_len = len_bytes.saturating_add(1);
+        let total = header_len.saturating_add(remaining);
         if total > MAX_PACKET_BYTES {
             return Err(Error::Malformed("packet over MAX_PACKET_BYTES"));
         }
-        if self.buffer.len() < total {
+        let (Some(&header), Some(body)) = (self.buffer.first(), self.buffer.get(header_len..total))
+        else {
             return Ok(None);
-        }
-        let header = self.buffer[0];
-        let packet = parse(header, &self.buffer[1 + len_bytes..total]);
+        };
+        let packet = parse(header, body);
         self.buffer.drain(..total);
         packet.map(Some)
     }
@@ -351,13 +353,14 @@ impl Decoder {
 /// took, `None` while incomplete; an error past four bytes.
 fn remaining_length(buf: &[u8]) -> Result<Option<(usize, usize)>, Error> {
     let mut value = 0usize;
-    for i in 0..4 {
-        let Some(&byte) = buf.get(1 + i) else {
-            return Ok(None);
-        };
-        value |= ((byte & 0x7f) as usize) << (7 * i);
+    let digits = buf.get(1..).unwrap_or_default();
+    for (used, (&byte, shift)) in (1usize..).zip(digits.iter().zip([0u32, 7, 14, 21])) {
+        let digit = usize::from(byte & 0x7f)
+            .checked_shl(shift)
+            .ok_or(Error::Malformed("remaining length"))?;
+        value |= digit;
         if byte & 0x80 == 0 {
-            return Ok(Some((value, i + 1)));
+            return Ok(Some((value, used)));
         }
     }
     if buf.len() > 4 {
@@ -367,61 +370,36 @@ fn remaining_length(buf: &[u8]) -> Result<Option<(usize, usize)>, Error> {
     }
 }
 
-struct Cursor<'a> {
-    b: &'a [u8],
-    at: usize,
+/// A length-prefixed MQTT field.
+fn field<'a>(c: &mut Reader<'a>) -> Result<&'a [u8], Error> {
+    let n = c.u16()?;
+    c.take(usize::from(n))
 }
 
-impl<'a> Cursor<'a> {
-    fn take(&mut self, n: usize) -> Result<&'a [u8], Error> {
-        let s = self
-            .b
-            .get(self.at..self.at + n)
-            .ok_or(Error::Malformed("packet body too short"))?;
-        self.at += n;
-        Ok(s)
+/// A length-prefixed MQTT UTF-8 string.
+fn string(c: &mut Reader<'_>) -> Result<String, Error> {
+    std::str::from_utf8(field(c)?)
+        .map(str::to_owned)
+        .map_err(|_| Error::Malformed("a string is not UTF-8"))
+}
+
+/// A packet id, which is never 0.
+fn id(c: &mut Reader<'_>) -> Result<u16, Error> {
+    match c.u16()? {
+        0 => Err(Error::Malformed("packet id 0 is reserved")),
+        id => Ok(id),
     }
-    fn u8(&mut self) -> Result<u8, Error> {
-        Ok(self.take(1)?[0])
-    }
-    fn u16(&mut self) -> Result<u16, Error> {
-        Ok(u16::from_be_bytes(
-            self.take(2)?.try_into().expect("2 bytes"),
-        ))
-    }
-    fn bytes(&mut self) -> Result<Vec<u8>, Error> {
-        let n = self.u16()? as usize;
-        Ok(self.take(n)?.to_vec())
-    }
-    fn string(&mut self) -> Result<String, Error> {
-        String::from_utf8(self.bytes()?).map_err(|_| Error::Malformed("a string is not UTF-8"))
-    }
-    fn id(&mut self) -> Result<u16, Error> {
-        match self.u16()? {
-            0 => Err(Error::Malformed("packet id 0 is reserved")),
-            id => Ok(id),
-        }
-    }
-    fn rest(&mut self) -> &'a [u8] {
-        let r = &self.b[self.at..];
-        self.at = self.b.len();
-        r
-    }
-    fn done(&self) -> bool {
-        self.at == self.b.len()
-    }
-    fn end(self) -> Result<(), Error> {
-        if self.done() {
-            Ok(())
-        } else {
-            Err(Error::Malformed("trailing bytes in a packet"))
-        }
-    }
+}
+
+/// Succeeds only when the packet body has been read to its end.
+fn end(c: Reader<'_>) -> Result<(), Error> {
+    c.finish()
+        .map_err(|_| Error::Malformed("trailing bytes in a packet"))
 }
 
 fn parse(header: u8, body: &[u8]) -> Result<Packet, Error> {
     let (kind, flags) = (header >> 4, header & 0x0f);
-    let mut c = Cursor { b: body, at: 0 };
+    let mut c = Reader::new(body, "packet body too short");
     let expect_flags = |want: u8| {
         if flags == want {
             Ok(())
@@ -432,7 +410,7 @@ fn parse(header: u8, body: &[u8]) -> Result<Packet, Error> {
     let packet = match kind {
         1 => {
             expect_flags(0)?;
-            if c.string()? != PROTOCOL_NAME || c.u8()? != PROTOCOL_LEVEL {
+            if string(&mut c)? != PROTOCOL_NAME || c.u8()? != PROTOCOL_LEVEL {
                 return Err(Error::Malformed("not MQTT 3.1.1"));
             }
             let f = c.u8()?;
@@ -450,20 +428,20 @@ fn parse(header: u8, body: &[u8]) -> Result<Packet, Error> {
                 return Err(Error::Malformed("bad CONNECT flags"));
             }
             let keep_alive = c.u16()?;
-            let client_id = c.string()?;
+            let client_id = string(&mut c)?;
             let will = if has_will {
                 Some(Will {
-                    topic: c.string()?,
-                    payload: c.bytes()?,
+                    topic: string(&mut c)?,
+                    payload: field(&mut c)?.to_vec(),
                     qos: QoS::from_bits(will_qos)?,
                     retain: will_retain,
                 })
             } else {
                 None
             };
-            let username = if has_user { Some(c.string()?) } else { None };
-            let password = if has_pass { Some(c.bytes()?) } else { None };
-            c.end()?;
+            let username = if has_user { Some(string(&mut c)?) } else { None };
+            let password = if has_pass { Some(field(&mut c)?.to_vec()) } else { None };
+            end(c)?;
             Packet::Connect {
                 client_id,
                 username,
@@ -480,7 +458,7 @@ fn parse(header: u8, body: &[u8]) -> Result<Packet, Error> {
                 return Err(Error::Malformed("bad CONNACK flags"));
             }
             let code = c.u8()?;
-            c.end()?;
+            end(c)?;
             Packet::Connack {
                 session_present: ack == 1,
                 code,
@@ -492,9 +470,9 @@ fn parse(header: u8, body: &[u8]) -> Result<Packet, Error> {
             if dup && qos == QoS::AtMostOnce {
                 return Err(Error::Malformed("dup on a QoS 0 publish"));
             }
-            let topic = c.string()?;
+            let topic = string(&mut c)?;
             let packet_id = if qos == QoS::AtLeastOnce {
-                Some(c.id()?)
+                Some(id(&mut c)?)
             } else {
                 None
             };
@@ -509,8 +487,8 @@ fn parse(header: u8, body: &[u8]) -> Result<Packet, Error> {
         }
         4 | 11 => {
             expect_flags(0)?;
-            let packet_id = c.id()?;
-            c.end()?;
+            let packet_id = id(&mut c)?;
+            end(c)?;
             if kind == 4 {
                 Packet::Puback { packet_id }
             } else {
@@ -519,10 +497,10 @@ fn parse(header: u8, body: &[u8]) -> Result<Packet, Error> {
         }
         8 => {
             expect_flags(0x02)?;
-            let packet_id = c.id()?;
+            let packet_id = id(&mut c)?;
             let mut filters = Vec::new();
-            while !c.done() {
-                let filter = c.string()?;
+            while !c.is_empty() {
+                let filter = string(&mut c)?;
                 filters.push((filter, QoS::from_bits(c.u8()?)?));
             }
             if filters.is_empty() {
@@ -532,7 +510,7 @@ fn parse(header: u8, body: &[u8]) -> Result<Packet, Error> {
         }
         9 => {
             expect_flags(0)?;
-            let packet_id = c.id()?;
+            let packet_id = id(&mut c)?;
             let codes = c.rest().to_vec();
             if codes.is_empty() || codes.iter().any(|b| !matches!(b, 0 | 1 | 2 | 0x80)) {
                 return Err(Error::Malformed("bad SUBACK codes"));
@@ -541,10 +519,10 @@ fn parse(header: u8, body: &[u8]) -> Result<Packet, Error> {
         }
         10 => {
             expect_flags(0x02)?;
-            let packet_id = c.id()?;
+            let packet_id = id(&mut c)?;
             let mut filters = Vec::new();
-            while !c.done() {
-                filters.push(c.string()?);
+            while !c.is_empty() {
+                filters.push(string(&mut c)?);
             }
             if filters.is_empty() {
                 return Err(Error::Malformed("an unsubscribe without a filter"));
@@ -553,7 +531,7 @@ fn parse(header: u8, body: &[u8]) -> Result<Packet, Error> {
         }
         12..=14 => {
             expect_flags(0)?;
-            c.end()?;
+            end(c)?;
             match kind {
                 12 => Packet::Pingreq,
                 13 => Packet::Pingresp,

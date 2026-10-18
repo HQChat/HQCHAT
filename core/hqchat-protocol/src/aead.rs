@@ -3,8 +3,9 @@
 //! header is always bound as AAD.
 
 use aes_gcm::aead::{AeadInPlace, KeyInit};
-use aes_gcm::{Aes256Gcm, Nonce, Tag};
+use aes_gcm::Aes256Gcm;
 
+use crate::wire::Reader;
 use crate::{Entropy, Error};
 
 /// IV length in bytes.
@@ -21,37 +22,26 @@ pub fn seal_payload(
 ) -> Result<Vec<u8>, Error> {
     let mut iv = [0u8; IV_BYTES];
     entropy.fill(&mut iv)?;
-    let mut out = Vec::with_capacity(IV_BYTES + TAG_BYTES + plaintext.len());
-    out.extend_from_slice(&iv);
-    out.extend_from_slice(&[0u8; TAG_BYTES]);
-    out.extend_from_slice(plaintext);
+    let mut ciphertext = plaintext.to_vec();
     let tag = Aes256Gcm::new(key.into())
-        .encrypt_in_place_detached(
-            Nonce::from_slice(&iv),
-            aad,
-            &mut out[IV_BYTES + TAG_BYTES..],
-        )
+        .encrypt_in_place_detached(&iv.into(), aad, &mut ciphertext)
         .map_err(|_| Error::Invalid("payload too large for AES-GCM"))?;
-    out[IV_BYTES..IV_BYTES + TAG_BYTES].copy_from_slice(&tag);
+    let mut out = Vec::with_capacity((IV_BYTES + TAG_BYTES).saturating_add(ciphertext.len()));
+    out.extend_from_slice(&iv);
+    out.extend_from_slice(&tag);
+    out.extend_from_slice(&ciphertext);
     Ok(out)
 }
 
 /// Opens what [`seal_payload`] produced; [`Error::Authentication`] when the
 /// key, the AAD or any byte differs.
 pub fn open_payload(sealed: &[u8], key: &[u8; 32], aad: &[u8]) -> Result<Vec<u8>, Error> {
-    if sealed.len() < IV_BYTES + TAG_BYTES {
-        return Err(Error::Malformed("payload shorter than IV and tag"));
-    }
-    let (iv, rest) = sealed.split_at(IV_BYTES);
-    let (tag, ciphertext) = rest.split_at(TAG_BYTES);
-    let mut plaintext = ciphertext.to_vec();
+    let mut r = Reader::new(sealed, "payload shorter than IV and tag");
+    let iv: &[u8; IV_BYTES] = r.array()?;
+    let tag: &[u8; TAG_BYTES] = r.array()?;
+    let mut plaintext = r.rest().to_vec();
     Aes256Gcm::new(key.into())
-        .decrypt_in_place_detached(
-            Nonce::from_slice(iv),
-            aad,
-            &mut plaintext,
-            Tag::from_slice(tag),
-        )
+        .decrypt_in_place_detached(&(*iv).into(), aad, &mut plaintext, &(*tag).into())
         .map_err(|_| Error::Authentication)?;
     Ok(plaintext)
 }

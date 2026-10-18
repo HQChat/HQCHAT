@@ -16,13 +16,12 @@
 //!
 //! Plaintext is `postcard`, versioned by the first field of each record.
 
-use hkdf::Hkdf;
 use hqc::{Ciphertext, KeyPair, PublicKey, SecretKey};
 use hqchat_protocol::ratchet::{Chain, InitHeader, SessionState, SkippedKey, SymmetricKey};
+use hqchat_protocol::kdf::hkdf_sha256;
 use hqchat_protocol::{OsEntropy, PeerId, aead};
 use p256::elliptic_curve::sec1::ToEncodedPoint;
 use serde::{Deserialize, Serialize};
-use sha2::Sha256;
 use zeroize::Zeroizing;
 
 use crate::ports::{KeyVault, Store};
@@ -62,11 +61,7 @@ fn device_kdf(shared: &[u8], ephemeral: &[u8], device: &[u8]) -> Zeroizing<[u8; 
     let mut info = b"hqchat/at-rest/v1".to_vec();
     info.extend_from_slice(ephemeral);
     info.extend_from_slice(device);
-    let mut key = Zeroizing::new([0u8; 32]);
-    Hkdf::<Sha256>::new(Some(b"salt"), shared)
-        .expand(&info, key.as_mut())
-        .expect("32 bytes is a valid HKDF-SHA256 output length");
-    key
+    hkdf_sha256::<32>(b"salt", shared, &info)
 }
 
 fn protocol(e: hqchat_protocol::Error) -> CoreError {

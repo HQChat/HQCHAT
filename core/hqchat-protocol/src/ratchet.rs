@@ -17,11 +17,12 @@
 //! secret without error. So [`open`] computes everything into locals and
 //! writes the session only after the caller's AEAD open verifies the key.
 
-use hkdf::Hkdf;
 use hqc::{Ciphertext, KeyPair, PublicKey, SecretKey, SharedSecret};
 use sha2::{Digest, Sha256};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
+use crate::kdf::hkdf_sha256;
+use crate::wire::{prefix, usize_from};
 use crate::{Error, Kem};
 
 /// Most message keys kept for out-of-order delivery, across all chains.
@@ -182,11 +183,7 @@ pub struct ChainWalk {
 // ── Key schedule ────────────────────────────────────────────────────────────
 
 fn kdf(ikm: &[u8], info: &str) -> SymmetricKey {
-    let mut out = SymmetricKey([0u8; 32]);
-    Hkdf::<Sha256>::new(Some(b"salt"), ikm)
-        .expand(info.as_bytes(), &mut out.0)
-        .expect("32 bytes is a valid HKDF-SHA256 output length");
-    out
+    SymmetricKey(*hkdf_sha256::<32>(b"salt", ikm, info.as_bytes()))
 }
 
 /// The initial root and the initiator's first sending chain. `ss_id` was
@@ -237,16 +234,18 @@ pub fn chain_next(ck: &SymmetricKey) -> SymmetricKey {
 /// gap past [`MAX_SKIPPED`] before doing any work: `target_n` comes from an
 /// unauthenticated header.
 pub fn walk_chain(ck: &SymmetricKey, from_n: u32, target_n: u32) -> Result<ChainWalk, Error> {
-    if target_n < from_n {
-        return Err(Error::Invalid("walk_chain: target before start"));
-    }
-    if (target_n - from_n) as usize > MAX_SKIPPED {
+    let gap = usize_from(
+        target_n
+            .checked_sub(from_n)
+            .ok_or(Error::Invalid("walk_chain: target before start"))?,
+    );
+    if gap > MAX_SKIPPED {
         return Err(Error::Invalid("walk_chain: gap exceeds MAX_SKIPPED"));
     }
     let next_n = target_n
         .checked_add(1)
         .ok_or(Error::Invalid("walk_chain: chain exhausted"))?;
-    let mut skipped = Vec::with_capacity((target_n - from_n) as usize);
+    let mut skipped = Vec::with_capacity(gap);
     let mut cur = ck.clone();
     for n in from_n..target_n {
         skipped.push((n, message_key(&cur)));
@@ -263,8 +262,7 @@ pub fn walk_chain(ck: &SymmetricKey, from_n: u32, target_n: u32) -> Result<Chain
 /// The 16-byte selector naming a ratchet public key, and so the chain it
 /// produced: the first half of its SHA-256.
 pub fn chain_id(rk: &[u8]) -> [u8; 16] {
-    let digest = Sha256::digest(rk);
-    digest[..16].try_into().expect("16 of 32 bytes")
+    prefix(&Sha256::digest(rk).into())
 }
 
 // ── Session ─────────────────────────────────────────────────────────────────
@@ -362,7 +360,7 @@ pub fn should_step(state: &SessionState, now: i64) -> bool {
     if state.sent_on_chain >= RATCHET_MAX_MESSAGES_PER_CHAIN {
         return true;
     }
-    now - state.chain_started_at >= RATCHET_MIN_STEP_INTERVAL_MS
+    now.saturating_sub(state.chain_started_at) >= RATCHET_MIN_STEP_INTERVAL_MS
 }
 
 /// Takes the next sending key, stepping first when [`should_step`] says so.
@@ -373,7 +371,7 @@ pub fn seal(kem: &dyn Kem, state: &mut SessionState, now: i64) -> Result<Sealed,
         let peer_rk = state
             .peer_rk
             .as_ref()
-            .expect("should_step requires a peer key");
+            .ok_or(Error::Invalid("seal: a step needs the peer's key"))?;
         let (ct, ss) = kem.encapsulate(peer_rk)?;
         let next = root_step(&state.root, &ss);
         let mine = kem.generate_keypair()?;
@@ -398,7 +396,7 @@ pub fn seal(kem: &dyn Kem, state: &mut SessionState, now: i64) -> Result<Sealed,
         .ok_or(Error::Invalid("seal: chain exhausted"))?;
     let key = message_key(&send.ck);
     send.ck = chain_next(&send.ck);
-    state.sent_on_chain += 1;
+    state.sent_on_chain = state.sent_on_chain.saturating_add(1);
     let (rk, kem_ct) = match stepped {
         Some((rk, ct)) => (Some(rk), Some(ct)),
         None => (None, None),
@@ -447,11 +445,12 @@ fn compute_step(
     let mut tail = None;
     if let (Some(recv), Some(current)) = (&state.recv, current)
         && header.pn > recv.n
-        && (header.pn - recv.n) as usize <= MAX_SKIPPED
+        && usize_from(header.pn.saturating_sub(recv.n)) <= MAX_SKIPPED
+        && let Some(last) = header.pn.checked_sub(1)
     {
-        let walked = walk_chain(&recv.ck, recv.n, header.pn - 1).ok()?;
+        let walked = walk_chain(&recv.ck, recv.n, last).ok()?;
         let mut keys = walked.skipped;
-        keys.push((header.pn - 1, walked.key));
+        keys.push((last, walked.key));
         tail = Some((current, keys));
     }
     let next = root_step(&state.root, &ss);
@@ -473,7 +472,7 @@ fn cache_skipped(state: &mut SessionState, chain: [u8; 16], keys: Vec<(u32, Symm
             .map(|(n, key)| SkippedKey { chain, n, key }),
     );
     if state.skipped.len() > MAX_SKIPPED {
-        let excess = state.skipped.len() - MAX_SKIPPED;
+        let excess = state.skipped.len().saturating_sub(MAX_SKIPPED);
         state.skipped.drain(..excess);
     }
 }
@@ -481,7 +480,7 @@ fn cache_skipped(state: &mut SessionState, chain: [u8; 16], keys: Vec<(u32, Symm
 fn remember_chain(state: &mut SessionState, cid: [u8; 16]) {
     state.seen_chains.push(cid);
     if state.seen_chains.len() > MAX_SEEN_CHAINS {
-        let excess = state.seen_chains.len() - MAX_SEEN_CHAINS;
+        let excess = state.seen_chains.len().saturating_sub(MAX_SEEN_CHAINS);
         state.seen_chains.drain(..excess);
     }
 }
@@ -502,7 +501,7 @@ pub fn open(
         .iter()
         .position(|s| s.chain == header.cid && s.n == header.n)
     {
-        if !verify(&state.skipped[i].key) {
+        if !state.skipped.get(i).is_some_and(|s| verify(&s.key)) {
             return None;
         }
         return Some(state.skipped.remove(i).key);

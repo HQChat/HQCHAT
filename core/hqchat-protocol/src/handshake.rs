@@ -17,12 +17,13 @@
 //! 1 proof), from 32 B, to 32 B, nonce 32 B, then a challenge's `u32 len +
 //! ciphertext` or a proof's 32 bytes.
 
-use hkdf::Hkdf;
 use hqc::SharedSecret;
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
+use crate::kdf::hkdf_sha256;
 use crate::ratchet::InitHeader;
+use crate::wire::{Reader, len_u32, prefix_u32, usize_from};
 use crate::{Entropy, Error, PeerId};
 
 /// The handshake wire version; v1 proofs were not bound to an init.
@@ -44,6 +45,8 @@ const NO_ONE_TIME: u32 = u32::MAX;
 const KIND_CHALLENGE: u8 = 0;
 const KIND_PROOF: u8 = 1;
 const OFF_BODY: usize = 102;
+/// A challenge frame as the engine sends it: header, length and one HQC ciphertext.
+const CHALLENGE_CAPACITY: usize = OFF_BODY + 4 + hqc::CIPHERTEXT_BYTES;
 
 /// A challenge or its proof.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,16 +97,20 @@ pub fn init_transcript(sender: &PeerId, to: &PeerId, init: &InitHeader) -> [u8; 
     h.update(TRANSCRIPT_LABEL);
     h.update(sender.to_bytes());
     h.update(to.to_bytes());
-    let mut field = |bytes: &[u8]| {
-        h.update((bytes.len() as u32).to_be_bytes());
+    // Every field has a fixed size, so each length prefix is a constant.
+    const PK_LEN: [u8; 4] = prefix_u32(hqc::PUBLIC_KEY_BYTES);
+    const CT_LEN: [u8; 4] = prefix_u32(hqc::CIPHERTEXT_BYTES);
+    const EMPTY_LEN: [u8; 4] = prefix_u32(0);
+    let mut field = |len: [u8; 4], bytes: &[u8]| {
+        h.update(len);
         h.update(bytes);
     };
-    field(init.rk.as_bytes());
-    field(init.ct_id.as_bytes());
-    field(init.ct_mt.as_bytes());
+    field(PK_LEN, init.rk.as_bytes());
+    field(CT_LEN, init.ct_id.as_bytes());
+    field(CT_LEN, init.ct_mt.as_bytes());
     match &init.one_time {
-        Some((ct_ot, _)) => field(ct_ot.as_bytes()),
-        None => field(&[]),
+        Some((ct_ot, _)) => field(CT_LEN, ct_ot.as_bytes()),
+        None => field(EMPTY_LEN, &[]),
     }
     let ot_id = init.one_time.as_ref().map_or(NO_ONE_TIME, |(_, id)| *id);
     h.update(ot_id.to_be_bytes());
@@ -119,17 +126,13 @@ pub fn handshake_proof(
     prover: &PeerId,
     transcript: &[u8; TRANSCRIPT_BYTES],
 ) -> [u8; PROOF_BYTES] {
-    let mut info = Vec::with_capacity(INFO_PREFIX.len() + 128);
+    let mut info = Vec::with_capacity(INFO_PREFIX.len().saturating_add(128));
     info.extend_from_slice(INFO_PREFIX);
     info.extend_from_slice(nonce);
     info.extend_from_slice(&challenger.to_bytes());
     info.extend_from_slice(&prover.to_bytes());
     info.extend_from_slice(transcript);
-    let mut proof = [0u8; PROOF_BYTES];
-    Hkdf::<Sha256>::new(Some(b"salt"), ss.as_bytes())
-        .expand(&info, &mut proof)
-        .expect("32 bytes is a valid HKDF-SHA256 output length");
-    proof
+    *hkdf_sha256::<PROOF_BYTES>(b"salt", ss.as_bytes(), &info)
 }
 
 /// Constant-time comparison of an offered proof against the expected one.
@@ -148,7 +151,7 @@ pub fn encode(frame: &HandshakeFrame) -> Result<Vec<u8>, Error> {
             from, to, nonce, ..
         } => (KIND_PROOF, from, to, nonce),
     };
-    let mut out = Vec::with_capacity(OFF_BODY + 4 + hqc::CIPHERTEXT_BYTES);
+    let mut out = Vec::with_capacity(CHALLENGE_CAPACITY);
     out.extend_from_slice(MAGIC);
     out.push(HANDSHAKE_VERSION);
     out.push(kind);
@@ -160,7 +163,7 @@ pub fn encode(frame: &HandshakeFrame) -> Result<Vec<u8>, Error> {
             if ct.is_empty() || ct.len() > MAX_CT_BYTES {
                 return Err(Error::Invalid("a challenge needs a ciphertext under 1 MiB"));
             }
-            out.extend_from_slice(&(ct.len() as u32).to_be_bytes());
+            out.extend_from_slice(&len_u32(ct.len(), "a challenge needs a ciphertext under 1 MiB")?.to_be_bytes());
             out.extend_from_slice(ct);
         }
         HandshakeFrame::Proof { proof, .. } => out.extend_from_slice(proof),
@@ -173,30 +176,34 @@ pub fn decode(raw: &[u8]) -> Result<HandshakeFrame, Error> {
     if raw.len() < OFF_BODY || !raw.starts_with(MAGIC) {
         return Err(Error::Malformed("not a handshake frame"));
     }
-    if raw[4] != HANDSHAKE_VERSION {
+    let mut r = Reader::new(raw, "not a handshake frame");
+    r.take(MAGIC.len())?;
+    if r.u8()? != HANDSHAKE_VERSION {
         return Err(Error::Malformed("not a v2 handshake frame"));
     }
-    let from = PeerId::from_bytes(&raw[6..38].try_into().expect("32 bytes"));
-    let to = PeerId::from_bytes(&raw[38..70].try_into().expect("32 bytes"));
-    let nonce: [u8; NONCE_BYTES] = raw[70..OFF_BODY].try_into().expect("32 bytes");
-    match raw[5] {
+    let kind = r.u8()?;
+    let from = PeerId::from_bytes(r.array()?);
+    let to = PeerId::from_bytes(r.array()?);
+    let nonce = *r.array::<NONCE_BYTES>()?;
+    match kind {
         KIND_CHALLENGE => {
-            let len_bytes = raw
-                .get(OFF_BODY..OFF_BODY + 4)
-                .ok_or(Error::Malformed("challenge without a ciphertext"))?;
-            let len = u32::from_be_bytes(len_bytes.try_into().expect("4 bytes")) as usize;
-            if len == 0 || len > MAX_CT_BYTES || raw.len() != OFF_BODY + 4 + len {
+            let len = r
+                .u32()
+                .map_err(|_| Error::Malformed("challenge without a ciphertext"))?;
+            let len = usize_from(len);
+            if len == 0 || len > MAX_CT_BYTES || r.remaining() != len {
                 return Err(Error::Malformed("bad challenge ciphertext length"));
             }
             Ok(HandshakeFrame::Challenge {
                 from,
                 to,
                 nonce,
-                ct: raw[OFF_BODY + 4..].to_vec(),
+                ct: r.rest().to_vec(),
             })
         }
         KIND_PROOF => {
-            let proof: [u8; PROOF_BYTES] = raw[OFF_BODY..]
+            let proof: [u8; PROOF_BYTES] = r
+                .rest()
                 .try_into()
                 .map_err(|_| Error::Malformed("a proof is exactly 32 bytes"))?;
             Ok(HandshakeFrame::Proof {

@@ -12,12 +12,14 @@ pub mod auth_proof;
 pub mod envelope;
 pub mod handshake;
 pub mod identity;
+pub mod kdf;
 pub mod kem;
 pub mod mqtt;
 pub mod mqtt_proof;
 pub mod noise;
 pub mod ratchet;
 pub mod topics;
+pub mod wire;
 
 pub use identity::PeerId;
 pub use kem::{HqcKem, Kem};

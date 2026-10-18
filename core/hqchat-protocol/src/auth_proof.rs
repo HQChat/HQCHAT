@@ -3,18 +3,14 @@
 //! never sent, and the server keeps only this value, so the exchange is not a
 //! decryption oracle.
 
-use hkdf::Hkdf;
 use hqc::SharedSecret;
-use sha2::Sha256;
 use subtle::ConstantTimeEq;
+
+use crate::kdf::hkdf_sha256;
 
 /// The proof `/auth/verify` expects for a challenge that decapsulated to `ss`.
 pub fn auth_proof(ss: &SharedSecret) -> [u8; 32] {
-    let mut out = [0u8; 32];
-    Hkdf::<Sha256>::new(Some(b"salt"), ss.as_bytes())
-        .expand(b"auth", &mut out)
-        .expect("32 bytes is a valid HKDF-SHA256 output length");
-    out
+    *hkdf_sha256::<32>(b"salt", ss.as_bytes(), b"auth")
 }
 
 /// Constant-time comparison of a presented proof against the expected one;

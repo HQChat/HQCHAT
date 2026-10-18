@@ -133,7 +133,9 @@ pub fn format_password(proof: &ConnectProof) -> String {
 
 /// The exact bytes the signature covers.
 pub fn proof_message(clientid: &PeerId, key_id: &str, ts: i64, nonce: &[u8; 16]) -> Vec<u8> {
-    let mut m = Vec::with_capacity(MQTT_PROOF_CONTEXT.len() + 64 + key_id.len() + 16 + 20);
+    // The context, the hex id, the nonce, a timestamp and the separators.
+    const FIXED: usize = MQTT_PROOF_CONTEXT.len() + 64 + 16 + 20;
+    let mut m = Vec::with_capacity(FIXED.saturating_add(key_id.len()));
     for field in [
         MQTT_PROOF_CONTEXT,
         clientid.as_str(),
@@ -149,7 +151,7 @@ pub fn proof_message(clientid: &PeerId, key_id: &str, ts: i64, nonce: &[u8; 16])
 
 /// Whether `ts` is within ±[`MQTT_PROOF_SKEW_SECONDS`] of `now_sec`, inclusive.
 pub fn is_fresh_timestamp(ts: i64, now_sec: i64) -> bool {
-    ts.abs_diff(now_sec) <= MQTT_PROOF_SKEW_SECONDS as u64
+    ts.abs_diff(now_sec) <= MQTT_PROOF_SKEW_SECONDS.unsigned_abs()
 }
 
 /// A fresh password: a new nonce every call. `now_sec` must be server time.

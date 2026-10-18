@@ -101,7 +101,7 @@ impl PublicKey {
 
 impl fmt::Debug for PublicKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "PublicKey({:02x?}…)", &self.0[..8])
+        write!(f, "PublicKey({:02x?}…)", self.0.get(..8).unwrap_or_default())
     }
 }
 
@@ -145,7 +145,7 @@ impl Ciphertext {
 
 impl fmt::Debug for Ciphertext {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Ciphertext({:02x?}…)", &self.0[..8])
+        write!(f, "Ciphertext({:02x?}…)", self.0.get(..8).unwrap_or_default())
     }
 }
 

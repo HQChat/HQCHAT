@@ -11,9 +11,15 @@ use crate::Error;
 /// Length of an id in hex characters.
 pub const PEER_ID_LENGTH: usize = 64;
 
-/// A client id: 64 lowercase hex characters.
+/// A client id: 32 bytes, shown as 64 lowercase hex characters. Both forms
+/// are kept, built together, so neither can be invalid and converting
+/// between them cannot fail. Lowercase hex sorts as the bytes do, so the
+/// derived order and equality agree with the hex the other clients compare.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct PeerId(String);
+pub struct PeerId {
+    bytes: [u8; 32],
+    hex: String,
+}
 
 impl PeerId {
     /// The id a public key hashes to.
@@ -24,35 +30,34 @@ impl PeerId {
     /// The id of a public key given as hex in either case: the digest is over
     /// the lowercase hex text, not the key bytes.
     pub fn of_hex(public_key_hex: &str) -> PeerId {
-        PeerId(hex::encode(Sha256::digest(
-            public_key_hex.to_ascii_lowercase(),
-        )))
+        Self::from_bytes(&Sha256::digest(public_key_hex.to_ascii_lowercase()).into())
     }
 
     /// Reads an id; refuses anything but 64 lowercase hex characters.
     pub fn parse(value: &str) -> Result<PeerId, Error> {
-        if is_lower_hex(value, PEER_ID_LENGTH) {
-            Ok(PeerId(value.to_owned()))
-        } else {
-            Err(Error::Malformed("an id is 64 lowercase hex characters"))
+        let mut bytes = [0u8; 32];
+        if !is_lower_hex(value, PEER_ID_LENGTH) || hex::decode_to_slice(value, &mut bytes).is_err() {
+            return Err(Error::Malformed("an id is 64 lowercase hex characters"));
         }
+        Ok(Self::from_bytes(&bytes))
     }
 
     /// The id's 32 bytes, as frames carry it.
     pub fn to_bytes(&self) -> [u8; 32] {
-        let mut out = [0u8; 32];
-        hex::decode_to_slice(&self.0, &mut out).expect("a PeerId is always 64 hex characters");
-        out
+        self.bytes
     }
 
     /// The id that 32 frame bytes carry.
     pub fn from_bytes(bytes: &[u8; 32]) -> PeerId {
-        PeerId(hex::encode(bytes))
+        PeerId {
+            bytes: *bytes,
+            hex: hex::encode(bytes),
+        }
     }
 
     /// The id as hex.
     pub fn as_str(&self) -> &str {
-        &self.0
+        &self.hex
     }
 
     /// Whether `public_key` hashes to this id.
@@ -63,7 +68,7 @@ impl PeerId {
 
 impl core::fmt::Display for PeerId {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str(&self.0)
+        f.write_str(&self.hex)
     }
 }
 

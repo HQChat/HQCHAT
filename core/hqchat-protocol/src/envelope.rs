@@ -16,6 +16,7 @@
 //! three accept and refuse the same frames. Encoders refuse rather than pad,
 //! clip or wrap, so every implementation produces the same bytes or none.
 
+use crate::wire::{Reader, len_u8, len_u32, usize_from};
 use crate::{Error, PeerId};
 
 /// The frame version this crate speaks.
@@ -30,14 +31,7 @@ const FLAG_RK: u8 = 0x01;
 const FLAG_KEMCT: u8 = 0x02;
 const FLAG_ONE_TIME: u8 = 0x04;
 const ALL_FLAGS: u8 = FLAG_RK | FLAG_KEMCT | FLAG_ONE_TIME;
-const OFF_KIND: usize = 5;
-const OFF_FLAGS: usize = 6;
-const OFF_SENDER: usize = 7;
-const OFF_TO: usize = 39;
-const OFF_CID: usize = 71;
-const OFF_N: usize = 87;
-const OFF_PN: usize = 91;
-const OFF_MSGID_LEN: usize = 95;
+/// Where the message id starts: everything before it has a fixed size.
 const OFF_MSGID: usize = 96;
 
 /// Whether a frame opens a session, carries a message, or acknowledges one.
@@ -165,8 +159,9 @@ pub fn validate(h: &Header) -> Result<(), Error> {
         if h.kem_ct.is_some() {
             return Err(Error::Invalid("an init must not carry a kemCt"));
         }
-        let init = h.init.as_ref().expect("checked above");
-        if PeerId::of_hex(&hex::encode(&init.sender_pk)) != h.sender {
+        if let Some(init) = &h.init
+            && PeerId::of_hex(&hex::encode(&init.sender_pk)) != h.sender
+        {
             return Err(Error::Invalid("senderPk does not hash to sender"));
         }
     } else if h.rk.is_some() != h.kem_ct.is_some() {
@@ -187,7 +182,7 @@ pub fn header_bytes(h: &Header) -> Result<Vec<u8>, Error> {
         } else {
             0
         });
-    let mut out = Vec::with_capacity(OFF_MSGID + h.msg_id.len());
+    let mut out = Vec::with_capacity(OFF_MSGID.saturating_add(h.msg_id.len()));
     out.extend_from_slice(MAGIC);
     out.push(FRAME_VERSION);
     out.push(h.kind.byte());
@@ -197,21 +192,21 @@ pub fn header_bytes(h: &Header) -> Result<Vec<u8>, Error> {
     out.extend_from_slice(&h.cid);
     out.extend_from_slice(&h.n.to_be_bytes());
     out.extend_from_slice(&h.pn.to_be_bytes());
-    out.push(h.msg_id.len() as u8);
+    out.push(len_u8(h.msg_id.len(), "msgId is empty or over 128 bytes")?);
     out.extend_from_slice(h.msg_id.as_bytes());
     if let Some(rk) = &h.rk {
-        put_blob(&mut out, rk);
+        put_blob(&mut out, rk)?;
     }
     if let Some(kem_ct) = &h.kem_ct {
-        put_blob(&mut out, kem_ct);
+        put_blob(&mut out, kem_ct)?;
     }
     if let Some(init) = &h.init {
-        put_blob(&mut out, &init.sender_pk);
-        put_blob(&mut out, &init.ct_id);
-        put_blob(&mut out, &init.ct_mt);
+        put_blob(&mut out, &init.sender_pk)?;
+        put_blob(&mut out, &init.ct_id)?;
+        put_blob(&mut out, &init.ct_mt)?;
     }
     if let Some(one_time) = &h.one_time {
-        put_blob(&mut out, &one_time.ct_ot);
+        put_blob(&mut out, &one_time.ct_ot)?;
         out.extend_from_slice(&one_time.ot_id.to_be_bytes());
     }
     Ok(out)
@@ -226,13 +221,15 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, Error> {
         return Err(Error::Invalid("the payload is implausibly large"));
     }
     let mut out = header_bytes(&frame.header)?;
-    put_blob(&mut out, &frame.payload);
+    put_blob(&mut out, &frame.payload)?;
     Ok(out)
 }
 
 /// A cheap check of magic and version, before a full decode.
 pub fn looks_like_frame(raw: &[u8]) -> bool {
-    raw.len() >= OFF_MSGID && raw.starts_with(MAGIC) && raw[4] == FRAME_VERSION
+    raw.len() >= OFF_MSGID
+        && raw.starts_with(MAGIC)
+        && raw.get(MAGIC.len()) == Some(&FRAME_VERSION)
 }
 
 /// Decodes a frame and returns it with its AAD, the header bytes exactly as
@@ -243,8 +240,10 @@ pub fn decode(raw: &[u8]) -> Result<(Frame, Vec<u8>), Error> {
     if !looks_like_frame(raw) {
         return Err(Error::Malformed("not a v3 frame"));
     }
-    let kind = Kind::from_byte(raw[OFF_KIND]).ok_or(Error::Malformed("unknown kind"))?;
-    let flags = raw[OFF_FLAGS];
+    let mut r = Reader::new(raw, "truncated");
+    r.take(MAGIC.len().saturating_add(1))?;
+    let kind = Kind::from_byte(r.u8()?).ok_or(Error::Malformed("unknown kind"))?;
+    let flags = r.u8()?;
     if flags & !ALL_FLAGS != 0 {
         return Err(Error::Malformed("unknown flag"));
     }
@@ -260,107 +259,81 @@ pub fn decode(raw: &[u8]) -> Result<(Frame, Vec<u8>), Error> {
         }
         _ => {}
     }
+    let sender = PeerId::from_bytes(r.array()?);
+    let to = PeerId::from_bytes(r.array()?);
+    let cid = *r.array::<16>()?;
+    let n = r.u32()?;
+    let pn = r.u32()?;
 
-    let msg_id_len = raw[OFF_MSGID_LEN] as usize;
-    if msg_id_len == 0 || msg_id_len > MAX_MSG_ID_BYTES || raw.len() < OFF_MSGID + msg_id_len {
+    let msg_id_len = usize::from(r.u8()?);
+    if msg_id_len == 0 || msg_id_len > MAX_MSG_ID_BYTES || r.remaining() < msg_id_len {
         return Err(Error::Malformed("bad msgId length"));
     }
-    let msg_id = std::str::from_utf8(&raw[OFF_MSGID..OFF_MSGID + msg_id_len])
+    let msg_id = std::str::from_utf8(r.take(msg_id_len)?)
         .map_err(|_| Error::Malformed("msgId is not UTF-8"))?
         .to_owned();
 
-    let mut r = Reader {
-        raw,
-        cursor: OFF_MSGID + msg_id_len,
-    };
-    let rk = if has_rk { Some(r.blob()?) } else { None };
-    let kem_ct = if has_kem_ct { Some(r.blob()?) } else { None };
+    let rk = if has_rk { Some(blob(&mut r)?) } else { None };
+    let kem_ct = if has_kem_ct { Some(blob(&mut r)?) } else { None };
     let init = if kind == Kind::Init {
         Some(InitFields {
-            sender_pk: r.blob()?,
-            ct_id: r.blob()?,
-            ct_mt: r.blob()?,
+            sender_pk: blob(&mut r)?,
+            ct_id: blob(&mut r)?,
+            ct_mt: blob(&mut r)?,
         })
     } else {
         None
     };
     let one_time = if has_one_time {
         Some(OneTime {
-            ct_ot: r.blob()?,
+            ct_ot: blob(&mut r)?,
             ot_id: r.u32()?,
         })
     } else {
         None
     };
-    let header_end = r.cursor;
-    let payload = r.blob()?;
-    if r.cursor != raw.len() {
-        return Err(Error::Malformed("trailing bytes"));
-    }
+    let header_len = raw.len().saturating_sub(r.remaining());
+    let payload = blob(&mut r)?;
+    r.finish()?;
 
-    let sender = PeerId::from_bytes(&array(&raw[OFF_SENDER..OFF_SENDER + 32]));
-    let to = PeerId::from_bytes(&array(&raw[OFF_TO..OFF_TO + 32]));
     if let Some(init) = &init
         && PeerId::of_hex(&hex::encode(&init.sender_pk)) != sender
     {
         return Err(Error::Malformed("senderPk does not hash to sender"));
     }
+    let aad = raw
+        .get(..header_len)
+        .ok_or(Error::Malformed("truncated"))?
+        .to_vec();
     let header = Header {
         kind,
         sender,
         to,
         msg_id,
-        cid: array(&raw[OFF_CID..OFF_CID + 16]),
-        n: u32::from_be_bytes(array(&raw[OFF_N..OFF_N + 4])),
-        pn: u32::from_be_bytes(array(&raw[OFF_PN..OFF_PN + 4])),
+        cid,
+        n,
+        pn,
         rk,
         kem_ct,
         init,
         one_time,
     };
-    Ok((Frame { header, payload }, raw[..header_end].to_vec()))
+    Ok((Frame { header, payload }, aad))
 }
 
-fn put_blob(out: &mut Vec<u8>, blob: &[u8]) {
-    out.extend_from_slice(&(blob.len() as u32).to_be_bytes());
+fn put_blob(out: &mut Vec<u8>, blob: &[u8]) -> Result<(), Error> {
+    out.extend_from_slice(&len_u32(blob.len(), "a field is implausibly large")?.to_be_bytes());
     out.extend_from_slice(blob);
+    Ok(())
 }
 
-/// A fixed-size copy of a slice whose length the caller has already checked.
-fn array<const N: usize>(bytes: &[u8]) -> [u8; N] {
-    bytes.try_into().expect("length checked by the caller")
-}
-
-/// Reads length-prefixed fields, refusing anything short, oversized or empty.
-struct Reader<'a> {
-    raw: &'a [u8],
-    cursor: usize,
-}
-
-impl Reader<'_> {
-    fn u32(&mut self) -> Result<u32, Error> {
-        let end = self.cursor + 4;
-        let bytes = self
-            .raw
-            .get(self.cursor..end)
-            .ok_or(Error::Malformed("truncated"))?;
-        self.cursor = end;
-        Ok(u32::from_be_bytes(array(bytes)))
+/// A length-prefixed field, refusing anything short, oversized or empty.
+fn blob(r: &mut Reader<'_>) -> Result<Vec<u8>, Error> {
+    let len = usize_from(r.u32()?);
+    if len == 0 || len > MAX_FIELD_BYTES {
+        return Err(Error::Malformed("empty or oversized field"));
     }
-
-    fn blob(&mut self) -> Result<Vec<u8>, Error> {
-        let len = self.u32()? as usize;
-        if len == 0 || len > MAX_FIELD_BYTES {
-            return Err(Error::Malformed("empty or oversized field"));
-        }
-        let end = self.cursor + len;
-        let bytes = self
-            .raw
-            .get(self.cursor..end)
-            .ok_or(Error::Malformed("truncated"))?;
-        self.cursor = end;
-        Ok(bytes.to_vec())
-    }
+    Ok(r.take(len)?.to_vec())
 }
 
 #[cfg(test)]

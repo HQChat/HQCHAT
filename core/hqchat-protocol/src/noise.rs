@@ -26,11 +26,12 @@
 
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{ChaCha20Poly1305, Nonce};
-use hkdf::Hkdf;
+use hmac::{Hmac, Mac};
 use hqc::{Ciphertext, KeyPair, PublicKey, SharedSecret};
 use sha2::{Digest, Sha256};
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
+use crate::wire::{Reader, len_u16};
 use crate::{Entropy, Error, Kem};
 
 /// The wire version.
@@ -52,7 +53,9 @@ pub const MAX_FRAME_PLAINTEXT: usize = MAX_FRAME - TAG_LEN;
 /// the encrypted payload. The gateway refuses any other length before doing
 /// any cryptography.
 pub const fn msg1_length(payload_len: usize) -> usize {
-    DH_LEN + (hqc::CIPHERTEXT_BYTES + TAG_LEN) + (payload_len + TAG_LEN)
+    // Saturates instead of wrapping: no message has usize::MAX bytes, so an
+    // absurd payload length makes every msg1 the wrong length.
+    (DH_LEN + hqc::CIPHERTEXT_BYTES + TAG_LEN + TAG_LEN).saturating_add(payload_len)
 }
 
 // ── X25519 ──────────────────────────────────────────────────────────────────
@@ -120,9 +123,18 @@ impl CipherState {
         if self.nonce == u64::MAX {
             return Err(Error::Invalid("nonce exhausted"));
         }
-        let mut n = [0u8; 12];
-        n[4..].copy_from_slice(&self.nonce.to_le_bytes());
-        Ok(n)
+        // 4 zero bytes, then the counter little-endian (spec §5.1, ChaChaPoly).
+        let [a, b, c, d, e, f, g, h] = self.nonce.to_le_bytes();
+        Ok([0, 0, 0, 0, a, b, c, d, e, f, g, h])
+    }
+
+    /// Moves to the next nonce; `nonce_bytes` already refused the reserved last one.
+    fn advance_nonce(&mut self) -> Result<(), Error> {
+        self.nonce = self
+            .nonce
+            .checked_add(1)
+            .ok_or(Error::Invalid("nonce exhausted"))?;
+        Ok(())
     }
 
     /// Encrypts with additional data; without a key, returns the plaintext.
@@ -133,14 +145,14 @@ impl CipherState {
         let nonce = self.nonce_bytes()?;
         let out = ChaCha20Poly1305::new(key.into())
             .encrypt(
-                Nonce::from_slice(&nonce),
+                &Nonce::from(nonce),
                 Payload {
                     msg: plaintext,
                     aad: ad,
                 },
             )
             .map_err(|_| Error::Invalid("ChaCha20-Poly1305 refused the input"))?;
-        self.nonce += 1;
+        self.advance_nonce()?;
         Ok(out)
     }
 
@@ -157,14 +169,14 @@ impl CipherState {
         let nonce = self.nonce_bytes()?;
         let out = ChaCha20Poly1305::new(key.into())
             .decrypt(
-                Nonce::from_slice(&nonce),
+                &Nonce::from(nonce),
                 Payload {
                     msg: ciphertext,
                     aad: ad,
                 },
             )
             .map_err(|_| Error::Authentication)?;
-        self.nonce += 1;
+        self.advance_nonce()?;
         Ok(out)
     }
 
@@ -184,17 +196,28 @@ impl CipherState {
     }
 }
 
-/// The Noise HKDF: HMAC-SHA256 chained, which is RFC 5869 HKDF with the
-/// chaining key as salt and empty info, cut in two.
+/// The Noise HKDF (spec §4.3) with two outputs: HMAC-SHA256 chained, which
+/// is RFC 5869 HKDF with the chaining key as salt and empty info.
 pub fn hkdf2(chaining_key: &[u8; 32], ikm: &[u8]) -> ([u8; 32], [u8; 32]) {
-    let mut out = [0u8; 64];
-    Hkdf::<Sha256>::new(Some(chaining_key), ikm)
-        .expand(&[], &mut out)
-        .expect("64 bytes is a valid HKDF-SHA256 output length");
-    let first = out[..32].try_into().expect("32 bytes");
-    let second = out[32..].try_into().expect("32 bytes");
-    out.zeroize();
-    (first, second)
+    let temp_key = hmac_sha256(chaining_key, &[ikm]);
+    let first = hmac_sha256(&temp_key, &[&[0x01]]);
+    let second = hmac_sha256(&temp_key, &[first.as_slice(), &[0x02]]);
+    (*first, *second)
+}
+
+/// HMAC-SHA256 of the concatenated `parts` under a 32-byte key, wiped when
+/// dropped. RFC 2104 zero-pads a key shorter than the 64-byte block, so the
+/// padded key goes in as a block and setting the key cannot fail.
+fn hmac_sha256(key: &[u8; 32], parts: &[&[u8]]) -> Zeroizing<[u8; 32]> {
+    let mut block = Zeroizing::new([0u8; 64]);
+    for (b, k) in block.iter_mut().zip(key) {
+        *b = *k;
+    }
+    let mut mac = <Hmac<Sha256> as KeyInit>::new(&(*block).into());
+    for part in parts {
+        mac.update(part);
+    }
+    Zeroizing::new(mac.finalize().into_bytes().into())
 }
 
 /// The handshake's running hash, chaining key and cipher.
@@ -221,7 +244,9 @@ impl SymmetricState {
         let name = protocol_name.as_bytes();
         let mut h = [0u8; 32];
         if name.len() <= 32 {
-            h[..name.len()].copy_from_slice(name);
+            for (slot, byte) in h.iter_mut().zip(name) {
+                *slot = *byte;
+            }
         } else {
             h = Sha256::digest(name).into();
         }
@@ -380,10 +405,11 @@ impl HqnInitiator {
         if message.len() < DH_LEN + TAG_LEN {
             return Err(Error::Malformed("message 2 too short"));
         }
-        let re: [u8; 32] = message[..DH_LEN].try_into().expect("32 bytes");
+        let mut r = Reader::new(message, "message 2 too short");
+        let re = *r.array::<DH_LEN>()?;
         self.ss.mix_hash(&re);
         self.ss.mix_key(&dh(&self.e, &re)?);
-        let payload = self.ss.decrypt_and_hash(&message[DH_LEN..])?;
+        let payload = self.ss.decrypt_and_hash(r.rest())?;
         let (send, recv) = self.ss.split();
         Ok((
             payload,
@@ -424,10 +450,9 @@ impl HqnResponder {
     /// The initiator's ephemeral key, readable before any work: the gateway
     /// checks it against a replay cache ahead of decapsulation.
     pub fn ephemeral_of(message1: &[u8]) -> Result<[u8; 32], Error> {
-        message1
-            .get(..DH_LEN)
-            .map(|e| e.try_into().expect("32 bytes"))
-            .ok_or(Error::Malformed("message 1 too short"))
+        Reader::new(message1, "message 1 too short")
+            .array::<DH_LEN>()
+            .copied()
     }
 
     /// msg1 in one step, decapsulating with `kem`.
@@ -446,13 +471,14 @@ impl HqnResponder {
         if message1.len() < msg1_length(0) {
             return Err(Error::Malformed("message 1 too short"));
         }
-        let re: [u8; 32] = message1[..DH_LEN].try_into().expect("32 bytes");
+        let mut r = Reader::new(message1, "message 1 too short");
+        let re = *r.array::<DH_LEN>()?;
+        let enc_ct = r.take(hqc::CIPHERTEXT_BYTES + TAG_LEN)?;
         self.re = Some(re);
         self.ss.mix_hash(&re);
         self.ss.mix_key(&dh(&self.server.x25519, &re)?);
-        let enc_ct_end = DH_LEN + hqc::CIPHERTEXT_BYTES + TAG_LEN;
-        let ct = self.ss.decrypt_and_hash(&message1[DH_LEN..enc_ct_end])?;
-        self.pending_payload = Some(message1[enc_ct_end..].to_vec());
+        let ct = self.ss.decrypt_and_hash(enc_ct)?;
+        self.pending_payload = Some(r.rest().to_vec());
         Ok(Ciphertext::from_bytes(&ct)?)
     }
 
@@ -532,14 +558,11 @@ pub fn nk_responder_message2(
     let mut ss = SymmetricState::new("Noise_NK_25519_ChaChaPoly_SHA256");
     ss.mix_hash(prologue);
     ss.mix_hash(&s.public_key());
-    let re: [u8; 32] = message1
-        .get(..DH_LEN)
-        .ok_or(Error::Malformed("message 1 too short"))?
-        .try_into()
-        .expect("32 bytes");
+    let mut r = Reader::new(message1, "message 1 too short");
+    let re = *r.array::<DH_LEN>()?;
     ss.mix_hash(&re);
     ss.mix_key(&dh(s, &re)?);
-    let payload1 = ss.decrypt_and_hash(&message1[DH_LEN..])?;
+    let payload1 = ss.decrypt_and_hash(r.rest())?;
     let e_pub = e.public_key();
     ss.mix_hash(&e_pub);
     ss.mix_key(&dh(e, &re)?);
@@ -554,15 +577,18 @@ pub fn frame(body: &[u8]) -> Result<Vec<u8>, Error> {
     if body.len() > MAX_FRAME {
         return Err(Error::Invalid("frame too large"));
     }
-    let mut out = Vec::with_capacity(2 + body.len());
-    out.extend_from_slice(&(body.len() as u16).to_be_bytes());
+    let len = len_u16(body.len(), "frame too large")?;
+    let mut out = Vec::with_capacity(body.len().saturating_add(2));
+    out.extend_from_slice(&len.to_be_bytes());
     out.extend_from_slice(body);
     Ok(out)
 }
 
 /// Seals a byte stream chunk into as few transport frames as it needs.
 pub fn seal_frames(send: &mut CipherState, data: &[u8]) -> Result<Vec<u8>, Error> {
-    let mut out = Vec::with_capacity(data.len() + (data.len() / MAX_FRAME_PLAINTEXT + 1) * 18);
+    let frames = data.len().div_ceil(MAX_FRAME_PLAINTEXT);
+    let overhead = frames.saturating_mul(2 + TAG_LEN);
+    let mut out = Vec::with_capacity(data.len().saturating_add(overhead));
     for chunk in data.chunks(MAX_FRAME_PLAINTEXT) {
         out.extend_from_slice(&frame(&send.encrypt(chunk)?)?);
     }
@@ -585,12 +611,10 @@ impl FrameReader {
 
     /// The next complete frame body, if one has arrived.
     pub fn next_frame(&mut self) -> Option<Vec<u8>> {
-        let len = u16::from_be_bytes(self.buffer.get(..2)?.try_into().expect("2 bytes")) as usize;
-        if self.buffer.len() < 2 + len {
-            return None;
-        }
-        let body = self.buffer[2..2 + len].to_vec();
-        self.buffer.drain(..2 + len);
+        let mut r = Reader::new(&self.buffer, "partial frame");
+        let len = usize::from(r.u16().ok()?);
+        let body = r.take(len).ok()?.to_vec();
+        self.buffer.drain(..len.saturating_add(2));
         Some(body)
     }
 
