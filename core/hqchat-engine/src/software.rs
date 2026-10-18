@@ -38,6 +38,15 @@ impl SoftwareVault {
         }
     }
 
+    /// The key, for a headless owner (the bot) to keep in its own storage.
+    pub fn export_key(&self) -> Option<[u8; 32]> {
+        self.key
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .map(|k| **k)
+    }
+
     /// The user presence check fails until [`SoftwareVault::unlock`].
     pub fn lock(&self) {
         self.locked.store(true, Ordering::SeqCst);
