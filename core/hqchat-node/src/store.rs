@@ -1,7 +1,10 @@
 //! A `Store` on the file system, for the bot: one file per blob under a
-//! directory, written through a temporary file and a rename.
+//! directory, written through a temporary file, synced, then renamed, so a
+//! crash leaves the old blob or the new one and never half of either. Files
+//! are readable by their owner only.
 
-use std::fs;
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use hqchat_engine::{Store, StoreError};
@@ -11,7 +14,7 @@ pub struct DirStore {
 }
 
 impl DirStore {
-    pub fn new(root: impl Into<PathBuf>) -> std::io::Result<Self> {
+    pub fn new(root: impl Into<PathBuf>) -> io::Result<Self> {
         let root = root.into();
         fs::create_dir_all(&root)?;
         Ok(Self { root })
@@ -45,10 +48,11 @@ impl DirStore {
             } else {
                 format!("{prefix}/{name}")
             };
+            // Symlinks are neither: nothing the store wrote points elsewhere.
             match entry.file_type() {
                 Ok(t) if t.is_dir() => self.walk(&entry.path(), &key, out),
-                Ok(_) => out.push(key),
-                Err(_) => {}
+                Ok(t) if t.is_file() => out.push(key),
+                _ => {}
             }
         }
     }
@@ -60,18 +64,13 @@ impl Store for DirStore {
     }
 
     fn put(&self, key: String, value: Vec<u8>) -> Result<(), StoreError> {
-        let path = self
-            .path(&key)
-            .ok_or_else(|| StoreError::Write(format!("bad key {key}")))?;
-        let dir = path.parent().expect("a key has a parent: the root");
-        fs::create_dir_all(dir).map_err(|e| StoreError::Write(e.to_string()))?;
-        let tmp = dir.join(format!(
-            ".tmp-{}",
-            path.file_name().expect("a file").to_string_lossy()
-        ));
-        fs::write(&tmp, &value)
-            .and_then(|()| fs::rename(&tmp, &path))
-            .map_err(|e| StoreError::Write(e.to_string()))
+        let bad_key = || StoreError::Write(format!("bad key {key}"));
+        let path = self.path(&key).ok_or_else(bad_key)?;
+        let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
+            return Err(bad_key());
+        };
+        let tmp = dir.join(format!(".tmp-{}", name.to_string_lossy()));
+        write_durably(dir, &tmp, &path, &value).map_err(|e| StoreError::Write(e.to_string()))
     }
 
     fn delete(&self, key: String) {
@@ -87,4 +86,21 @@ impl Store for DirStore {
         out.sort();
         out
     }
+}
+
+/// Writes `value` to `tmp`, syncs it, renames it over `path`, then syncs
+/// the directory so the rename itself survives a power cut.
+fn write_durably(dir: &Path, tmp: &Path, path: &Path, value: &[u8]) -> io::Result<()> {
+    fs::create_dir_all(dir)?;
+    let mut options = OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let mut file = options.open(tmp)?;
+    file.write_all(value)?;
+    file.sync_all()?;
+    fs::rename(tmp, path)?;
+    #[cfg(unix)]
+    File::open(dir)?.sync_all()?;
+    Ok(())
 }

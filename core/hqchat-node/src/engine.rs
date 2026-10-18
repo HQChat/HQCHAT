@@ -133,7 +133,7 @@ fn js(effect: Effect) -> JsEffect {
             authorization,
             body,
         } => JsEffect {
-            req: Some(req as i64),
+            req: Some(to_js(req)),
             method: Some(if method == Method::Get { "GET" } else { "POST" }.into()),
             path: Some(path),
             authorization,
@@ -142,7 +142,7 @@ fn js(effect: Effect) -> JsEffect {
         },
         Effect::Open { conn, endpoint } => {
             let base = JsEffect {
-                conn: Some(conn as i64),
+                conn: Some(to_js(conn)),
                 ..k("open")
             };
             match endpoint {
@@ -160,12 +160,12 @@ fn js(effect: Effect) -> JsEffect {
             }
         }
         Effect::Write { conn, bytes } => JsEffect {
-            conn: Some(conn as i64),
+            conn: Some(to_js(conn)),
             body: Some(bytes.into()),
             ..k("write")
         },
         Effect::Close { conn } => JsEffect {
-            conn: Some(conn as i64),
+            conn: Some(to_js(conn)),
             ..k("close")
         },
         Effect::Timer { at } => JsEffect {
@@ -224,6 +224,18 @@ fn js(effect: Effect) -> JsEffect {
             ..k("storageFailed")
         },
     }
+}
+
+/// An engine id (a counter from 1) as a JS number. Ids never get near
+/// 2^53, past which JS numbers lose precision anyway.
+fn to_js(id: u64) -> i64 {
+    i64::try_from(id).unwrap_or(i64::MAX)
+}
+
+/// An id JS hands back; a negative one was never issued, so it is refused
+/// rather than reinterpreted as a huge unsigned one.
+fn from_js(id: i64) -> napi::Result<u64> {
+    u64::try_from(id).map_err(|_| napi::Error::from_reason(format!("{id} is not an engine id")))
 }
 
 fn all(effects: Vec<Effect>) -> Vec<JsEffect> {
@@ -438,31 +450,46 @@ impl JsEngine {
     }
 
     #[napi]
-    pub fn on_http(&self, req: i64, status: u32, body: Buffer, now: i64) -> Vec<JsEffect> {
-        all(self
-            .engine
-            .on_http(req as u64, status as u16, body.to_vec(), now))
+    pub fn on_http(
+        &self,
+        req: i64,
+        status: u32,
+        body: Buffer,
+        now: i64,
+    ) -> napi::Result<Vec<JsEffect>> {
+        let status = u16::try_from(status)
+            .map_err(|_| napi::Error::from_reason(format!("{status} is not an HTTP status")))?;
+        Ok(all(self.engine.on_http(
+            from_js(req)?,
+            status,
+            body.to_vec(),
+            now,
+        )))
     }
 
     #[napi]
-    pub fn on_opened(&self, conn: i64, now: i64) -> Vec<JsEffect> {
-        all(self.engine.on_opened(conn as u64, now))
+    pub fn on_opened(&self, conn: i64, now: i64) -> napi::Result<Vec<JsEffect>> {
+        Ok(all(self.engine.on_opened(from_js(conn)?, now)))
     }
 
     #[napi]
-    pub fn on_bytes(&self, conn: i64, bytes: Buffer, now: i64) -> Vec<JsEffect> {
-        all(self.engine.on_bytes(conn as u64, bytes.to_vec(), now))
+    pub fn on_bytes(&self, conn: i64, bytes: Buffer, now: i64) -> napi::Result<Vec<JsEffect>> {
+        Ok(all(self.engine.on_bytes(
+            from_js(conn)?,
+            bytes.to_vec(),
+            now,
+        )))
     }
 
     /// `reason`: `requested`, `remote`, or anything else for a failure.
     #[napi]
-    pub fn on_closed(&self, conn: i64, reason: String, now: i64) -> Vec<JsEffect> {
+    pub fn on_closed(&self, conn: i64, reason: String, now: i64) -> napi::Result<Vec<JsEffect>> {
         let reason = match reason.as_str() {
             "requested" => CloseReason::Requested,
             "remote" => CloseReason::Remote,
             other => CloseReason::Failed(other.into()),
         };
-        all(self.engine.on_closed(conn as u64, reason, now))
+        Ok(all(self.engine.on_closed(from_js(conn)?, reason, now)))
     }
 
     #[napi]

@@ -2,10 +2,10 @@
 //! `protocol/noise.ts`'s `HqnResponder`, `FrameReader` and transport.
 
 use hqc::{KeyPair, SharedSecret};
-use hqchat_protocol::OsEntropy;
 use hqchat_protocol::noise::{
     self, FrameReader, HqnResponder, ServerStatic, Transport, X25519Secret,
 };
+use hqchat_protocol::{OsEntropy, wire};
 use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;
 
@@ -66,8 +66,9 @@ pub fn gateway_public_key(key: GatewayKey) -> napi::Result<GatewayPublicKey> {
 
 /// msg1's exact length for a payload of `payloadLen` bytes.
 #[napi]
-pub fn hqn_msg1_length(payload_len: u32) -> u32 {
-    noise::msg1_length(payload_len as usize) as u32
+pub fn hqn_msg1_length(payload_len: u32) -> napi::Result<u32> {
+    u32::try_from(noise::msg1_length(wire::usize_from(payload_len)))
+        .map_err(|_| napi::Error::from_reason("msg1 length does not fit a u32"))
 }
 
 /// The gateway's side of one connection. msg1 is read in two steps so the
