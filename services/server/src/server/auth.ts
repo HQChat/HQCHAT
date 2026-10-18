@@ -3,6 +3,7 @@ import type * as http from "node:http";
 import { core } from "../common/core";
 import { logger } from "../common/logger";
 import { DB } from "./db/api";
+import { EMQX } from "./emqx";
 import { bearer, clientIp, HttpError, type JsonBody, readJson, send, textField } from "./http";
 import { resolveTransportInfo } from "./transport-config";
 
@@ -35,6 +36,8 @@ async function befriendBot(id: string): Promise<void> {
   if (!BOT_ID || BOT_ID === id) return;
   try {
     await DB.createFriendship(id, BOT_ID);
+    // As for an accepted invite: the bot greets now, not at its next poll.
+    await EMQX.notifyGraphChanged([BOT_ID, id]);
   } catch (e) {
     logger.warn(`[auth] befriending the bot failed for ${id.slice(0, 12)}…: ${(e as Error).message}`);
   }

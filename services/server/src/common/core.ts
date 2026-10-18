@@ -78,6 +78,15 @@ export interface EngineOptions {
   dir: string;
   /** The device key from a previous run, 32 bytes. */
   deviceKey?: Buffer;
+  /** Reach the broker over hqn/1 when the server offers it (default true); false keeps to WSS. */
+  hqn?: boolean;
+}
+
+/** What `importLegacy` did. */
+export interface CoreImport {
+  effects: CoreEffect[];
+  /** Friends whose session could not be read: imported without one. */
+  unreadable: string[];
 }
 
 export interface CoreMessage {
@@ -149,6 +158,8 @@ export interface Engine {
   /** The device key to keep for the next run; null before `createIdentity`. */
   readonly deviceKey: Buffer | null;
   createIdentity(): CoreEffect[];
+  /** The bot's seed and the TS reference client's state file, into a profile with no identity. */
+  importLegacy(seed: Buffer, stateJson: string | null): CoreImport;
   start(now: number, network: string): CoreEffect[];
   unlock(now: number): CoreEffect[];
   lock(): CoreEffect[];
