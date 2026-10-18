@@ -1,220 +1,222 @@
-# Core wiring: one message through the core
+# Core wiring: from the UI to the server and back
 
-**Status: proposal, not built.** Companion to [multiplatform.md](multiplatform.md).
-It walks one real flow (sign in, the user taps Send, the peer receives)
-through the target design, step by step, naming today's function for each
-step, to fix exactly what the core exposes and how it meets the network, the
-vault and the UI. The scenarios in `services/server/test/scenarios/` are the
-acceptance test for every step.
+**Status: the core is built (`core/`); the apps and the server do not use it
+yet.** This document follows one message from the sender's UI, through the
+server, to the recipient's UI and back as a delivery receipt. Each step names
+the function that does it today, in the Apple app, the TS reference client
+or the server, and the Rust function that replaces it. The design and the
+plan are in [multiplatform.md](multiplatform.md).
 
-Today's code read for it: `services/server/src/client/{client,conversation}.ts`
-(already close to sans-IO: `receive` is synchronous and returns frames to
-publish); on Apple, `ChatView.sendMessage` → `ChatSession.sealMessage` →
-`RatchetSession.seal` → `ChatSession.publish` → `MQTTService` →
-`MQTTWireClient`, and `ConversationRouter` / `InboundQueue` for receiving;
-on the server, `auth.ts`, `emqx.ts`, `push.ts` and `src/gateway/`.
+## Who does what
 
-## 1. One message, end to end, in the target design
-
-Legend: **[S]** shell, **[E]** Engine (Rust), **[V]** vault callback,
-**[St]** store callback, **[N]** network done by the shell, **[Srv]** server.
-
-### 1.1 Sign-in and connect (prerequisite)
-
-| # | Who | Call | Today |
-|---|---|---|---|
-| 1 | S | user unlocks (Face ID / BiometricPrompt / Hello) then `engine.unlock()` | `MessageKeyGate.unlock` |
-| 2 | E→V | `vault.agree(ephemeral_pub)` to open the sealed identity key | `AESKeyStore.read` |
-| 3 | E | `Effect::Http POST /auth/init {pk}` | `AuthService.login` |
-| 4 | Srv | `hqcEncaps(pk)`, `authProof(ss)` stored | `auth.ts handleInit` |
-| 5 | S→E | `engine.on_http(req, 200, {ct})`; E decaps, new Ed25519 key, `Effect::Http POST /auth/verify` | `AuthService.login` |
-| 6 | S→E | `on_http(...)` → session, `serverTime` offset; `Effect::Http GET /friends`, `GET /auth/transport` | `DirectorySync`, `refreshTransportDiscovery` |
-| 7 | E | picks transport (policy in core, network key from shell) → `Effect::Open {conn, Tcp(hqnHost:443)}` | `TransportSelector`, `MQTTService.connect` |
-| 8 | S→E | `on_opened(conn)` → E builds Noise msg1 + MQTT CONNECT (signed proof) → `Effect::Write` | `NoiseHQN`, `MQTTConnectProof`, `MQTTWireClient` |
-| 9 | Srv | gateway: Noise responder (decap worker) → EMQX → `/mqtt/authn` → `verifyConnectProof` | `gateway.ts`, `auth.ts verifyConnect` |
-| 10 | S→E | `on_bytes(conn, …)` → CONNACK → E emits SUBSCRIBE inbox/graph/cv/hs, PUBLISH presence (retained), prekey upkeep (`Effect::Http POST /prekeys`) | `MQTTService.didConnect`, `PrekeyService.ensurePublished` |
-
-### 1.2 Send (the user taps Send)
-
-| # | Who | Call | Today |
-|---|---|---|---|
-| 1 | S | UI inserts nothing itself; calls `engine.send_text(peer, text)` | `ChatView.sendMessage` inserts a row first |
-| 2 | E | creates `msg_id`, stores the outgoing row **sealed** (`[St] put`, sealed by core with the vault's public key, no user needed), returns `Effect::MessageAdded{status: Sending}` | `Message(... .sending)` + `MessageKeyStore.wrap` |
-| 3 | E | locked? → `Effect::NeedUnlock{reason}` and the send waits in the outbox | `seal()` unlock gate |
-| 4 | E | no session → `Effect::Http GET /peers/{id}/key` (if not pinned), `POST /prekeys/claim` | `ChatSession.startSession`, `Conversations.openSession` |
-| 5 | S→E | `on_http(...)` → `startAsInitiator` (3 Encaps), state saved via `[V]`+`[St]` **before** anything leaves | `startAsInitiator`, `this.save()` |
-| 6 | E | ratchet `seal` → frame header (AAD) → AES-GCM → `encodeFrame` → topic (`init` → `u/{peer}/inbox`, else `cv/{convoId}`) | `RatchetSession.seal`, `ConversationFrame`, `AESService.encryptRaw`, `topicFor` |
-| 7 | E | MQTT PUBLISH QoS1 → Noise frame → `Effect::Write{conn, bytes}` | `MQTTService.send*`, `MQTTWireClient.publish` |
-| 8 | Srv | gateway decrypts → EMQX ACL (`infra/emqx`) → fan-out / queue for offline; push bridge sees `cv/+`, wakes offline members | `push.ts` |
-| 9 | S→E | `on_bytes` → PUBACK → `Effect::MessageStatus{msg_id, Sent \| Queued}` | `advanceDelivery(.sent/.queued)` |
-| 10 | S→E | later: receipt frame on `cv/` → opened → `Effect::MessageStatus{Delivered}` | `handleReceipt` |
-
-### 1.3 Receive on the peer
-
-| # | Who | Call | Today |
-|---|---|---|---|
-| 1 | S | push wake (APNs/FCM/UnifiedPush) → shell opens connection → `on_bytes` | `PushManager`, `NotificationService` |
-| 2 | E | MQTT PUBLISH → route by topic (`hs/` handshake, `u/…/inbox` init, `cv/` msg/receipt), checks sender is a friend, addressed to me, right topic for kind | `Conversations.receive`, `ConversationRouter.handle` |
-| 3 | E | **locked** → raw frame stored as pending (`[St]`, no secret needed), `Effect::Notify{peer}` (no content) | `InboundQueue.admit`, `PendingFrame` |
-| 4 | E | unproven `init` → hold, Encaps to `senderPk`, publish `chal` on `hs/` | `challenge`, `challengeInitiator` |
-| 5 | E (sender) | `chal` → decaps with identity key → `proof` on `hs/` | `onHandshake` / `applyHandshake` |
-| 6 | E | proof matches → `startAsResponder` → open held frames → store sealed → `Effect::Deliver(Message)` + receipt PUBLISH | `openInit`, `openMessage`, `store`, `receiptFor` |
-| 7 | S | `engine.unlock()` later → E drains pending in order | `drainPending` |
-
-### 1.4 What this tells us the lib needs
-
-- From the **network**: only "open TCP / open WSS, write bytes, deliver
-  bytes, closed" plus "one HTTP request". Everything else (Noise, MQTT,
-  retries policy, transport choice, clock offset) is core.
-- From the **vault**, four calls only:
-  `device_public_key()`, `agree(ephemeral_pub) -> shared` (user-gated),
-  `tier()`, `create()`. The core does ECIES itself: sealing needs only the
-  public key (works locked, like `MessageKeyStore.wrap`), opening needs one
-  hardware ECDH (`SecKeyCopyKeyExchangeResult` / Keystore `KeyAgreement` /
-  `TPM2_ECDH_ZGen` / `NCryptSecretAgreement`).
-- From the **store**: get/put/delete/list-by-prefix of opaque blobs.
-- To the **UI**: messages, statuses, friends, presence, connection state,
-  unlock requests, notifications. Never keys.
-
-## 2. The exposed surface
-
-### 2.1 Client (uniffi, `hqchat-ffi`)
-
-```rust
-#[uniffi::export] fn core_api_version() -> u32;
-
-#[derive(uniffi::Object)] pub struct Engine;            // Send + Sync, internal Mutex
-#[uniffi::export] impl Engine {
-  #[uniffi::constructor] fn new(cfg: Config, vault: Arc<dyn KeyVault>, store: Arc<dyn Store>) -> Result<Arc<Self>, CoreError>;
-  // lifecycle
-  fn create_identity(&self, now: i64) -> Result<Vec<Effect>, CoreError>;
-  fn start(&self, now: i64, network: NetworkInfo) -> Vec<Effect>;
-  fn unlock(&self, now: i64) -> Result<Vec<Effect>, CoreError>;
-  fn lock(&self) -> Vec<Effect>;
-  fn tick(&self, now: i64) -> Vec<Effect>;
-  // user actions
-  fn send_text(&self, peer: String, text: String, now: i64) -> Result<Vec<Effect>, CoreError>;
-  fn retry(&self, msg_id: String, now: i64) -> Vec<Effect>;
-  fn invite(&self, handle: String) -> Vec<Effect>;   fn accept(&self, peer: String) -> Vec<Effect>;
-  fn remove(&self, peer: String) -> Vec<Effect>;     fn block(&self, peer: String) -> Vec<Effect>;
-  fn report(&self, r: ReportInput) -> Vec<Effect>;   fn set_username(&self, h: String) -> Vec<Effect>;
-  fn delete_account(&self) -> Vec<Effect>;           fn register_push(&self, p: PushToken) -> Vec<Effect>;
-  // reads for the UI (sync, from the store, opened under the unlock)
-  fn history(&self, peer: String, before: Option<i64>, limit: u32) -> Result<Vec<Message>, CoreError>;
-  fn friends(&self) -> Vec<FriendView>;  fn fingerprint(&self, peer: String) -> Option<String>;
-  // I/O results
-  fn on_http(&self, req: u64, status: u16, body: Vec<u8>, now: i64) -> Vec<Effect>;
-  fn on_opened(&self, conn: u64, now: i64) -> Vec<Effect>;
-  fn on_bytes(&self, conn: u64, bytes: Vec<u8>, now: i64) -> Vec<Effect>;
-  fn on_closed(&self, conn: u64, reason: CloseReason, now: i64) -> Vec<Effect>;
-  fn on_network_changed(&self, n: NetworkInfo, now: i64) -> Vec<Effect>;
-}
-
-#[derive(uniffi::Enum)] pub enum Effect {
-  Http { req: u64, method: Method, path: String, bearer: bool, body: Vec<u8> },
-  Open { conn: u64, endpoint: Endpoint },          // Tcp{host,port} | Wss{url}
-  Write { conn: u64, bytes: Vec<u8> },  Close { conn: u64 },
-  Timer { at: i64 },
-  NeedUnlock { reason: UnlockReason },
-  MessageAdded(Message), MessageStatus { msg_id: String, status: Delivery },
-  FriendsChanged, PresenceChanged { peer: String, online: bool },
-  Connection(ConnState), TierChanged(Tier),
-  Notify { peer: String },                         // never content
-  Dropped { reason: String },                      // protocol log
-}
-
-#[uniffi::export(with_foreign)] pub trait KeyVault: Send + Sync {
-  fn create(&self) -> Result<Tier, VaultError>;
-  fn device_public_key(&self) -> Result<Vec<u8>, VaultError>;     // 65-byte P-256
-  fn agree(&self, ephemeral_pub: Vec<u8>) -> Result<Vec<u8>, VaultError>; // under the shell's authenticated context
-  fn tier(&self) -> Tier;
-}
-#[uniffi::export(with_foreign)] pub trait Store: Send + Sync {
-  fn get(&self, key: String) -> Option<Vec<u8>>;
-  fn put(&self, key: String, value: Vec<u8>) -> Result<(), StoreError>;
-  fn delete(&self, key: String);
-  fn list(&self, prefix: String) -> Vec<String>;
-}
+```mermaid
+flowchart LR
+    UI["UI<br/>SwiftUI · Compose"] -- "commands" --> E
+    E["Engine (Rust)<br/>hqchat-engine"] -- "effects" --> SH
+    SH["Shell<br/>Swift · Kotlin · the TS bot"] -- "HTTPS · TCP · WSS bytes" --> NET
+    SH -- "I/O results" --> E
+    E -. "KeyVault · Store<br/>(sync callbacks)" .-> SH
+    NET["Cloudflare → server (TS + napi)<br/>gateway (TS + napi) → EMQX"]
 ```
 
-### 2.2 Server (napi, `hqchat-node`)
+| Layer | Today | With the core |
+|---|---|---|
+| UI | SwiftUI views over SwiftData rows (`ChatView`, `FriendListView`) | the same views, fed by `Engine` effects and reads (`history`, `friends`) |
+| Client logic | Swift `Services/` (~9.5k lines); the TS client in `services/server/src/client` | `hqchat-engine`: one implementation, reached through `hqchat-ffi` (Swift, Kotlin) or `hqchat-node` (the bot) |
+| Protocol | Swift (`RatchetSession`, `ConversationEnvelopeV3`, `Handshake`, `NoiseHQN`, `MQTTWireClient` …) and TS (`src/protocol/*.ts`), held together by vectors | `hqchat-protocol`, checked against the same vectors |
+| HQC-256 | `libhqc_wrap` via the bridging header (Swift) and koffi (TS) | `hqc` over `hqc-sys`, the same C at the same commit |
+| I/O | inside the Swift services (URLSession, Network.framework) | the shell, which carries out effects: `Http`, `Open`, `Write`, `Close`, `Timer` |
+| Keys at rest | `MessageKeyStore` (Secure Enclave), `AESKeyStore` (Keychain) | the shell's `KeyVault` (Secure Enclave, Keystore, TPM): `device_public_key`, `agree` |
+| Server | TS, calling `src/protocol` | TS, calling `hqchat-node` for every protocol check |
 
-| Export | Replaces in |
+The Engine is **sans-IO**: each command returns the effects to carry out, in
+order, and never blocks. The shell answers each effect with a command
+(`on_http`, `on_opened`, `on_bytes`, `on_closed`, `tick`). No secret key,
+ratchet state or root key crosses the boundary.
+
+## The round trip
+
+```mermaid
+sequenceDiagram
+    participant UA as Alice UI
+    participant EA as Alice Engine
+    participant SA as Alice shell
+    participant SRV as server / gateway / EMQX
+    participant SB as Bob shell
+    participant EB as Bob Engine
+    participant UB as Bob UI
+    UA->>EA: send_text(bob, text)
+    EA-->>UA: MessageAdded(Sending)
+    EA->>SA: Http GET /peer/{bob}/key, POST /prekeys/claim (first send)
+    SA->>SRV: HTTPS
+    SRV-->>SA: key, bundle
+    SA->>EA: on_http
+    EA->>SA: Write(PUBLISH init on u/{bob}/inbox, inside hqn/1)
+    SA->>SRV: bytes
+    SRV-->>SA: PUBACK
+    SA->>EA: on_bytes
+    EA-->>UA: MessageStatus(Sent or Queued)
+    SRV->>SB: PUBLISH (or a push wake, then a connect)
+    SB->>EB: on_bytes
+    EB->>SB: Write(challenge on hs/{id})
+    SB->>SRV: bytes
+    SRV->>SA: challenge
+    SA->>EA: on_bytes
+    EA->>SA: Write(proof on hs/{id})
+    SA->>SRV: bytes
+    SRV->>SB: proof
+    SB->>EB: on_bytes
+    EB-->>UB: MessageAdded, Notify
+    EB->>SB: Write(receipt on cv/{id})
+    SB->>SRV: bytes
+    SRV->>SA: receipt
+    SA->>EA: on_bytes
+    EA-->>UA: MessageStatus(Delivered)
+```
+
+### 0. Launch and unlock
+
+| Step | Today | With the core |
+|---|---|---|
+| The app opens a profile | `HQChatApp` → `AppState` → `ChatSession.configure` | the shell builds `Engine::new(config, vault, store)` |
+| A new identity | `ProfileManager` generates the seed and keys, `AESKeyStore` stores the secret key | `Engine::create_identity` → `Core::create_identity`: `KeyVault::create`, `hqc::keypair_from_seed`, a random data key, `persist::seal_device` of the state |
+| Unlock | `MessageKeyGate.unlock` (LAContext), then `AESKeyStore.read` | the shell authenticates, then `Engine::unlock` → `Core::open_state`: one `KeyVault::agree` (the Secure Enclave's `SecKeyCopyKeyExchangeResult`), `persist::open_device`; then `drain_pending` opens what arrived locked |
+
+### 1. Sign-in (UI → server → UI)
+
+| Step | Today | With the core |
+|---|---|---|
+| Start | `ChatSession` → `AuthService.login` | `Engine::start` → `Core::ensure_signed_in` → `Effect::Http POST /auth/init` |
+| Server challenges | `auth.ts handleInit`: `HqcWrapper.encapsulate`, `authProof` | `handleInit`: `hqcEncapsulate`, `authProof` (napi) |
+| Client answers | `HQCService.decapsulate`, `AESService.authProof`, a new `Curve25519.Signing` key | `Core::on_auth_init`: `hqc::decapsulate`, `auth_proof::auth_proof`, `mqtt_proof::SigningKey::generate` → `Effect::Http POST /auth/verify` |
+| Server verifies | `handleVerify`: `safeEqual`, `DB.mintSessionToken`, `signingKeyFields` | `handleVerify`: `authProofMatches` (napi); the database stays TS |
+| Client adopts | `AuthService` keeps the session, `clockOffset` | `Core::on_auth_verify` (checks the id), `adopt`: token, key id, expiry, server clock offset → `on_signed_in` |
+| Refresh | `AuthService` refresh path | `Core::refresh` → `/auth/refresh`; a 401 falls back to a full sign-in |
+| UI | `ChatSession.state` | `Effect::Connection(Authenticating)`, then `Connecting`, `Connected`, or `ActionFailed { SignIn }` |
+
+### 2. Connect to the broker
+
+| Step | Today | With the core |
+|---|---|---|
+| Choose the transport | `ServerConfig`, `TransportSelector`, `Reachability` | `Core::connect` → `/auth/transport` → `Core::open`: hqn/1 unless it failed on this network, else WSS → `Effect::Open { Tcp \| Wss }` |
+| Open the socket | `MQTTTransport` (NWConnection, URLSessionWebSocketTask with `TLSPinningDelegate`) | **the shell**, unchanged in substance: it opens what `Open` names and pins TLS for WSS |
+| CONNECT | `AuthService.mqttConnectPassword` (`MQTTConnectProof`), `MQTTCodec.connect`, `NoiseHQN` msg1 | `Core::on_opened`: `mqtt_proof::sign_connect`, `mqtt::encode(Connect)` with the offline will, `HqnInitiator::write_message1` → `Effect::Write` |
+| Gateway | `gateway.ts` with `protocol/noise.ts` `HqnResponder`; `decap-worker.ts` with `HqcWrapper.decapsulate` | `HqnGatewayHandshake.openMessage1`, `hqcDecapsulate` on the worker, `finishMessage1`, `writeMessage2`, `HqnTransport.open/seal` (napi) |
+| EMQX authenticates | `auth.ts verifyConnect`: `parseProofPassword`, `isFreshTimestamp`, `verifyProofSignature` | `parseConnectProof`, `isFreshTimestamp`, `verifyConnectProof` (napi); the nonce store stays TS |
+| CONNACK, subscriptions, presence | `MQTTService.didConnect`, `subscribeFriend`, `publishPresence` | `Core::on_bytes` (`read_message2`, `Decoder`) → `on_connected`: one SUBSCRIBE (inbox, graph; per friend `cv/`, `hs/` QoS 1, presence QoS 0), presence retained → `on_link_up` flushes the outbox |
+| Keep-alive, reconnect | `MQTTWireClient` keep-alive, `AppState` backoff loop, `ChatSession` directory poll | `Core::tick` with `Effect::Timer`: PINGREQ at 60 s, directory poll at 60 s, backoff 2–30 s, CONNACK deadline 15 s |
+
+### 3. Friends and prekeys
+
+| Step | Today | With the core |
+|---|---|---|
+| Friend list | `DirectorySync`, `FriendService`, `APIClient` | `Core::sync_directory` → `/friends`, `/friends/invites` → `on_friends`, `on_invites` → `Effect::FriendsChanged`, `InvitesChanged`; the graph nudge on `u/{id}/graph` triggers it |
+| Server side | `api.ts` (`isPeerId`), `emqx.ts` topic names | `isPeerId`, `conversationTopic`, `handshakeTopic` (napi) |
+| Actions | `FriendService.sendFriendRequest`, accept, remove, block; `ReportSheet` | `invite`, `accept`, `remove`, `block`, `report` → `Core::friendship` / `report` |
+| Prekeys | `PrekeyService.ensurePublished` | `Core::ensure_prekeys` → `/prekeys/count` → `publish_prekeys` (8, topped up at 4, medium-term weekly), secrets saved first |
+| Safety number | `KeyFingerprint.safetyNumber` | `Engine::fingerprint` → `safety_number` (same digits) |
+
+### 4. Alice sends (UI → Engine → server)
+
+| Step | Today | With the core |
+|---|---|---|
+| The user taps Send | `ChatView.sendMessage` inserts a SwiftData `Message`, then `deliver` | `Engine::send_text` → `Core::send_text`: `stamp`, `put_message` (sealed under the data key), the outbox (in the sealed state) → `Effect::MessageAdded(Sending)` |
+| First message: the key | `ChatSession.startSession` → `APIClient` peer key, `Friend.pin` | `Core::start_session` → `GET /peer/{id}/key` → `on_peer_key`: `PeerId::matches`, pinned |
+| First message: prekeys | `APIClient` claim, `RatchetSession.startAsInitiator` | `POST /prekeys/claim` → `on_claim`: `ratchet::start_as_initiator` → `put_session` |
+| Seal | `ChatSession.seal`: `RatchetSession.seal`, `ConversationFrame.header`, `AESService.encryptRaw` | `Core::seal_frame`: `ratchet::seal`, `envelope::header_bytes` (the AAD), `aead::seal_payload`, `envelope::encode`, `save_session` |
+| Publish | `ChatSession.publish` → `MQTTService.sendToInbox` / `send` → `MQTTWireClient.publish` | `Core::flush` → `Core::publish`: `mqtt::encode(Publish QoS 1)`, `noise::seal_frames` → `Effect::Write` (an `init` to `u/{bob}/inbox`, the rest to `cv/{id}`) |
+| Broker acknowledges | `MQTTWireClient` PUBACK → `Message.advanceDelivery(.sent/.queued)` | `Core::on_packet(Puback)` → `on_puback` → `set_status` → `Effect::MessageStatus(Sent \| Queued)` |
+| Link drops first | `ReplayPolicy`, `resendUnconfirmed` | `on_link_down` marks the outbox for resending under the same ids |
+
+### 5. Through the server
+
+| Step | Today | With the core |
+|---|---|---|
+| hqn/1 | `gateway.ts` decrypts and pipes to EMQX | the same, with `HqnTransport.open` / `seal` |
+| Topic policy | EMQX ACL (`infra/emqx/acl.conf`) | unchanged |
+| Offline queue | EMQX persistent session | unchanged |
+| Push wake | `push.ts` → `apns.ts` (content-free) | unchanged; FCM and UnifiedPush are added in phase 4 |
+
+### 6. Bob receives (server → Engine → UI)
+
+| Step | Today | With the core |
+|---|---|---|
+| Bytes in | `MQTTWireClient` → `MQTTService.deliver` | the shell → `Engine::on_bytes` → `Core::on_bytes`: Noise `decrypt`, `mqtt::Decoder`, PUBACK for QoS 1 → `on_publish`: `topics::route` |
+| Locked | `InboundQueue.admit`, `PendingFrame` | `Core::keep_for_unlock`: `persist::seal_device` (needs no user), unread count → `Effect::Notify` (no content); `drain_pending` at the next unlock |
+| Checks | `ConversationFrame.decodeReporting`, `ConversationRouter.handle` | `Core::on_frame`: `envelope::decode`; sender a friend, addressed to us, the right topic for the kind |
+| Unproven init | `ConversationRouter.challengeInitiator` | `Core::challenge`: `handshake::init_transcript`, `Kem::encapsulate` to the sender's key, `handshake::handshake_proof` (expected), `handshake::encode` → `Effect::Write` on `hs/{id}` |
+| Alice proves | `ConversationRouter.handleHandshake` / `applyHandshake` | `Core::on_handshake(Challenge)`: `hqc::decapsulate` with the identity key, `handshake_proof` bound to the init she sent |
+| Bob releases | `handleHandshake` proof branch, `handleInit`, `deriveResponderSession` | `Core::on_handshake(Proof)`: `handshake::proof_matches` → `open_init`: `ratchet::start_as_responder`, `ratchet::open` with `aead::open_payload` as the only authenticator, the one-time prekey deleted, the sender's key pinned |
+| Crossing inits | `resolveCollision` (`InitCollision`) | `Core::on_init`: heard from them → a message; else the lower id keeps its session, the higher yields and `resend_unconfirmed` |
+| Store and show | `ConversationRouter.store`, `MessageKeyStore.wrap`, SwiftData | `Core::deliver`: `put_message` (once per id) → `Effect::MessageAdded`, `Effect::Notify` |
+| Later messages | `handleMsg` | `Core::open_message` → `ratchet::open` (steps, skipped keys) |
+
+### 7. The receipt (Bob's Engine → Alice's UI)
+
+| Step | Today | With the core |
+|---|---|---|
+| Bob acknowledges | `ChatSession.sendReceipt` (inside an answered session only) | `Core::send_receipt` → `seal_frame(Kind::Receipt)` → `publish` on `cv/{id}` |
+| Alice marks it | `ConversationRouter.handleReceipt` → `.delivered` | `Core::open_message(Receipt)` → `set_status(Delivered)` → `Effect::MessageStatus(Delivered)`; her pending init is retired |
+
+### 8. At rest
+
+| Data | Today | With the core |
+|---|---|---|
+| Identity, prekeys, directory | Keychain items behind the tier, SwiftData `Friend` | `state`, sealed to the device key (ECIES P-256 through `KeyVault`) |
+| Ratchet sessions | `Friend.ratchetSession` (Codable) | `session/{peer}` under the data key |
+| Messages | SwiftData `Message` with `MessageKeyStore` (SE-wrapped AES keys) | `msg/{peer}/{time}/{id}` under the data key |
+| Frames received locked | `PendingFrame` rows | `pending/{time}/{seq}`, sealed to the device key |
+
+Every blob is bound to its key as AAD. Opening rows the Apple app sealed
+today is the importer's job (phase 3).
+
+## The functions the core exposes
+
+### To Swift and Kotlin (`hqchat-ffi`, uniffi)
+
+- `Engine::new(config, vault, store)`, `create_identity`, `start`,
+  `unlock`, `lock`, `tick`.
+- User actions: `send_text`, `retry`, `invite`, `accept`, `remove`, `block`,
+  `report`, `set_username`, `delete_account`, `register_push`.
+- Reads: `history`, `friends`, `invites`, `fingerprint`.
+- I/O results: `on_http`, `on_opened`, `on_bytes`, `on_closed`,
+  `on_network_changed`.
+- Effects: `Http`, `Open`, `Write`, `Close`, `Timer`, `NeedUnlock`,
+  `MessageAdded`, `MessageStatus`, `FriendsChanged`, `InvitesChanged`,
+  `PresenceChanged`, `Connection`, `TierChanged`, `Notify`, `ActionFailed`,
+  `AccountDeleted`, `Dropped`.
+- What the app implements: `KeyVault` (`create`, `device_public_key`,
+  `agree`, `tier`) and `Store` (`get`, `put`, `delete`, `list`).
+- Errors: `CoreError` (`NoIdentity`, `NotAFriend`, `NoPrekeys`, `Locked`,
+  `Vault`, `Store`, `State`, `Protocol`).
+
+### To the server (`hqchat-node`, napi)
+
+| Export | Replaces |
 |---|---|
-| `hqcKeypairFromSeed`, `hqcEncaps`, `hqcDecaps` | `protocol/hqc.ts` (koffi) in `auth.ts`, `gateway/keys.ts`, `gateway/decap-worker.ts` |
-| `authProof`, `safeEqual` | `protocol/auth-proof.ts` in `auth.ts` |
-| `parseConnectProof`, `verifyConnectProof`, `isFreshTimestamp` | `protocol/mqtt-proof.ts` in `auth.ts verifyConnect` |
-| `peerId`, `isPeerId`, `conversationTopic`, `handshakeTopic`, … | `protocol/identity.ts`, `topics.ts` in `api.ts`, `emqx.ts` |
-| class `HqnResponder` | `protocol/noise.ts` in `gateway/gateway.ts` |
-| class `Engine` (same API as B1, JS `KeyVault`/`Store`) | `src/client/*` for the bot, `provision-client.ts`, scenarios |
+| `hqcKeypairFromSeed`, `hqcEncapsulate`, `hqcDecapsulate` | `protocol/hqc.ts` (koffi) in `auth.ts`, `gateway/keys.ts`, `gateway/decap-worker.ts` |
+| `authProof`, `authProofMatches` | `protocol/auth-proof.ts`, `safeEqual` in `auth.ts` |
+| `parseConnectProof`, `isFreshTimestamp`, `verifyConnectProof` | `protocol/mqtt-proof.ts` in `auth.ts verifyConnect` |
+| `peerId`, `isPeerId`, `keyMatchesId`, `conversationTopic`, `handshakeTopic` | `protocol/identity.ts`, `topics.ts` in `api.ts`, `emqx.ts` |
+| `HqnGatewayHandshake`, `HqnTransport`, `gatewayPublicKey`, `hqnMsg1Length`, `hqnFrame` | `protocol/noise.ts` in `gateway/gateway.ts`, `gateway/keys.ts` |
+| `Engine` (with a software vault and a directory store) | `src/client/*` for `hqcat-bot`, `provision-client.ts`, the scenarios |
 
-## 3. Building and testing the lib
+## What goes and what stays
 
-Order, each step its own `lib/<feature>` branch (see the branch table in multiplatform.md):
+| Where | Deleted once the core is wired in | Kept |
+|---|---|---|
+| `apps/apple/HQChat/Services/` | `ChatSession` internals, `ConversationRouter`, `RatchetSession`, `DoubleRatchet`, `Handshake`, `ConversationEnvelopeV3`, `ConversationFrame`, `NoiseHQN`, `MQTTWireClient`, `MQTTService`, `MQTTConnectProof`, `MQTTTopics`, `PrekeyService`, `InboundQueue`, `AESService`, `HQCKem`, `HQCService`, `AuthService`, `DirectorySync`, `FriendService` logic, `KeyFingerprint` | an effect loop (`CoreShell`), `TLSPinning`, `PushManager`, `NotificationService`, `Reachability`, a `KeyVault` on the Secure Enclave (from `MessageKeyStore`), a `Store`, the importer, the views |
+| `services/server/src/protocol/` | everything | none |
+| `services/server/src/client/` | `conversation.ts`, `auth.ts`, `transport.ts`, `hqn-stream.ts`, `store.ts` | a thin effect loop over the napi `Engine` (fetch, `net`, `ws`) for the bot |
+| `services/server/src/server/`, `gateway/` | the koffi loader | everything else, calling napi |
+| `native/hqc/` | nothing (the Rust build compiles it) | all |
 
-1. **Workspace + `hqc-sys`/`hqc`.** `build.rs` compiles `native/hqc/src` +
-   the prepared upstream tree (`native/hqc/prepare-source.sh`) with `cc`,
-   same flags as `native/hqc/package.nix`, never `-march=native`. Test: HQC
-   known-answer digests (from `native/hqc/test`).
-2. **`hqchat-protocol`.** Port module by module, each gated by its vector
-   file moved to `core/vectors/`: identity → topics → aead → envelope →
-   handshake → double-ratchet/ratchet → mqtt-proof → noise (+ cacophony) →
-   MQTT 3.1.1 codec (new vectors captured from `MQTTWireClient` tests).
-   RustCrypto crates (`aes-gcm`, `hkdf`, `sha2`, `ed25519-dalek`,
-   `x25519-dalek`, `chacha20poly1305`, `p256`), `zeroize` everywhere.
-3. **Differential fuzz.** cargo-fuzz targets mirroring
-   `services/server/test/fuzz/*-differential.ts` and `apps/apple/fuzz/*`;
-   Rust vs TS run through a tiny napi shim.
-4. **`hqchat-engine`.** Port `conversation.ts` first (it is already the
-   right shape: `receive` sync returning outbound), then sign-in
-   (`auth.ts`), prekey upkeep, friend sync, MQTT session, transport policy,
-   locked queue, sealed history, ECIES-with-vault. Unit tests run against an
-   in-memory `Store`, a software `KeyVault` and a **fake broker** in Rust
-   (two Engines wired together: no network).
-5. **`hqchat-node` and the walking skeleton.** The scenario suite
-   (`messaging.test.ts`, `accounts.test.ts`, `hqn.test.ts`) runs with the
-   napi `Engine` in place of `src/client` against `run-local.sh`. **This is
-   the milestone that proves section 1**: send, burst, offline delivery,
-   ratchet turns, out-of-order, tamper, impostor init, unfriend, reconnect,
-   graph nudge, all through the real lib.
-6. **`hqchat-ffi` + conformance.** Generate Swift/Kotlin; a conformance
-   suite replays the vectors and a two-Engine conversation through Swift
-   (`apps/apple/tests/run.sh`), Kotlin (JVM unit test) and Node.
+## Tests that hold it together
 
-## 4. Wiring into the server and the apps
-
-### 4.1 Server
-- Swap imports listed in B2; delete `src/protocol/*` and koffi; `src/client`
-  becomes a thin TS wrapper doing the effect loop (HTTP via `fetch`, sockets
-  via `net`/`ws`) around the napi `Engine`; the bot keeps its code on top.
-- Nix: `native/hqc/package.nix` → a `core-node` derivation; `HQC_LIB` env
-  goes away.
-- Gate: `scripts/check.sh unit|integration|scenarios`, staging deploy, prod.
-
-### 4.2 Apple (Swift shell)
-- **New**: `CoreShell` actor running the effect loop: `Http` → URLSession
-  with `TLSPinningDelegate`; `Open Tcp` → `NWConnection`; `Open Wss` →
-  `URLSessionWebSocketTask` (pinned); `Timer` → Task sleep; `NeedUnlock` →
-  `MessageKeyGate`; `Notify` → `NotificationService`.
-- **Adapters**: `SecureEnclaveVault: KeyVault` (from `MessageKeyStore`:
-  SE key creation, `SecKeyCopyKeyExchangeResult` with the shared
-  `LAContext`); `FileStore`/SwiftData-backed `Store`.
-- **Views** read `engine.history`/`friends` and react to effects instead of
-  SwiftData `Message`/`Friend` rows.
-- **Deleted after the flag flips**: `ChatSession` internals,
-  `ConversationRouter`, `RatchetSession`, `DoubleRatchet`, `Handshake`,
-  `ConversationEnvelopeV3`, `ConversationFrame`, `NoiseHQN`,
-  `MQTTWireClient`, `MQTTService`, `MQTTConnectProof`, `MQTTTopics`,
-  `PrekeyService`, `InboundQueue`, `AESService`, `HQCKem`, `HQCService`.
-- **Importer** (in core, run once): reads Keychain identity/ratchet items and
-  SwiftData rows via a one-off Swift reader, writes core format, keeps old
-  items until the new ones open. Check first whether core ECIES can open
-  existing `eciesEncryptionCofactorX963SHA256AESGCM` rows as is (then message
-  rows need no rewrite).
-- Gate: `apps/apple/verify.sh` with the flag off and on.
-
-### 4.3 Kotlin shell (Android + desktop, later phases)
-Same effect loop in `apps/kotlin/shared` (coroutines, single-thread
-dispatcher), OkHttp for Http/Wss, sockets for Tcp; `AndroidKeystoreVault`
-(KeyAgreement ECDH, StrongBox→TEE→software tier) and the Rust
-`hqchat-vault-desktop` for Linux/Windows.
+| Layer | Test |
+|---|---|
+| HQC | the shipped known answers (`core/hqc/tests/kem.rs`), and again through Node |
+| Protocol | the shared vector files, read in place from `services/server/test/helpers/` (identity, envelope, handshake, ratchet, CONNECT proof, hqn/1), the published Noise NK vector, RFC 7748, Node's crypto, mqtt.js's encoder; hostile input to every decoder |
+| Engine | two engines through a fake server and broker in Rust: the scenarios of `messaging.test.ts`, the locked queue, crossing inits, hqn/1 blocked, reconnects, history at rest |
+| Bindings | Node: the vectors through the addon and the TS hqn/1 initiator against the Rust gateway; Swift: generated bindings with a CryptoKit `KeyVault` |
+| CI | `scripts/check.sh core` on every pull request |
