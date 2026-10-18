@@ -1,0 +1,200 @@
+//! Bringing another implementation's state into a new profile: the TS
+//! reference client's file (the bot) now, the Apple app's Keychain and
+//! SwiftData (phase 3) later. Everything is checked before anything is
+//! written, and sessions go to the store before the state that names them,
+//! so an import that stops halfway leaves a profile with no identity, which
+//! can be imported again.
+
+use std::collections::{BTreeMap, HashMap};
+
+use hqc::{KeyPair, PublicKey, SecretKey};
+use hqchat_protocol::PeerId;
+use hqchat_protocol::ratchet::SessionState;
+use hqchat_protocol::topics::TopicId;
+use zeroize::Zeroizing;
+
+use crate::core::{Core, Peer, Prekeys, Unlocked};
+use crate::effect::Effect;
+use crate::types::CoreError;
+
+/// The identity being imported.
+pub enum ImportIdentity {
+    /// A 32-byte seed the HQC key pair derives from (the TS client, the bot).
+    Seed([u8; 32]),
+    /// The key pair itself.
+    KeyPair {
+        /// Public key, 7237 bytes.
+        public: Vec<u8>,
+        /// Secret key, 7333 bytes.
+        secret: Zeroizing<Vec<u8>>,
+    },
+}
+
+/// Prekey secrets that published bundles still point at: without them, an
+/// `init` a friend sent before the move cannot be answered.
+pub struct ImportPrekeys {
+    /// The medium-term public key.
+    pub medium_public: Vec<u8>,
+    /// The medium-term secret key.
+    pub medium_secret: Zeroizing<Vec<u8>>,
+    /// When the medium-term key was made, in milliseconds.
+    pub rotated_at: i64,
+    /// One-time secrets not yet consumed, by id.
+    pub one_time: Vec<(u32, Zeroizing<Vec<u8>>)>,
+    /// The id the next one-time key gets.
+    pub next_id: u32,
+}
+
+/// One friend, as the old implementation knew them.
+pub struct ImportPeer {
+    /// Their id.
+    pub id: String,
+    /// Their handle, if known.
+    pub username: Option<String>,
+    /// The conversation topic id.
+    pub convo_id: Option<String>,
+    /// The handshake topic id.
+    pub handshake_id: Option<String>,
+    /// Their identity key, if it was pinned; must hash to `id`.
+    pub pinned_pk: Option<Vec<u8>>,
+    /// The ratchet session with them, if one was open.
+    pub session: Option<SessionState>,
+}
+
+/// Everything an import brings.
+pub struct Import {
+    /// The identity.
+    pub identity: ImportIdentity,
+    /// The prekey secrets, if any were published.
+    pub prekeys: Option<ImportPrekeys>,
+    /// The friends.
+    pub peers: Vec<ImportPeer>,
+}
+
+fn invalid(what: &str) -> CoreError {
+    CoreError::State(format!("import: {what}"))
+}
+
+fn identity_of(identity: ImportIdentity) -> Result<KeyPair, CoreError> {
+    match identity {
+        ImportIdentity::Seed(seed) => Ok(hqc::keypair_from_seed(&hqc::Seed::from_bytes(seed))?),
+        ImportIdentity::KeyPair { public, secret } => Ok(KeyPair {
+            public: PublicKey::from_bytes(&public).map_err(|_| invalid("identity public key"))?,
+            secret: SecretKey::from_bytes(&secret).map_err(|_| invalid("identity secret key"))?,
+        }),
+    }
+}
+
+fn prekeys_of(p: ImportPrekeys, identity_sk: &SecretKey) -> Result<Prekeys, CoreError> {
+    let mut one_time = BTreeMap::new();
+    for (id, sk) in p.one_time {
+        let sk = SecretKey::from_bytes(&sk).map_err(|_| invalid("one-time prekey"))?;
+        one_time.insert(id, sk);
+    }
+    Ok(Prekeys {
+        identity_sk: identity_sk.clone(),
+        medium: KeyPair {
+            public: PublicKey::from_bytes(&p.medium_public)
+                .map_err(|_| invalid("medium-term public key"))?,
+            secret: SecretKey::from_bytes(&p.medium_secret)
+                .map_err(|_| invalid("medium-term secret key"))?,
+        },
+        rotated_at: p.rotated_at,
+        one_time,
+        next_id: p.next_id,
+    })
+}
+
+fn topic(id: Option<String>, what: &str) -> Result<Option<TopicId>, CoreError> {
+    id.map(|t| TopicId::parse(&t).map_err(|_| invalid(what)))
+        .transpose()
+}
+
+fn peer_of(p: ImportPeer) -> Result<(Peer, Option<SessionState>), CoreError> {
+    let id = PeerId::parse(&p.id).map_err(|_| invalid("a peer id"))?;
+    let pinned = match p.pinned_pk {
+        Some(pk) => {
+            let key = PublicKey::from_bytes(&pk).map_err(|_| invalid("a pinned key"))?;
+            // A key that does not hash to the id it is filed under is refused,
+            // never pinned, exactly as when it is fetched.
+            if !id.matches(&key) {
+                return Err(invalid("a pinned key does not hash to its peer's id"));
+            }
+            Some(key)
+        }
+        None => None,
+    };
+    let peer = Peer {
+        id,
+        username: p.username,
+        convo: topic(p.convo_id, "a conversation topic")?,
+        handshake: topic(p.handshake_id, "a handshake topic")?,
+        pinned,
+        online: false,
+        unread: 0,
+    };
+    Ok((peer, p.session))
+}
+
+impl Core {
+    /// Imports `import` into this profile, which must have no identity yet.
+    pub fn import(&mut self, import: Import) -> Result<(), CoreError> {
+        if self.has_identity {
+            return Err(CoreError::State(
+                "this profile already has an identity".into(),
+            ));
+        }
+        let identity = identity_of(import.identity)?;
+        let prekeys = import
+            .prekeys
+            .map(|p| prekeys_of(p, &identity.secret))
+            .transpose()?;
+        let mut peers = BTreeMap::new();
+        let mut sessions = Vec::new();
+        for p in import.peers {
+            let (peer, session) = peer_of(p)?;
+            if let Some(session) = session {
+                sessions.push((peer.id.clone(), session));
+            }
+            peers.insert(peer.id.clone(), peer);
+        }
+
+        let result = self.write_import(identity, prekeys, peers, sessions);
+        if result.is_err() {
+            // Back to a profile with no identity, which can be imported again.
+            self.unlocked = None;
+            self.me = None;
+            self.peers.clear();
+        }
+        result
+    }
+
+    fn write_import(
+        &mut self,
+        identity: KeyPair,
+        prekeys: Option<Prekeys>,
+        peers: BTreeMap<PeerId, Peer>,
+        sessions: Vec<(PeerId, SessionState)>,
+    ) -> Result<(), CoreError> {
+        let tier = self.vault.create()?;
+        let mut data_key = Zeroizing::new([0u8; 32]);
+        getrandom::fill(data_key.as_mut()).map_err(|_| CoreError::State("no entropy".into()))?;
+        self.me = Some(PeerId::of(&identity.public));
+        self.unlocked = Some(Unlocked {
+            identity,
+            data_key,
+            prekeys,
+            sessions: HashMap::new(),
+        });
+        self.peers = peers;
+        for (peer, session) in sessions {
+            self.put_session(&peer, session)?;
+        }
+        // Last: until `state` exists the profile has no identity.
+        self.save_state()?;
+        self.has_identity = true;
+        self.tier = tier;
+        self.emit(Effect::TierChanged(tier));
+        Ok(())
+    }
+}

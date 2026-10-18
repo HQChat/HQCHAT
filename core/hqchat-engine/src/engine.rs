@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::core::Core;
 use crate::effect::{CloseReason, Effect};
+use crate::import::Import;
 use crate::ports::{KeyVault, Store};
 use crate::types::{Config, CoreError, FriendView, Message, NetworkInfo, PushToken, ReportInput};
 
@@ -51,6 +52,12 @@ impl Engine {
     /// Creates the device key and a new HQC identity, sealed at rest.
     pub fn create_identity(&self) -> Result<Vec<Effect>, CoreError> {
         self.run(|c| c.create_identity())
+    }
+
+    /// Brings another implementation's identity, prekeys and sessions into
+    /// this profile, which must have none yet (see [`Import`]).
+    pub fn import(&self, import: Import) -> Result<Vec<Effect>, CoreError> {
+        self.run(|c| c.import(import))
     }
 
     /// Starts working: signs in when unlocked, otherwise asks for an unlock.

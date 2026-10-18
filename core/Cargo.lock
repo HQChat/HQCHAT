@@ -768,12 +768,16 @@ dependencies = [
 name = "hqchat-node"
 version = "0.1.0"
 dependencies = [
+ "base64",
+ "hex",
  "hqc",
  "hqchat-engine",
  "hqchat-protocol",
  "napi",
  "napi-build",
  "napi-derive",
+ "serde_json",
+ "zeroize",
 ]
 
 [[package]]

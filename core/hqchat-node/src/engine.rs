@@ -273,6 +273,15 @@ pub struct JsInvite {
     pub username: String,
 }
 
+/// What `importLegacy` did.
+#[napi(object)]
+pub struct JsImport {
+    /// The effects of the import (the tier).
+    pub effects: Vec<JsEffect>,
+    /// Friends whose session could not be read: imported without one.
+    pub unreadable: Vec<String>,
+}
+
 /// The engine, headless.
 #[napi(js_name = "Engine")]
 pub struct JsEngine {
@@ -315,6 +324,28 @@ impl JsEngine {
     #[napi]
     pub fn create_identity(&self) -> napi::Result<Vec<JsEffect>> {
         self.engine.create_identity().map(all).map_err(err)
+    }
+
+    /// Brings the bot's identity into a profile that has none: the 32-byte
+    /// seed it always derived from, and the TS reference client's state file
+    /// (`stateJson`, null when there was none) with its friends' sessions and
+    /// its prekey secrets.
+    #[napi]
+    pub fn import_legacy(
+        &self,
+        seed: Buffer,
+        state_json: Option<String>,
+    ) -> napi::Result<JsImport> {
+        let seed: [u8; 32] = seed
+            .as_ref()
+            .try_into()
+            .map_err(|_| err("a seed is 32 bytes"))?;
+        let (import, unreadable) =
+            crate::legacy::import_of(seed, state_json.as_deref()).map_err(err)?;
+        Ok(JsImport {
+            effects: all(self.engine.import(import).map_err(err)?),
+            unreadable,
+        })
     }
 
     #[napi]

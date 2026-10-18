@@ -15,6 +15,7 @@ mod directory;
 mod effect;
 mod engine;
 mod http;
+mod import;
 mod net;
 mod persist;
 mod ports;
@@ -24,6 +25,7 @@ mod types;
 pub use directory::safety_number;
 pub use effect::{Action, CloseReason, ConnState, Effect, Endpoint, Method, UnlockReason};
 pub use engine::Engine;
+pub use import::{Import, ImportIdentity, ImportPeer, ImportPrekeys};
 pub use ports::{KeyVault, Store, StoreError, Tier, VaultError};
 pub use types::{
     Config, CoreError, Delivery, Device, FriendView, InviteView, Message, NetworkInfo, PushToken,
