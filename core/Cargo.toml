@@ -14,12 +14,44 @@ publish = false
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
+unsafe_op_in_unsafe_fn = "deny"
 missing_docs = "warn"
+unused_must_use = "deny"
+unused_qualifications = "warn"
 
+# Speed never buys a panic, a silent truncation or a silent overflow: code that
+# reads untrusted bytes uses checked slicing, `try_from` and checked or
+# explicitly wrapping/saturating arithmetic. Tests are exempt where clippy.toml
+# says so; CI turns every warning into an error.
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+todo = "warn"
+unimplemented = "warn"
+unreachable = "warn"
+indexing_slicing = "warn"
+string_slice = "warn"
+get_unwrap = "warn"
+arithmetic_side_effects = "warn"
+as_conversions = "warn"
+cast_possible_truncation = "warn"
+cast_possible_wrap = "warn"
+cast_sign_loss = "warn"
+cast_lossless = "warn"
+mem_forget = "warn"
+undocumented_unsafe_blocks = "warn"
+multiple_unsafe_ops_per_block = "warn"
+dbg_macro = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+exit = "warn"
 
 [profile.release]
+# Integer overflow panics (and becomes an error at the bindings) instead of
+# wrapping, in release as in debug.
+overflow-checks = true
 # Bindings turn a panic into an error; an abort would kill the app with no report.
 panic = "unwind"
 lto = "thin"

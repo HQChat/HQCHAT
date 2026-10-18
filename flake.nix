@@ -82,6 +82,7 @@
               cargo
               clippy
               rustfmt
+              cargo-deny
             ]
             # cc for core/hqc-sys; macOS uses the Xcode toolchain already on PATH.
             ++ lib.optional stdenv.hostPlatform.isLinux gcc
