@@ -50,7 +50,7 @@ fn start_signs_in_with_the_hqc_challenge_and_registers_a_signing_key() {
 fn a_locked_profile_asks_for_an_unlock_then_signs_in() {
     let server = FakeServer::shared();
     let mut c = Client::new(&server, "a");
-    let e = c.engine.create_identity(NOW).unwrap();
+    let e = c.engine.create_identity().unwrap();
     c.pump(e);
     c.engine.lock();
     let e = c.engine.start(NOW, net());

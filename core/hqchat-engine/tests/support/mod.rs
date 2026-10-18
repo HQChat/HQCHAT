@@ -417,7 +417,7 @@ impl Client {
     /// A client with an identity, started and signed in.
     pub fn signed_in(server: &Rc<RefCell<FakeServer>>, profile: &str) -> Client {
         let mut c = Client::new(server, profile);
-        let e = c.engine.create_identity(NOW).unwrap();
+        let e = c.engine.create_identity().unwrap();
         c.pump(e);
         let before: Vec<String> = server.borrow().users.keys().cloned().collect();
         c.start(NOW);

@@ -7,13 +7,6 @@
 //! reaches the hardware key and storage through two synchronous callbacks,
 //! [`KeyVault`] and [`Store`]. No secret key, ratchet state or root key
 //! crosses this API.
-//!
-//! **API surface only**: every body is `todo!()` naming the feature branch
-//! that implements it.
-
-// The bodies are todo!() until each feature branch lands: parameters are
-// named for the reader and private fields are placeholders, not used yet.
-#![allow(unused_variables, dead_code)]
 
 mod auth;
 mod convo;

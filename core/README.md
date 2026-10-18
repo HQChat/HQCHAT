@@ -12,7 +12,7 @@ the flow of one message through it in
 | `hqc-sys` | the HQC-256 C build and its raw FFI; the only crate allowed `unsafe` |
 | `hqc` | the safe HQC-256 KEM |
 | `hqchat-protocol` | the wire protocol: ids, topics, payload encryption, frames, ratchet, handshake, proofs, hqn/1, MQTT |
-| `hqchat-engine` | the client as a sans-IO `Engine`: commands in, `Effect`s out, `KeyVault` and `Store` callbacks (API surface) |
+| `hqchat-engine` | the client as a sans-IO `Engine`: commands in, `Effect`s out, `KeyVault` and `Store` callbacks; sign-in, friends, prekeys, the broker session over hqn/1 or WSS, conversations, state sealed at rest |
 
 Everything runs inside `nix develop`, which provides the toolchain and
 `HQC_SOURCE`, the prepared HQC tree the build compiles:

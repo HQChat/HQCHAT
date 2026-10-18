@@ -16,10 +16,10 @@ fn an_identity_survives_a_restart_and_unlocking_needs_the_vault() {
     let vault = Arc::new(SoftwareVault::default());
     let store = Arc::new(MemoryStore::default());
     let engine = Engine::new(config(), vault.clone(), store.clone()).unwrap();
-    let effects = engine.create_identity(0).unwrap();
+    let effects = engine.create_identity().unwrap();
     assert_eq!(effects, vec![Effect::TierChanged(Tier::Software)]);
     assert!(
-        engine.create_identity(0).is_err(),
+        engine.create_identity().is_err(),
         "one identity per profile"
     );
     assert!(store.snapshot().contains_key("state"));

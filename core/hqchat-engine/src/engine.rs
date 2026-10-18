@@ -49,7 +49,7 @@ impl Engine {
     // ── Lifecycle ────────────────────────────────────────────────────────
 
     /// Creates the device key and a new HQC identity, sealed at rest.
-    pub fn create_identity(&self, now: i64) -> Result<Vec<Effect>, CoreError> {
+    pub fn create_identity(&self) -> Result<Vec<Effect>, CoreError> {
         self.run(|c| c.create_identity())
     }
 
