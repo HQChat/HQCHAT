@@ -103,6 +103,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "hqchat-engine"
+version = "0.1.0"
+dependencies = [
+ "hqchat-protocol",
+]
+
+[[package]]
 name = "hqchat-protocol"
 version = "0.1.0"
 dependencies = [
