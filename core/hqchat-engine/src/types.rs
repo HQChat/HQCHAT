@@ -135,6 +135,12 @@ impl From<StoreError> for CoreError {
     }
 }
 
+impl From<hqc::Error> for CoreError {
+    fn from(e: hqc::Error) -> Self {
+        CoreError::Protocol(e.to_string())
+    }
+}
+
 impl From<hqchat_protocol::Error> for CoreError {
     fn from(e: hqchat_protocol::Error) -> Self {
         CoreError::Protocol(e.to_string())

@@ -9,7 +9,16 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+getrandom = "0.3"
+hex = "0.4"
+hkdf = "0.12"
+hqc = { path = "../hqc" }
 hqchat-protocol = { path = "../hqchat-protocol" }
+p256 = { version = "0.13", features = ["ecdh"] }
+postcard = { version = "1", features = ["use-std"] }
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+zeroize = { version = "1", features = ["derive"] }
 
 [lints]
 workspace = true

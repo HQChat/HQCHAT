@@ -1,7 +1,8 @@
 //! The engine: one per profile.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
+use crate::core::Core;
 use crate::effect::{CloseReason, Effect};
 use crate::ports::{KeyVault, Store};
 use crate::types::{Config, CoreError, FriendView, Message, NetworkInfo, PushToken, ReportInput};
@@ -11,14 +12,8 @@ use crate::types::{Config, CoreError, FriendView, Message, NetworkInfo, PushToke
 /// it in an actor, Kotlin in a single-thread dispatcher). `now` is Unix
 /// milliseconds on the device clock; the engine applies the server offset.
 pub struct Engine {
-    config: Config,
-    vault: Arc<dyn KeyVault>,
-    store: Arc<dyn Store>,
-    state: Mutex<State>,
+    core: Mutex<Core>,
 }
-
-/// Everything the engine holds between calls; loaded from the store.
-struct State {}
 
 impl Engine {
     /// An engine for one profile, loading what the store holds for it.
@@ -27,14 +22,35 @@ impl Engine {
         vault: Arc<dyn KeyVault>,
         store: Arc<dyn Store>,
     ) -> Result<Engine, CoreError> {
-        todo!("lib/engine-at-rest")
+        Ok(Engine {
+            core: Mutex::new(Core::new(config, vault, store)),
+        })
+    }
+
+    /// The core, even after a panic in another call: every call leaves it
+    /// consistent before it can fail.
+    fn core(&self) -> MutexGuard<'_, Core> {
+        self.core
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Runs `f` and returns the effects it emitted, or its error.
+    fn run(
+        &self,
+        f: impl FnOnce(&mut Core) -> Result<(), CoreError>,
+    ) -> Result<Vec<Effect>, CoreError> {
+        let mut core = self.core();
+        let result = f(&mut core);
+        let effects = std::mem::take(&mut core.out);
+        result.map(|()| effects)
     }
 
     // ── Lifecycle ────────────────────────────────────────────────────────
 
     /// Creates the device key and a new HQC identity, sealed at rest.
     pub fn create_identity(&self, now: i64) -> Result<Vec<Effect>, CoreError> {
-        todo!("lib/engine-auth")
+        self.run(|c| c.create_identity())
     }
 
     /// Starts working: signs in when unlocked, otherwise asks for an unlock.
@@ -45,12 +61,17 @@ impl Engine {
     /// The shell authenticated the user: open the secrets, drain what
     /// arrived while locked, finish any send that waited.
     pub fn unlock(&self, now: i64) -> Result<Vec<Effect>, CoreError> {
-        todo!("lib/engine-at-rest")
+        self.run(|c| {
+            c.open_state()?;
+            c.emit(Effect::FriendsChanged);
+            Ok(())
+        })
     }
 
     /// Forget the opened secrets; inbound frames queue as ciphertext.
     pub fn lock(&self) -> Vec<Effect> {
-        todo!("lib/engine-at-rest")
+        self.core().unlocked = None;
+        Vec::new()
     }
 
     /// A timer fired, or the shell resumed: keep-alive, refresh, retries.
@@ -125,12 +146,13 @@ impl Engine {
         before: Option<i64>,
         limit: u32,
     ) -> Result<Vec<Message>, CoreError> {
-        todo!("lib/engine-at-rest")
+        let peer = hqchat_protocol::PeerId::parse(&peer)?;
+        self.core().history(&peer, before, limit)
     }
 
     /// The friends, sorted for display.
     pub fn friends(&self) -> Vec<FriendView> {
-        todo!("lib/engine-prekeys-friends")
+        self.core().friends()
     }
 
     /// The safety number for a friend's pinned key, to compare in person.

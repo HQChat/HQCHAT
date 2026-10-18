@@ -15,9 +15,12 @@
 // named for the reader and private fields are placeholders, not used yet.
 #![allow(unused_variables, dead_code)]
 
+mod core;
 mod effect;
 mod engine;
+mod persist;
 mod ports;
+pub mod software;
 mod types;
 
 pub use effect::{CloseReason, ConnState, Effect, Endpoint, Method, UnlockReason};
