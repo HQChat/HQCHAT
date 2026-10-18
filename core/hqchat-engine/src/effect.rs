@@ -41,6 +41,29 @@ pub enum CloseReason {
     Failed(String),
 }
 
+/// A user action that goes to the server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Action {
+    /// Sign-in or credential refresh.
+    SignIn,
+    /// Claiming a username.
+    SetUsername,
+    /// Sending a friend request.
+    Invite,
+    /// Accepting one.
+    Accept,
+    /// Removing a friend.
+    Remove,
+    /// Blocking a user.
+    Block,
+    /// Filing a report.
+    Report,
+    /// Deleting the account.
+    DeleteAccount,
+    /// Registering for push.
+    RegisterPush,
+}
+
 /// Why the engine needs the user to unlock.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnlockReason {
@@ -77,8 +100,8 @@ pub enum Effect {
         method: Method,
         /// Path on the home server, e.g. `/auth/init`.
         path: String,
-        /// Attach the session bearer.
-        bearer: bool,
+        /// The session bearer token to send as `Authorization: Bearer …`.
+        authorization: Option<String>,
         /// JSON body, empty for GET.
         body: Vec<u8>,
     },
@@ -138,6 +161,17 @@ pub enum Effect {
         /// The friend's id.
         peer: String,
     },
+    /// A user action the server refused or could not be reached for.
+    ActionFailed {
+        /// Which action.
+        action: Action,
+        /// The HTTP status; 0 when the server could not be reached.
+        status: u16,
+        /// The server's `error` code, empty when it gave none.
+        code: String,
+    },
+    /// The account is deleted on the server and this profile's data is gone.
+    AccountDeleted,
     /// An inbound frame was dropped, for the protocol log.
     Dropped {
         /// Why, as the TS and Swift clients word it.

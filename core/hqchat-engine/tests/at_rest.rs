@@ -3,13 +3,12 @@
 use std::sync::Arc;
 
 use hqchat_engine::software::{MemoryStore, SoftwareVault};
-use hqchat_engine::{Config, CoreError, Effect, Engine, Tier, VaultError};
+use hqchat_engine::{CoreError, Effect, Engine, Tier, VaultError};
 
-fn config() -> Config {
-    Config {
-        server_url: "https://hqchat.test".into(),
-        profile_id: "p1".into(),
-    }
+mod support;
+
+fn config() -> hqchat_engine::Config {
+    support::config("p1")
 }
 
 #[test]

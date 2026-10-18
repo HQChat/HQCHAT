@@ -72,6 +72,12 @@ pub(crate) struct Core {
     pub unlocked: Option<Unlocked>,
     pub peers: BTreeMap<PeerId, Peer>,
     pub next_pending: u64,
+    pub auth: crate::auth::Auth,
+    pub http_next: u64,
+    pub http_pending: HashMap<u64, crate::http::Pending>,
+    /// `start` was called: sign in and connect whenever possible.
+    pub started: bool,
+    pub network: Option<crate::types::NetworkInfo>,
     /// Effects of the call in progress, in order.
     pub out: Vec<Effect>,
 }
@@ -91,6 +97,11 @@ impl Core {
             unlocked: None,
             peers: BTreeMap::new(),
             next_pending: 0,
+            auth: Default::default(),
+            http_next: 0,
+            http_pending: HashMap::new(),
+            started: false,
+            network: None,
             out: Vec::new(),
         }
     }

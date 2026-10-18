@@ -9,6 +9,25 @@ pub struct Config {
     pub server_url: String,
     /// The local profile this engine belongs to; namespaces its store keys.
     pub profile_id: String,
+    /// What the engine runs on: names the push platform.
+    pub device: Device,
+}
+
+/// The kind of device, as the server's push registration names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Device {
+    /// iPhone and iPad.
+    Ios,
+    /// macOS.
+    Macos,
+    /// Android.
+    Android,
+    /// A Linux desktop.
+    Linux,
+    /// A Windows desktop.
+    Windows,
+    /// A process with no UI (the bot, tests).
+    Headless,
 }
 
 /// The network the device is on, for the transport choice (hqn/1 blocked on

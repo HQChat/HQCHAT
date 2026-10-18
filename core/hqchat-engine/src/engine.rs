@@ -55,7 +55,15 @@ impl Engine {
 
     /// Starts working: signs in when unlocked, otherwise asks for an unlock.
     pub fn start(&self, now: i64, network: NetworkInfo) -> Vec<Effect> {
-        todo!("lib/engine-auth")
+        self.run(|c| {
+            c.started = true;
+            c.network = Some(network);
+            if c.has_identity {
+                c.ensure_signed_in(now);
+            }
+            Ok(())
+        })
+        .unwrap_or_default()
     }
 
     /// The shell authenticated the user: open the secrets, drain what
@@ -64,6 +72,9 @@ impl Engine {
         self.run(|c| {
             c.open_state()?;
             c.emit(Effect::FriendsChanged);
+            if c.started {
+                c.ensure_signed_in(now);
+            }
             Ok(())
         })
     }
@@ -124,17 +135,29 @@ impl Engine {
 
     /// Claims a username.
     pub fn set_username(&self, username: String) -> Vec<Effect> {
-        todo!("lib/engine-auth")
+        self.run(|c| {
+            c.set_username(&username);
+            Ok(())
+        })
+        .unwrap_or_default()
     }
 
     /// Deletes the account on the server, then this profile's data.
     pub fn delete_account(&self) -> Vec<Effect> {
-        todo!("lib/engine-auth")
+        self.run(|c| {
+            c.delete_account();
+            Ok(())
+        })
+        .unwrap_or_default()
     }
 
     /// Registers this device for push wake-ups.
     pub fn register_push(&self, token: PushToken) -> Vec<Effect> {
-        todo!("lib/engine-auth")
+        self.run(|c| {
+            c.register_push(&token);
+            Ok(())
+        })
+        .unwrap_or_default()
     }
 
     // ── Reads for the UI ─────────────────────────────────────────────────
@@ -164,7 +187,11 @@ impl Engine {
 
     /// The answer to an [`Effect::Http`].
     pub fn on_http(&self, req: u64, status: u16, body: Vec<u8>, now: i64) -> Vec<Effect> {
-        todo!("lib/engine-auth")
+        self.run(|c| {
+            c.on_http(req, status, &body, now);
+            Ok(())
+        })
+        .unwrap_or_default()
     }
 
     /// A connection from [`Effect::Open`] is up.

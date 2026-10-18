@@ -15,19 +15,21 @@
 // named for the reader and private fields are placeholders, not used yet.
 #![allow(unused_variables, dead_code)]
 
+mod auth;
 mod core;
 mod effect;
 mod engine;
+mod http;
 mod persist;
 mod ports;
 pub mod software;
 mod types;
 
-pub use effect::{CloseReason, ConnState, Effect, Endpoint, Method, UnlockReason};
+pub use effect::{Action, CloseReason, ConnState, Effect, Endpoint, Method, UnlockReason};
 pub use engine::Engine;
 pub use ports::{KeyVault, Store, StoreError, Tier, VaultError};
 pub use types::{
-    Config, CoreError, Delivery, FriendView, Message, NetworkInfo, PushToken, ReportInput,
+    Config, CoreError, Delivery, Device, FriendView, Message, NetworkInfo, PushToken, ReportInput,
 };
 
 /// The version of this API; shells check it at startup against the bindings

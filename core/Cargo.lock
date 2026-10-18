@@ -459,6 +459,7 @@ dependencies = [
 name = "hqchat-engine"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "getrandom 0.3.4",
  "hex",
  "hkdf",
@@ -467,6 +468,7 @@ dependencies = [
  "p256",
  "postcard",
  "serde",
+ "serde_json",
  "sha2",
  "zeroize",
 ]
