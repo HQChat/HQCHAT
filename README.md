@@ -40,6 +40,7 @@ server sees the graph, topic names, sizes and timing, never plaintext.
 | `apps/apple/` | Xcode project: macOS and iOS targets over shared Swift sources, test slices, `verify.sh` |
 | `apps/site/` | Cloudflare Worker: the website, the crypto write-up, legal pages, the donate page |
 | `services/server/` | the server, the hqn/1 gateway, the reference TypeScript client and the helper bot built on it |
+| `core/` | the Rust core: HQC, the protocol, the client engine, and its bindings for Node, Swift and Kotlin (not wired into the apps or the server yet; see [multiplatform](docs/architecture/multiplatform.md)) |
 | `native/hqc/` | the HQC-256 wrapper (C), built from a pinned upstream commit for Linux and Apple |
 | `infra/environments/` | one JSON file per environment: domain, region, sizes, non-secret configuration |
 | `infra/terraform/` | one environment from nothing: network, droplets, database, firewalls, DNS, the Worker |
