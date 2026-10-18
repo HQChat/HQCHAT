@@ -56,3 +56,9 @@ overflow-checks = true
 panic = "unwind"
 lto = "thin"
 codegen-units = 1
+
+[profile.release.build-override]
+# Build scripts and proc-macros run on the build machine and never ship.
+# Stripping them breaks the build on macOS: the Nix shell's `strip` corrupts
+# proc-macro dylibs, and rustc then cannot load zeroize_derive.
+strip = "none"
