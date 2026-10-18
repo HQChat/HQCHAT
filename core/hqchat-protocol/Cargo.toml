@@ -1,0 +1,17 @@
+[package]
+name = "hqchat-protocol"
+description = "What two HQChat clients and the server say to each other: frames, ratchet, handshake, proofs, hqn/1, MQTT"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+hqc = { path = "../hqc" }
+getrandom = "0.3"
+zeroize = { version = "1", features = ["derive"] }
+
+[lints]
+workspace = true
