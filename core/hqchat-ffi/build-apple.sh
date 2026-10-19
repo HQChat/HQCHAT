@@ -19,7 +19,6 @@ set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
 core="$(cd "$here/.." && pwd)"
-root="$(cd "$core/.." && pwd)"
 : "${HQC_SOURCE:?HQC_SOURCE is not set: run inside nix develop .#apple}"
 
 export IPHONEOS_DEPLOYMENT_TARGET=18.5

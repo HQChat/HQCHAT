@@ -526,6 +526,18 @@ pub enum Effect {
     },
 }
 
+impl From<Delivery> for core::Delivery {
+    fn from(d: Delivery) -> Self {
+        match d {
+            Delivery::Sending => core::Delivery::Sending,
+            Delivery::Queued => core::Delivery::Queued,
+            Delivery::Sent => core::Delivery::Sent,
+            Delivery::Delivered => core::Delivery::Delivered,
+            Delivery::Failed => core::Delivery::Failed,
+        }
+    }
+}
+
 fn delivery(d: core::Delivery) -> Delivery {
     match d {
         core::Delivery::Sending => Delivery::Sending,

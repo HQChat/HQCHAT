@@ -373,6 +373,11 @@ RustBuffer uniffi_hqchat_ffi_fn_method_engine_friends(uint64_t ptr, RustCallStat
 RustBuffer uniffi_hqchat_ffi_fn_method_engine_history(uint64_t ptr, RustBuffer peer, RustBuffer before, uint32_t limit, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_IMPORT_STATE
+#define UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_IMPORT_STATE
+RustBuffer uniffi_hqchat_ffi_fn_method_engine_import_state(uint64_t ptr, RustBuffer data, int64_t now, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_INVITE
 #define UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_INVITE
 RustBuffer uniffi_hqchat_ffi_fn_method_engine_invite(uint64_t ptr, RustBuffer username, RustCallStatus *_Nonnull out_status
@@ -839,6 +844,12 @@ uint16_t uniffi_hqchat_ffi_checksum_method_engine_friends(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_CHECKSUM_METHOD_ENGINE_HISTORY
 #define UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_CHECKSUM_METHOD_ENGINE_HISTORY
 uint16_t uniffi_hqchat_ffi_checksum_method_engine_history(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_CHECKSUM_METHOD_ENGINE_IMPORT_STATE
+#define UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_CHECKSUM_METHOD_ENGINE_IMPORT_STATE
+uint16_t uniffi_hqchat_ffi_checksum_method_engine_import_state(void
     
 );
 #endif

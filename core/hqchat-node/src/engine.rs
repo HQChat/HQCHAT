@@ -339,6 +339,7 @@ impl JsEngine {
         &self,
         seed: Buffer,
         state_json: Option<String>,
+        now: i64,
     ) -> napi::Result<JsImport> {
         let seed: [u8; 32] = seed
             .as_ref()
@@ -347,7 +348,7 @@ impl JsEngine {
         let (import, unreadable) =
             crate::legacy::import_of(seed, state_json.as_deref()).map_err(err)?;
         Ok(JsImport {
-            effects: all(self.engine.import(import).map_err(err)?),
+            effects: all(self.engine.import(import, now).map_err(err)?),
             unreadable,
         })
     }

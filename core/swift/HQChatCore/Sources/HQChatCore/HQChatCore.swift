@@ -665,6 +665,13 @@ public protocol EngineProtocol: AnyObject, Sendable {
     func history(peer: String, before: Int64?, limit: UInt32) throws  -> [Message]
     
     /**
+     * Brings another implementation's identity, prekeys, friends, sessions,
+     * history and unopened frames into this profile, which must have no
+     * identity yet; then opens those frames. All or nothing.
+     */
+    func importState(data: ImportData, now: Int64) throws  -> [Effect]
+    
+    /**
      * Sends a friend request.
      */
     func invite(username: String)  -> [Effect]
@@ -907,6 +914,22 @@ open func history(peer: String, before: Int64?, limit: UInt32)throws  -> [Messag
         FfiConverterString.lower(peer),
         FfiConverterOptionInt64.lower(before),
         FfiConverterUInt32.lower(limit),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Brings another implementation's identity, prekeys, friends, sessions,
+     * history and unopened frames into this profile, which must have no
+     * identity yet; then opens those frames. All or nothing.
+     */
+open func importState(data: ImportData, now: Int64)throws  -> [Effect]  {
+    return try  FfiConverterSequenceTypeEffect.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_hqchat_ffi_fn_method_engine_import_state(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeImportData_lower(data),
+        FfiConverterInt64.lower(now),uniffiCallStatus
     )
 })
 }
@@ -2040,6 +2063,1006 @@ public func FfiConverterTypeFriendView_lift(_ buf: RustBuffer) throws -> FriendV
 #endif
 public func FfiConverterTypeFriendView_lower(_ value: FriendView) -> RustBuffer {
     return FfiConverterTypeFriendView.lower(value)
+}
+
+
+/**
+ * A chain key and the index it is at.
+ */
+public struct ImportChain: Equatable, Hashable {
+    /**
+     * The chain key (32 bytes).
+     */
+    public var key: Data
+    /**
+     * The next index.
+     */
+    public var n: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The chain key (32 bytes).
+         */key: Data, 
+        /**
+         * The next index.
+         */n: UInt32) {
+        self.key = key
+        self.n = n
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ImportChain: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeImportChain: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ImportChain {
+        return
+            try ImportChain(
+                key: FfiConverterData.read(from: &buf), 
+                n: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ImportChain, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.key, into: &buf)
+        FfiConverterUInt32.write(value.n, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImportChain_lift(_ buf: RustBuffer) throws -> ImportChain {
+    return try FfiConverterTypeImportChain.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImportChain_lower(_ value: ImportChain) -> RustBuffer {
+    return FfiConverterTypeImportChain.lower(value)
+}
+
+
+/**
+ * Everything an import brings.
+ */
+public struct ImportData: Equatable, Hashable {
+    /**
+     * The identity's HQC public key (7237 bytes).
+     */
+    public var identityPublicKey: Data
+    /**
+     * The identity's HQC secret key (7333 bytes).
+     */
+    public var identitySecretKey: Data
+    /**
+     * The prekey secrets the published bundle points at, if any.
+     */
+    public var prekeys: ImportPrekeysData?
+    /**
+     * The friends.
+     */
+    public var peers: [ImportPeerData]
+    /**
+     * The message history.
+     */
+    public var messages: [ImportMessageData]
+    /**
+     * Frames that arrived while locked and were never opened.
+     */
+    public var pending: [ImportPendingData]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The identity's HQC public key (7237 bytes).
+         */identityPublicKey: Data, 
+        /**
+         * The identity's HQC secret key (7333 bytes).
+         */identitySecretKey: Data, 
+        /**
+         * The prekey secrets the published bundle points at, if any.
+         */prekeys: ImportPrekeysData?, 
+        /**
+         * The friends.
+         */peers: [ImportPeerData], 
+        /**
+         * The message history.
+         */messages: [ImportMessageData], 
+        /**
+         * Frames that arrived while locked and were never opened.
+         */pending: [ImportPendingData]) {
+        self.identityPublicKey = identityPublicKey
+        self.identitySecretKey = identitySecretKey
+        self.prekeys = prekeys
+        self.peers = peers
+        self.messages = messages
+        self.pending = pending
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ImportData: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeImportData: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ImportData {
+        return
+            try ImportData(
+                identityPublicKey: FfiConverterData.read(from: &buf), 
+                identitySecretKey: FfiConverterData.read(from: &buf), 
+                prekeys: FfiConverterOptionTypeImportPrekeysData.read(from: &buf), 
+                peers: FfiConverterSequenceTypeImportPeerData.read(from: &buf), 
+                messages: FfiConverterSequenceTypeImportMessageData.read(from: &buf), 
+                pending: FfiConverterSequenceTypeImportPendingData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ImportData, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.identityPublicKey, into: &buf)
+        FfiConverterData.write(value.identitySecretKey, into: &buf)
+        FfiConverterOptionTypeImportPrekeysData.write(value.prekeys, into: &buf)
+        FfiConverterSequenceTypeImportPeerData.write(value.peers, into: &buf)
+        FfiConverterSequenceTypeImportMessageData.write(value.messages, into: &buf)
+        FfiConverterSequenceTypeImportPendingData.write(value.pending, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImportData_lift(_ buf: RustBuffer) throws -> ImportData {
+    return try FfiConverterTypeImportData.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImportData_lower(_ value: ImportData) -> RustBuffer {
+    return FfiConverterTypeImportData.lower(value)
+}
+
+
+/**
+ * An init header.
+ */
+public struct ImportInit: Equatable, Hashable {
+    /**
+     * Encapsulated to the responder's identity key.
+     */
+    public var ctId: Data
+    /**
+     * Encapsulated to the responder's medium-term prekey.
+     */
+    public var ctMt: Data
+    /**
+     * Encapsulated to a one-time prekey, with `one_time_id`.
+     */
+    public var ctOt: Data?
+    /**
+     * Which one-time prekey.
+     */
+    public var oneTimeId: UInt32?
+    /**
+     * The initiator's first ratchet public key.
+     */
+    public var ratchetPublicKey: Data
+    /**
+     * Its chain id (16 bytes).
+     */
+    public var chain: Data
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Encapsulated to the responder's identity key.
+         */ctId: Data, 
+        /**
+         * Encapsulated to the responder's medium-term prekey.
+         */ctMt: Data, 
+        /**
+         * Encapsulated to a one-time prekey, with `one_time_id`.
+         */ctOt: Data?, 
+        /**
+         * Which one-time prekey.
+         */oneTimeId: UInt32?, 
+        /**
+         * The initiator's first ratchet public key.
+         */ratchetPublicKey: Data, 
+        /**
+         * Its chain id (16 bytes).
+         */chain: Data) {
+        self.ctId = ctId
+        self.ctMt = ctMt
+        self.ctOt = ctOt
+        self.oneTimeId = oneTimeId
+        self.ratchetPublicKey = ratchetPublicKey
+        self.chain = chain
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ImportInit: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeImportInit: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ImportInit {
+        return
+            try ImportInit(
+                ctId: FfiConverterData.read(from: &buf), 
+                ctMt: FfiConverterData.read(from: &buf), 
+                ctOt: FfiConverterOptionData.read(from: &buf), 
+                oneTimeId: FfiConverterOptionUInt32.read(from: &buf), 
+                ratchetPublicKey: FfiConverterData.read(from: &buf), 
+                chain: FfiConverterData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ImportInit, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.ctId, into: &buf)
+        FfiConverterData.write(value.ctMt, into: &buf)
+        FfiConverterOptionData.write(value.ctOt, into: &buf)
+        FfiConverterOptionUInt32.write(value.oneTimeId, into: &buf)
+        FfiConverterData.write(value.ratchetPublicKey, into: &buf)
+        FfiConverterData.write(value.chain, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImportInit_lift(_ buf: RustBuffer) throws -> ImportInit {
+    return try FfiConverterTypeImportInit.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImportInit_lower(_ value: ImportInit) -> RustBuffer {
+    return FfiConverterTypeImportInit.lower(value)
+}
+
+
+/**
+ * One message of the history.
+ */
+public struct ImportMessageData: Equatable, Hashable {
+    /**
+     * The friend.
+     */
+    public var peer: String
+    /**
+     * The message id.
+     */
+    public var msgId: String
+    /**
+     * Sent by this profile.
+     */
+    public var outgoing: Bool
+    /**
+     * The text.
+     */
+    public var text: String
+    /**
+     * When, in milliseconds.
+     */
+    public var at: Int64
+    /**
+     * Where an outgoing message had got to.
+     */
+    public var delivery: Delivery?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The friend.
+         */peer: String, 
+        /**
+         * The message id.
+         */msgId: String, 
+        /**
+         * Sent by this profile.
+         */outgoing: Bool, 
+        /**
+         * The text.
+         */text: String, 
+        /**
+         * When, in milliseconds.
+         */at: Int64, 
+        /**
+         * Where an outgoing message had got to.
+         */delivery: Delivery?) {
+        self.peer = peer
+        self.msgId = msgId
+        self.outgoing = outgoing
+        self.text = text
+        self.at = at
+        self.delivery = delivery
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ImportMessageData: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeImportMessageData: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ImportMessageData {
+        return
+            try ImportMessageData(
+                peer: FfiConverterString.read(from: &buf), 
+                msgId: FfiConverterString.read(from: &buf), 
+                outgoing: FfiConverterBool.read(from: &buf), 
+                text: FfiConverterString.read(from: &buf), 
+                at: FfiConverterInt64.read(from: &buf), 
+                delivery: FfiConverterOptionTypeDelivery.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ImportMessageData, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.peer, into: &buf)
+        FfiConverterString.write(value.msgId, into: &buf)
+        FfiConverterBool.write(value.outgoing, into: &buf)
+        FfiConverterString.write(value.text, into: &buf)
+        FfiConverterInt64.write(value.at, into: &buf)
+        FfiConverterOptionTypeDelivery.write(value.delivery, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImportMessageData_lift(_ buf: RustBuffer) throws -> ImportMessageData {
+    return try FfiConverterTypeImportMessageData.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImportMessageData_lower(_ value: ImportMessageData) -> RustBuffer {
+    return FfiConverterTypeImportMessageData.lower(value)
+}
+
+
+/**
+ * One one-time prekey secret.
+ */
+public struct ImportOneTimeKey: Equatable, Hashable {
+    /**
+     * Its id.
+     */
+    public var id: UInt32
+    /**
+     * The HQC secret key.
+     */
+    public var secretKey: Data
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Its id.
+         */id: UInt32, 
+        /**
+         * The HQC secret key.
+         */secretKey: Data) {
+        self.id = id
+        self.secretKey = secretKey
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ImportOneTimeKey: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeImportOneTimeKey: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ImportOneTimeKey {
+        return
+            try ImportOneTimeKey(
+                id: FfiConverterUInt32.read(from: &buf), 
+                secretKey: FfiConverterData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ImportOneTimeKey, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.id, into: &buf)
+        FfiConverterData.write(value.secretKey, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImportOneTimeKey_lift(_ buf: RustBuffer) throws -> ImportOneTimeKey {
+    return try FfiConverterTypeImportOneTimeKey.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImportOneTimeKey_lower(_ value: ImportOneTimeKey) -> RustBuffer {
+    return FfiConverterTypeImportOneTimeKey.lower(value)
+}
+
+
+/**
+ * One friend.
+ */
+public struct ImportPeerData: Equatable, Hashable {
+    /**
+     * Their id (64 lowercase hex).
+     */
+    public var id: String
+    /**
+     * Their handle.
+     */
+    public var username: String?
+    /**
+     * The conversation topic id.
+     */
+    public var convoId: String?
+    /**
+     * The handshake topic id.
+     */
+    public var handshakeId: String?
+    /**
+     * Their identity key, when pinned; must hash to `id`.
+     */
+    public var pinnedPublicKey: Data?
+    /**
+     * The ratchet session with them.
+     */
+    public var session: ImportSessionData?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Their id (64 lowercase hex).
+         */id: String, 
+        /**
+         * Their handle.
+         */username: String?, 
+        /**
+         * The conversation topic id.
+         */convoId: String?, 
+        /**
+         * The handshake topic id.
+         */handshakeId: String?, 
+        /**
+         * Their identity key, when pinned; must hash to `id`.
+         */pinnedPublicKey: Data?, 
+        /**
+         * The ratchet session with them.
+         */session: ImportSessionData?) {
+        self.id = id
+        self.username = username
+        self.convoId = convoId
+        self.handshakeId = handshakeId
+        self.pinnedPublicKey = pinnedPublicKey
+        self.session = session
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ImportPeerData: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeImportPeerData: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ImportPeerData {
+        return
+            try ImportPeerData(
+                id: FfiConverterString.read(from: &buf), 
+                username: FfiConverterOptionString.read(from: &buf), 
+                convoId: FfiConverterOptionString.read(from: &buf), 
+                handshakeId: FfiConverterOptionString.read(from: &buf), 
+                pinnedPublicKey: FfiConverterOptionData.read(from: &buf), 
+                session: FfiConverterOptionTypeImportSessionData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ImportPeerData, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterOptionString.write(value.username, into: &buf)
+        FfiConverterOptionString.write(value.convoId, into: &buf)
+        FfiConverterOptionString.write(value.handshakeId, into: &buf)
+        FfiConverterOptionData.write(value.pinnedPublicKey, into: &buf)
+        FfiConverterOptionTypeImportSessionData.write(value.session, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImportPeerData_lift(_ buf: RustBuffer) throws -> ImportPeerData {
+    return try FfiConverterTypeImportPeerData.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImportPeerData_lower(_ value: ImportPeerData) -> RustBuffer {
+    return FfiConverterTypeImportPeerData.lower(value)
+}
+
+
+/**
+ * A frame still waiting for an unlock.
+ */
+public struct ImportPendingData: Equatable, Hashable {
+    /**
+     * The topic it arrived on.
+     */
+    public var topic: String
+    /**
+     * The frame as it arrived.
+     */
+    public var payload: Data
+    /**
+     * When it arrived, in milliseconds.
+     */
+    public var at: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The topic it arrived on.
+         */topic: String, 
+        /**
+         * The frame as it arrived.
+         */payload: Data, 
+        /**
+         * When it arrived, in milliseconds.
+         */at: Int64) {
+        self.topic = topic
+        self.payload = payload
+        self.at = at
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ImportPendingData: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeImportPendingData: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ImportPendingData {
+        return
+            try ImportPendingData(
+                topic: FfiConverterString.read(from: &buf), 
+                payload: FfiConverterData.read(from: &buf), 
+                at: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ImportPendingData, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.topic, into: &buf)
+        FfiConverterData.write(value.payload, into: &buf)
+        FfiConverterInt64.write(value.at, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImportPendingData_lift(_ buf: RustBuffer) throws -> ImportPendingData {
+    return try FfiConverterTypeImportPendingData.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImportPendingData_lower(_ value: ImportPendingData) -> RustBuffer {
+    return FfiConverterTypeImportPendingData.lower(value)
+}
+
+
+/**
+ * The prekey secrets.
+ */
+public struct ImportPrekeysData: Equatable, Hashable {
+    /**
+     * The medium-term HQC public key.
+     */
+    public var mediumPublicKey: Data
+    /**
+     * The medium-term HQC secret key.
+     */
+    public var mediumSecretKey: Data
+    /**
+     * When the medium-term key was made, in milliseconds.
+     */
+    public var rotatedAt: Int64
+    /**
+     * One-time secrets not yet consumed.
+     */
+    public var oneTime: [ImportOneTimeKey]
+    /**
+     * The id the next one-time key gets.
+     */
+    public var nextId: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The medium-term HQC public key.
+         */mediumPublicKey: Data, 
+        /**
+         * The medium-term HQC secret key.
+         */mediumSecretKey: Data, 
+        /**
+         * When the medium-term key was made, in milliseconds.
+         */rotatedAt: Int64, 
+        /**
+         * One-time secrets not yet consumed.
+         */oneTime: [ImportOneTimeKey], 
+        /**
+         * The id the next one-time key gets.
+         */nextId: UInt32) {
+        self.mediumPublicKey = mediumPublicKey
+        self.mediumSecretKey = mediumSecretKey
+        self.rotatedAt = rotatedAt
+        self.oneTime = oneTime
+        self.nextId = nextId
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ImportPrekeysData: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeImportPrekeysData: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ImportPrekeysData {
+        return
+            try ImportPrekeysData(
+                mediumPublicKey: FfiConverterData.read(from: &buf), 
+                mediumSecretKey: FfiConverterData.read(from: &buf), 
+                rotatedAt: FfiConverterInt64.read(from: &buf), 
+                oneTime: FfiConverterSequenceTypeImportOneTimeKey.read(from: &buf), 
+                nextId: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ImportPrekeysData, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.mediumPublicKey, into: &buf)
+        FfiConverterData.write(value.mediumSecretKey, into: &buf)
+        FfiConverterInt64.write(value.rotatedAt, into: &buf)
+        FfiConverterSequenceTypeImportOneTimeKey.write(value.oneTime, into: &buf)
+        FfiConverterUInt32.write(value.nextId, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImportPrekeysData_lift(_ buf: RustBuffer) throws -> ImportPrekeysData {
+    return try FfiConverterTypeImportPrekeysData.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImportPrekeysData_lower(_ value: ImportPrekeysData) -> RustBuffer {
+    return FfiConverterTypeImportPrekeysData.lower(value)
+}
+
+
+/**
+ * A ratchet session, field for field (`RatchetSessionState` in Swift).
+ */
+public struct ImportSessionData: Equatable, Hashable {
+    /**
+     * The root key (32 bytes).
+     */
+    public var root: Data
+    /**
+     * My ratchet HQC public key.
+     */
+    public var ratchetPublicKey: Data
+    /**
+     * My ratchet HQC secret key.
+     */
+    public var ratchetSecretKey: Data
+    /**
+     * The peer's advertised ratchet key, once heard.
+     */
+    public var peerRatchetPublicKey: Data?
+    /**
+     * The sending chain.
+     */
+    public var send: ImportChain?
+    /**
+     * The receiving chain.
+     */
+    public var recv: ImportChain?
+    /**
+     * Length of the previous sending chain.
+     */
+    public var previousSendCount: UInt32
+    /**
+     * Keys for messages that have not arrived yet, oldest first.
+     */
+    public var skipped: [ImportSkippedKey]
+    /**
+     * The init header, repeated until the peer answers.
+     */
+    public var pendingInit: ImportInit?
+    /**
+     * Chains already stepped into (16 bytes each), newest last.
+     */
+    public var seenChains: [Data]
+    /**
+     * Messages sent on the current sending chain.
+     */
+    public var sentOnChain: UInt32
+    /**
+     * When the current sending chain started, in milliseconds.
+     */
+    public var chainStartedAt: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The root key (32 bytes).
+         */root: Data, 
+        /**
+         * My ratchet HQC public key.
+         */ratchetPublicKey: Data, 
+        /**
+         * My ratchet HQC secret key.
+         */ratchetSecretKey: Data, 
+        /**
+         * The peer's advertised ratchet key, once heard.
+         */peerRatchetPublicKey: Data?, 
+        /**
+         * The sending chain.
+         */send: ImportChain?, 
+        /**
+         * The receiving chain.
+         */recv: ImportChain?, 
+        /**
+         * Length of the previous sending chain.
+         */previousSendCount: UInt32, 
+        /**
+         * Keys for messages that have not arrived yet, oldest first.
+         */skipped: [ImportSkippedKey], 
+        /**
+         * The init header, repeated until the peer answers.
+         */pendingInit: ImportInit?, 
+        /**
+         * Chains already stepped into (16 bytes each), newest last.
+         */seenChains: [Data], 
+        /**
+         * Messages sent on the current sending chain.
+         */sentOnChain: UInt32, 
+        /**
+         * When the current sending chain started, in milliseconds.
+         */chainStartedAt: Int64) {
+        self.root = root
+        self.ratchetPublicKey = ratchetPublicKey
+        self.ratchetSecretKey = ratchetSecretKey
+        self.peerRatchetPublicKey = peerRatchetPublicKey
+        self.send = send
+        self.recv = recv
+        self.previousSendCount = previousSendCount
+        self.skipped = skipped
+        self.pendingInit = pendingInit
+        self.seenChains = seenChains
+        self.sentOnChain = sentOnChain
+        self.chainStartedAt = chainStartedAt
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ImportSessionData: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeImportSessionData: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ImportSessionData {
+        return
+            try ImportSessionData(
+                root: FfiConverterData.read(from: &buf), 
+                ratchetPublicKey: FfiConverterData.read(from: &buf), 
+                ratchetSecretKey: FfiConverterData.read(from: &buf), 
+                peerRatchetPublicKey: FfiConverterOptionData.read(from: &buf), 
+                send: FfiConverterOptionTypeImportChain.read(from: &buf), 
+                recv: FfiConverterOptionTypeImportChain.read(from: &buf), 
+                previousSendCount: FfiConverterUInt32.read(from: &buf), 
+                skipped: FfiConverterSequenceTypeImportSkippedKey.read(from: &buf), 
+                pendingInit: FfiConverterOptionTypeImportInit.read(from: &buf), 
+                seenChains: FfiConverterSequenceData.read(from: &buf), 
+                sentOnChain: FfiConverterUInt32.read(from: &buf), 
+                chainStartedAt: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ImportSessionData, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.root, into: &buf)
+        FfiConverterData.write(value.ratchetPublicKey, into: &buf)
+        FfiConverterData.write(value.ratchetSecretKey, into: &buf)
+        FfiConverterOptionData.write(value.peerRatchetPublicKey, into: &buf)
+        FfiConverterOptionTypeImportChain.write(value.send, into: &buf)
+        FfiConverterOptionTypeImportChain.write(value.recv, into: &buf)
+        FfiConverterUInt32.write(value.previousSendCount, into: &buf)
+        FfiConverterSequenceTypeImportSkippedKey.write(value.skipped, into: &buf)
+        FfiConverterOptionTypeImportInit.write(value.pendingInit, into: &buf)
+        FfiConverterSequenceData.write(value.seenChains, into: &buf)
+        FfiConverterUInt32.write(value.sentOnChain, into: &buf)
+        FfiConverterInt64.write(value.chainStartedAt, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImportSessionData_lift(_ buf: RustBuffer) throws -> ImportSessionData {
+    return try FfiConverterTypeImportSessionData.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImportSessionData_lower(_ value: ImportSessionData) -> RustBuffer {
+    return FfiConverterTypeImportSessionData.lower(value)
+}
+
+
+/**
+ * A skipped message key.
+ */
+public struct ImportSkippedKey: Equatable, Hashable {
+    /**
+     * The chain id (16 bytes).
+     */
+    public var chain: Data
+    /**
+     * The index.
+     */
+    public var n: UInt32
+    /**
+     * The message key (32 bytes).
+     */
+    public var key: Data
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The chain id (16 bytes).
+         */chain: Data, 
+        /**
+         * The index.
+         */n: UInt32, 
+        /**
+         * The message key (32 bytes).
+         */key: Data) {
+        self.chain = chain
+        self.n = n
+        self.key = key
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ImportSkippedKey: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeImportSkippedKey: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ImportSkippedKey {
+        return
+            try ImportSkippedKey(
+                chain: FfiConverterData.read(from: &buf), 
+                n: FfiConverterUInt32.read(from: &buf), 
+                key: FfiConverterData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ImportSkippedKey, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.chain, into: &buf)
+        FfiConverterUInt32.write(value.n, into: &buf)
+        FfiConverterData.write(value.key, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImportSkippedKey_lift(_ buf: RustBuffer) throws -> ImportSkippedKey {
+    return try FfiConverterTypeImportSkippedKey.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImportSkippedKey_lower(_ value: ImportSkippedKey) -> RustBuffer {
+    return FfiConverterTypeImportSkippedKey.lower(value)
 }
 
 
@@ -4104,6 +5127,30 @@ public func FfiConverterTypeVaultError_lower(_ value: VaultError) -> RustBuffer 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionUInt32: FfiConverterRustBuffer {
+    typealias SwiftType = UInt32?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterUInt32.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterUInt32.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionInt64: FfiConverterRustBuffer {
     typealias SwiftType = Int64?
 
@@ -4176,6 +5223,102 @@ fileprivate struct FfiConverterOptionData: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeImportChain: FfiConverterRustBuffer {
+    typealias SwiftType = ImportChain?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeImportChain.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeImportChain.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeImportInit: FfiConverterRustBuffer {
+    typealias SwiftType = ImportInit?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeImportInit.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeImportInit.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeImportPrekeysData: FfiConverterRustBuffer {
+    typealias SwiftType = ImportPrekeysData?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeImportPrekeysData.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeImportPrekeysData.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeImportSessionData: FfiConverterRustBuffer {
+    typealias SwiftType = ImportSessionData?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeImportSessionData.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeImportSessionData.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeDelivery: FfiConverterRustBuffer {
     typealias SwiftType = Delivery?
 
@@ -4225,6 +5368,31 @@ fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceData: FfiConverterRustBuffer {
+    typealias SwiftType = [Data]
+
+    public static func write(_ value: [Data], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterData.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [Data] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [Data]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterData.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeFriendView: FfiConverterRustBuffer {
     typealias SwiftType = [FriendView]
 
@@ -4242,6 +5410,131 @@ fileprivate struct FfiConverterSequenceTypeFriendView: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeFriendView.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeImportMessageData: FfiConverterRustBuffer {
+    typealias SwiftType = [ImportMessageData]
+
+    public static func write(_ value: [ImportMessageData], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeImportMessageData.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ImportMessageData] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ImportMessageData]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeImportMessageData.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeImportOneTimeKey: FfiConverterRustBuffer {
+    typealias SwiftType = [ImportOneTimeKey]
+
+    public static func write(_ value: [ImportOneTimeKey], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeImportOneTimeKey.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ImportOneTimeKey] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ImportOneTimeKey]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeImportOneTimeKey.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeImportPeerData: FfiConverterRustBuffer {
+    typealias SwiftType = [ImportPeerData]
+
+    public static func write(_ value: [ImportPeerData], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeImportPeerData.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ImportPeerData] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ImportPeerData]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeImportPeerData.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeImportPendingData: FfiConverterRustBuffer {
+    typealias SwiftType = [ImportPendingData]
+
+    public static func write(_ value: [ImportPendingData], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeImportPendingData.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ImportPendingData] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ImportPendingData]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeImportPendingData.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeImportSkippedKey: FfiConverterRustBuffer {
+    typealias SwiftType = [ImportSkippedKey]
+
+    public static func write(_ value: [ImportSkippedKey], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeImportSkippedKey.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ImportSkippedKey] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ImportSkippedKey]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeImportSkippedKey.read(from: &buf))
         }
         return seq
     }
@@ -4369,6 +5662,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_hqchat_ffi_checksum_method_engine_history() != 17660) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_hqchat_ffi_checksum_method_engine_import_state() != 61852) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_hqchat_ffi_checksum_method_engine_invite() != 21862) {

@@ -56,8 +56,8 @@ impl Engine {
 
     /// Brings another implementation's identity, prekeys and sessions into
     /// this profile, which must have none yet (see [`Import`]).
-    pub fn import(&self, import: Import) -> Result<Vec<Effect>, CoreError> {
-        self.run(|c| c.import(import))
+    pub fn import(&self, import: Import, now: i64) -> Result<Vec<Effect>, CoreError> {
+        self.run(|c| c.import(import, now))
     }
 
     /// Starts working: signs in when unlocked, otherwise asks for an unlock.

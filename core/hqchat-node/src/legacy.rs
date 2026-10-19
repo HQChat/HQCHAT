@@ -19,6 +19,8 @@ pub fn import_of(seed: [u8; 32], json: Option<&str>) -> Result<(Import, Vec<Stri
         identity: ImportIdentity::Seed(seed),
         prekeys: None,
         peers: vec![],
+        messages: vec![],
+        pending: vec![],
     };
     let Some(json) = json else {
         return Ok((import, vec![]));

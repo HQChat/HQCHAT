@@ -11,7 +11,13 @@ use std::sync::Arc;
 
 use hqchat_engine as core;
 
+mod import;
 mod types;
+
+pub use import::{
+    ImportChain, ImportData, ImportInit, ImportMessageData, ImportOneTimeKey, ImportPeerData,
+    ImportPendingData, ImportPrekeysData, ImportSessionData, ImportSkippedKey,
+};
 
 pub use types::*;
 
@@ -118,6 +124,12 @@ impl Engine {
     /// Creates the device key and a new identity.
     pub fn create_identity(&self) -> Result<Vec<Effect>, CoreError> {
         Ok(effects(self.inner.create_identity()?))
+    }
+    /// Brings another implementation's identity, prekeys, friends, sessions,
+    /// history and unopened frames into this profile, which must have no
+    /// identity yet; then opens those frames. All or nothing.
+    pub fn import_state(&self, data: ImportData, now: i64) -> Result<Vec<Effect>, CoreError> {
+        Ok(effects(self.inner.import(data.try_into()?, now)?))
     }
     /// Starts (and resumes): signs in, connects, re-reads what changed.
     pub fn start(&self, now: i64, network: NetworkInfo) -> Vec<Effect> {

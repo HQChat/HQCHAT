@@ -538,22 +538,9 @@ impl Core {
             Ok((f, _)) if f.header.kind != Kind::Receipt => Some(f.header.sender),
             _ => None,
         };
-        self.convo.pending_seq = self.convo.pending_seq.wrapping_add(1);
-        let slot = persist::pending_slot(now, self.convo.pending_seq);
-        let record = StoredPending {
-            format: persist::FORMAT,
-            topic: topic.to_owned(),
-            payload,
-        };
-        let sealed = persist::encode(&record).and_then(|plain| {
-            persist::seal_device(&self.vault.device_public_key()?, &slot, &plain)
-        });
-        match sealed {
-            Ok(blob) => {
-                if let Err(e) = self.store.put(slot, blob) {
-                    self.storage_failed("a frame for the unlock", &e.into());
-                }
-            }
+        match self.store_pending(topic, payload, now) {
+            Ok(()) => {}
+            Err(e @ CoreError::Store(_)) => self.storage_failed("a frame for the unlock", &e),
             Err(e) => {
                 return self.drop_frame(format!("could not keep a frame for the unlock: {e:?}"));
             }
@@ -566,6 +553,27 @@ impl Core {
                 peer: sender.to_string(),
             });
         }
+    }
+
+    /// Writes a frame, sealed to the device key, for `drain_pending` to open:
+    /// what arrived while locked, or what an import brought.
+    pub(crate) fn store_pending(
+        &mut self,
+        topic: &str,
+        payload: Vec<u8>,
+        at: i64,
+    ) -> Result<(), CoreError> {
+        self.convo.pending_seq = self.convo.pending_seq.wrapping_add(1);
+        let slot = persist::pending_slot(at, self.convo.pending_seq);
+        let record = StoredPending {
+            format: persist::FORMAT,
+            topic: topic.to_owned(),
+            payload,
+        };
+        let plain = persist::encode(&record)?;
+        let blob = persist::seal_device(&self.vault.device_public_key()?, &slot, &plain)?;
+        self.store.put(slot, blob)?;
+        Ok(())
     }
 
     /// Opens, in arrival order, the frames that came while locked.

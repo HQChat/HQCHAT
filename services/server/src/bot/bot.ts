@@ -91,7 +91,7 @@ export function openBot(
   fs.rmSync(coreDir, { recursive: true, force: true });
   const client = new CoreClient({ ...opts, profileId: "bot", dir: coreDir });
   const legacy = [path.join(dir, "state.json"), path.join(dir, "state.json.imported")].find((f) => fs.existsSync(f));
-  const imported = client.engine.importLegacy(seed, legacy ? fs.readFileSync(legacy, "utf8") : null);
+  const imported = client.engine.importLegacy(seed, legacy ? fs.readFileSync(legacy, "utf8") : null, Date.now());
   for (const id of imported.unreadable) {
     logger.warn(`[bot] the session with ${id.slice(0, 12)}… could not be read; the next message opens a new one`);
   }

@@ -159,7 +159,7 @@ export interface Engine {
   readonly deviceKey: Buffer | null;
   createIdentity(): CoreEffect[];
   /** The bot's seed and the TS reference client's state file, into a profile with no identity. */
-  importLegacy(seed: Buffer, stateJson: string | null): CoreImport;
+  importLegacy(seed: Buffer, stateJson: string | null, now: number): CoreImport;
   start(now: number, network: string): CoreEffect[];
   unlock(now: number): CoreEffect[];
   lock(): CoreEffect[];
