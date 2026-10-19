@@ -190,6 +190,10 @@ fn js(effect: Effect) -> JsEffect {
         },
         Effect::FriendsChanged => k("friendsChanged"),
         Effect::InvitesChanged => k("invitesChanged"),
+        Effect::ActionDone { action } => JsEffect {
+            action: Some(camel(action)),
+            ..k("actionDone")
+        },
         Effect::PresenceChanged { peer, online } => JsEffect {
             peer: Some(peer),
             online: Some(online),
@@ -263,8 +267,25 @@ pub struct JsFriend {
     pub online: bool,
     /// A session is open.
     pub has_session: bool,
-    /// Unread while locked.
+    /// Unread, including those waiting for an unlock.
     pub unread: u32,
+    /// When this user blocked them (Unix milliseconds).
+    pub blocked_at: Option<i64>,
+    /// When their identity was replaced under the same username.
+    pub vanished_at: Option<i64>,
+    /// Their identity key is pinned.
+    pub has_key: bool,
+    /// The safety number was compared.
+    pub verified: bool,
+}
+
+/// A friend request sent and not answered yet.
+#[napi(object)]
+pub struct JsSentInvite {
+    /// The username or id, as typed.
+    pub to: String,
+    /// When, in Unix milliseconds.
+    pub at: i64,
 }
 
 /// A friend request waiting for an answer.
@@ -339,6 +360,7 @@ impl JsEngine {
         &self,
         seed: Buffer,
         state_json: Option<String>,
+        now: i64,
     ) -> napi::Result<JsImport> {
         let seed: [u8; 32] = seed
             .as_ref()
@@ -347,7 +369,7 @@ impl JsEngine {
         let (import, unreadable) =
             crate::legacy::import_of(seed, state_json.as_deref()).map_err(err)?;
         Ok(JsImport {
-            effects: all(self.engine.import(import).map_err(err)?),
+            effects: all(self.engine.import(import, now).map_err(err)?),
             unreadable,
         })
     }
@@ -403,17 +425,71 @@ impl JsEngine {
     }
 
     #[napi]
+    pub fn set_presence(&self, online: bool, now: i64) -> Vec<JsEffect> {
+        all(self.engine.set_presence(online, now))
+    }
+
+    #[napi]
+    pub fn my_id(&self) -> Option<String> {
+        self.engine.my_id()
+    }
+
+    #[napi]
+    pub fn cancel(&self, peer: String) -> Vec<JsEffect> {
+        all(self.engine.cancel(peer))
+    }
+
+    #[napi]
+    pub fn set_verified(&self, peer: String, verified: bool) -> napi::Result<Vec<JsEffect>> {
+        self.engine
+            .set_verified(peer, verified)
+            .map(all)
+            .map_err(err)
+    }
+
+    #[napi]
+    pub fn sent_invites(&self) -> Vec<JsSentInvite> {
+        self.engine
+            .sent_invites()
+            .into_iter()
+            .map(|s| JsSentInvite { to: s.to, at: s.at })
+            .collect()
+    }
+
+    #[napi]
+    pub fn unblock(&self, peer: String) -> Vec<JsEffect> {
+        all(self.engine.unblock(peer))
+    }
+
+    #[napi]
+    pub fn forget(&self, peer: String) -> napi::Result<Vec<JsEffect>> {
+        self.engine.forget(peer).map(all).map_err(err)
+    }
+
+    #[napi]
+    pub fn rotate_keys(&self, peer: String) -> napi::Result<Vec<JsEffect>> {
+        self.engine.rotate_keys(peer).map(all).map_err(err)
+    }
+
+    #[napi]
+    pub fn mark_read(&self, peer: String) -> napi::Result<Vec<JsEffect>> {
+        self.engine.mark_read(peer).map(all).map_err(err)
+    }
+
+    #[napi]
     pub fn report(
         &self,
         peer: String,
         reason: String,
         msg_ids: Vec<String>,
         block: bool,
+        note: Option<String>,
     ) -> Vec<JsEffect> {
         all(self.engine.report(ReportInput {
             peer,
             reason,
             msg_ids,
+            note,
             block,
         }))
     }
@@ -463,6 +539,10 @@ impl JsEngine {
                 online: f.online,
                 has_session: f.has_session,
                 unread: f.unread,
+                blocked_at: f.blocked_at,
+                vanished_at: f.vanished_at,
+                has_key: f.has_key,
+                verified: f.verified,
             })
             .collect()
     }

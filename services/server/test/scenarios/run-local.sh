@@ -154,7 +154,7 @@ npm run --silent test:scenarios || {
 }
 
 if [ "$(uname)" = "Darwin" ] && command -v xcrun >/dev/null; then
-  step "Swift client over hqn/1 and WSS"
+  step "The app's store over hqn/1 and WSS"
   bash "$ROOT/apps/apple/e2e/hqn-live/run.sh"
 fi
 

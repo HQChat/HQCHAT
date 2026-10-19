@@ -1,6 +1,6 @@
 /**
  * Differential fuzzing of the v3 ENCODERS: `encodeFrame` (TypeScript) against
- * `ConversationEnvelopeV3.encoded()` (Swift), from identical structs.
+ * the Rust core's frame encoder, from identical structs.
  *
  * WHY A THIRD HARNESS. The decode driver proved the two PARSERS agree on the
  * same bytes. It said nothing about the encoders, and the encoders did not
@@ -30,9 +30,6 @@
  * Run against the Rust core (the default; scripts/check.sh core does this):
  *   cd core && cargo build --release -p hqchat-verdict
  *   cd services/server && npx tsx test/fuzz/envelope-v3-encode-differential.ts --iterations 20000
- * or against the Swift app, on a Mac:
- *   cd apps/apple/fuzz && ./run.sh envelope-v3-encode-verdict
- *   cd services/server && npx tsx test/fuzz/envelope-v3-encode-differential.ts --iterations 20000 --oracle swift
  */
 
 import { execFileSync } from "node:child_process";
@@ -184,7 +181,7 @@ function tsVerdict(w: Wire): string {
   return frame === null ? "R" : `A ${frame.toString("hex")}`;
 }
 
-function swiftVerdicts(batch: Wire[], batchFile: string): string[] {
+function oracleVerdicts(batch: Wire[], batchFile: string): string[] {
   fs.writeFileSync(batchFile, batch.map((w) => JSON.stringify(w)).join("\n"));
   const out = execFileSync(ORACLE.command, [...ORACLE.args, batchFile], { maxBuffer: 1 << 28 }).toString("utf8");
   const lines = out.split("\n");
@@ -202,7 +199,7 @@ function main() {
   const seed = num("--seed", 1);
   const batchSize = num("--batch", 2000);
 
-  ORACLE = oracle("envelope-v3-encode-verdict", "envelope-v3-encode");
+  ORACLE = oracle("envelope-v3-encode");
 
   const rng = makeRng(seed);
   const bases = [goodMsg, goodStep, goodInit, goodReceipt];
@@ -223,13 +220,13 @@ function main() {
     }
 
     const ts = batch.map(tsVerdict);
-    const swift = swiftVerdicts(batch, batchFile);
-    if (swift.length !== batch.length) {
-      console.error(`✗ the ${ORACLE.name} half returned ${swift.length} verdicts for ${batch.length} structs`);
+    const theirs = oracleVerdicts(batch, batchFile);
+    if (theirs.length !== batch.length) {
+      console.error(`✗ the ${ORACLE.name} half returned ${theirs.length} verdicts for ${batch.length} structs`);
       process.exit(1);
     }
     for (let i = 0; i < batch.length; i++) {
-      if (ts[i] === swift[i] && ts[i]![0] !== "T") continue;
+      if (ts[i] === theirs[i] && ts[i]![0] !== "T") continue;
       mismatches++;
       fs.mkdirSync(FINDINGS, { recursive: true });
       const file = path.join(FINDINGS, `v3-encode-mismatch-${seed}-${done + i}.json`);
@@ -237,7 +234,7 @@ function main() {
       if (mismatches <= 10) {
         console.log(`\n✗ MISMATCH at iteration ${done + i}`);
         console.log(`  ts:    ${ts[i]!.slice(0, 120)}`);
-        console.log(`  ${ORACLE.name.padEnd(5)}: ${swift[i]!.slice(0, 120)}`);
+        console.log(`  ${ORACLE.name.padEnd(5)}: ${theirs[i]!.slice(0, 120)}`);
         console.log(`  input: ${file}`);
       }
     }

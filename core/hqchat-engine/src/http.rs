@@ -20,8 +20,28 @@ pub(crate) enum Pending {
     Action(Action),
     /// A friendship action: on success, re-read the directory.
     ThenSync(Action),
-    Friends,
-    Invites,
+    /// A friend request to `to`: kept as sent once the server takes it.
+    Invite(String),
+    /// Withdrawing (or declining) the request with `peer`.
+    Cancel(String),
+    /// A report; on success the reported friend is blocked when asked
+    /// (a block ends the membership the server checks a report against).
+    Report {
+        block: Option<hqchat_protocol::PeerId>,
+    },
+    /// A friend's key, fetched to pin it.
+    PinKey(hqchat_protocol::PeerId),
+    /// The directory, read in this order: the block list, invites, then
+    /// friends. Removals are applied only when the first two were read: a
+    /// blocked friend is absent from `/friends` by construction, and a new
+    /// identity under an old username often arrives as an invite.
+    Blocked,
+    Invites {
+        can_remove: bool,
+    },
+    Friends {
+        can_remove: bool,
+    },
     PrekeyCount,
     Transport,
     PeerKey(hqchat_protocol::PeerId),
@@ -96,14 +116,21 @@ impl Core {
             Pending::AuthVerify { signing } => self.on_auth_verify(answer, signing, now),
             Pending::AuthRefresh { signing } => self.on_auth_refresh(answer, signing, now),
             Pending::Action(action) => {
-                if !answer.ok() {
+                if answer.ok() {
+                    self.emit(Effect::ActionDone { action });
+                } else {
                     self.fail(action, &answer);
                 }
             }
+            Pending::Invite(to) => self.on_invite_sent(to, answer, now),
+            Pending::Cancel(peer) => self.on_cancelled(&peer, answer),
+            Pending::PinKey(peer) => self.on_pin_key(peer, answer),
+            Pending::Report { block } => self.on_reported(block, answer),
             Pending::DeleteAccount => self.on_account_deleted(answer),
             Pending::ThenSync(action) => self.on_then_sync(action, answer),
-            Pending::Friends => self.on_friends(answer),
-            Pending::Invites => self.on_invites(answer),
+            Pending::Blocked => self.on_blocked(answer, now),
+            Pending::Invites { can_remove } => self.on_invites(answer, can_remove),
+            Pending::Friends { can_remove } => self.on_friends(answer, can_remove, now),
             Pending::PrekeyCount => self.on_prekey_count(answer, now),
             Pending::Transport => self.on_transport(answer, now),
             Pending::PeerKey(peer) => self.on_peer_key(peer, answer, now),

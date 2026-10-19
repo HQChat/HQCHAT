@@ -44,19 +44,6 @@ enum Deployment {
     /// Overridable per build with the Info.plist array `ServerPinnedSPKIHashes`.
     static let pinnedSPKIHashes: [String] = []
 
-    /// The default server's hqn/1 gateway: host, port and its pinned static public
-    /// keys. Empty means the build relies on `GET /auth/transport` discovery, and
-    /// connects over WSS when nothing is discovered. Fill from
-    /// `services/server/scripts/noise-gw-keys.ts --public` (current and next key id).
-    static let hqnHost: String? = nil
-    static let hqnPort: UInt16 = 443
-    static let hqnKeys: [NoiseHQN.ServerKeys] = []
-
-    static func hqnEndpoint(forHost host: String) -> HQNEndpoint? {
-        guard host == serverHost, let h = hqnHost, !hqnKeys.isEmpty else { return nil }
-        return HQNEndpoint(host: h, port: hqnPort, keys: hqnKeys)
-    }
-
     /// Sentry DSN for the app's project. Send-only, so it ships in the bundle
     /// ("" turns reporting off). Overridable per build with Info.plist
     /// `SENTRY_DSN`. The Deploy workflow warns when it is empty.

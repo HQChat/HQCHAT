@@ -11,7 +11,13 @@ use std::sync::Arc;
 
 use hqchat_engine as core;
 
+mod import;
 mod types;
+
+pub use import::{
+    ImportChain, ImportData, ImportInit, ImportMessageData, ImportOneTimeKey, ImportPeerData,
+    ImportPendingData, ImportPrekeysData, ImportSentData, ImportSessionData, ImportSkippedKey,
+};
 
 pub use types::*;
 
@@ -119,6 +125,12 @@ impl Engine {
     pub fn create_identity(&self) -> Result<Vec<Effect>, CoreError> {
         Ok(effects(self.inner.create_identity()?))
     }
+    /// Brings another implementation's identity, prekeys, friends, sessions,
+    /// history and unopened frames into this profile, which must have no
+    /// identity yet; then opens those frames. All or nothing.
+    pub fn import_state(&self, data: ImportData, now: i64) -> Result<Vec<Effect>, CoreError> {
+        Ok(effects(self.inner.import(data.try_into()?, now)?))
+    }
     /// Starts (and resumes): signs in, connects, re-reads what changed.
     pub fn start(&self, now: i64, network: NetworkInfo) -> Vec<Effect> {
         effects(self.inner.start(now, network.into()))
@@ -164,6 +176,22 @@ impl Engine {
     pub fn block(&self, peer: String) -> Vec<Effect> {
         effects(self.inner.block(peer))
     }
+    /// Lifts a block; the friendship is not restored.
+    pub fn unblock(&self, peer: String) -> Vec<Effect> {
+        effects(self.inner.unblock(peer))
+    }
+    /// Forgets a vanished identity and its conversation, on this device.
+    pub fn forget(&self, peer: String) -> Result<Vec<Effect>, CoreError> {
+        Ok(effects(self.inner.forget(peer)?))
+    }
+    /// Steps the ratchet with `peer` on the next message sent.
+    pub fn rotate_keys(&self, peer: String) -> Result<Vec<Effect>, CoreError> {
+        Ok(effects(self.inner.rotate_keys(peer)?))
+    }
+    /// Marks the conversation with `peer` read.
+    pub fn mark_read(&self, peer: String) -> Result<Vec<Effect>, CoreError> {
+        Ok(effects(self.inner.mark_read(peer)?))
+    }
     /// Reports a friend's messages.
     pub fn report(&self, report: ReportInput) -> Vec<Effect> {
         effects(self.inner.report(report.into()))
@@ -197,6 +225,30 @@ impl Engine {
     /// The friends, sorted for display.
     pub fn friends(&self) -> Vec<FriendView> {
         self.inner.friends().into_iter().map(Into::into).collect()
+    }
+    /// Announces presence: offline on going to the background, online back.
+    pub fn set_presence(&self, online: bool, now: i64) -> Vec<Effect> {
+        effects(self.inner.set_presence(online, now))
+    }
+    /// This profile's client id, once unlocked.
+    pub fn my_id(&self) -> Option<String> {
+        self.inner.my_id()
+    }
+    /// Friend requests sent and not answered yet.
+    pub fn sent_invites(&self) -> Vec<SentInviteView> {
+        self.inner
+            .sent_invites()
+            .into_iter()
+            .map(Into::into)
+            .collect()
+    }
+    /// Withdraws a request sent, or declines one received.
+    pub fn cancel(&self, peer: String) -> Vec<Effect> {
+        effects(self.inner.cancel(peer))
+    }
+    /// Records whether the safety number was compared with `peer`.
+    pub fn set_verified(&self, peer: String, verified: bool) -> Result<Vec<Effect>, CoreError> {
+        Ok(effects(self.inner.set_verified(peer, verified)?))
     }
     /// Friend requests waiting for an answer.
     pub fn invites(&self) -> Vec<InviteView> {

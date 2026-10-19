@@ -759,9 +759,12 @@ dependencies = [
 name = "hqchat-ffi"
 version = "0.1.0"
 dependencies = [
+ "hqc",
  "hqchat-engine",
+ "hqchat-protocol",
  "thiserror",
  "uniffi",
+ "zeroize",
 ]
 
 [[package]]

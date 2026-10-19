@@ -111,6 +111,7 @@ export interface CoreEffect {
     | "messageStatus"
     | "friendsChanged"
     | "invitesChanged"
+    | "actionDone"
     | "presenceChanged"
     | "connection"
     | "tierChanged"
@@ -147,6 +148,17 @@ export interface CoreFriend {
   online: boolean;
   hasSession: boolean;
   unread: number;
+  /** Unix ms; a blocked friend is kept, read-only. */
+  blockedAt?: number;
+  /** Unix ms; their username now belongs to another identity. */
+  vanishedAt?: number;
+  hasKey: boolean;
+  verified: boolean;
+}
+
+export interface CoreSentInvite {
+  to: string;
+  at: number;
 }
 
 export interface CoreInvite {
@@ -159,7 +171,7 @@ export interface Engine {
   readonly deviceKey: Buffer | null;
   createIdentity(): CoreEffect[];
   /** The bot's seed and the TS reference client's state file, into a profile with no identity. */
-  importLegacy(seed: Buffer, stateJson: string | null): CoreImport;
+  importLegacy(seed: Buffer, stateJson: string | null, now: number): CoreImport;
   start(now: number, network: string): CoreEffect[];
   unlock(now: number): CoreEffect[];
   lock(): CoreEffect[];
@@ -170,7 +182,16 @@ export interface Engine {
   accept(peer: string): CoreEffect[];
   remove(peer: string): CoreEffect[];
   block(peer: string): CoreEffect[];
-  report(peer: string, reason: string, msgIds: string[], block: boolean): CoreEffect[];
+  unblock(peer: string): CoreEffect[];
+  cancel(peer: string): CoreEffect[];
+  setPresence(online: boolean, now: number): CoreEffect[];
+  myId(): string | null;
+  setVerified(peer: string, verified: boolean): CoreEffect[];
+  sentInvites(): CoreSentInvite[];
+  forget(peer: string): CoreEffect[];
+  markRead(peer: string): CoreEffect[];
+  rotateKeys(peer: string): CoreEffect[];
+  report(peer: string, reason: string, msgIds: string[], block: boolean, note?: string | null): CoreEffect[];
   setUsername(username: string): CoreEffect[];
   deleteAccount(): CoreEffect[];
   registerApns(token: string, sandbox: boolean): CoreEffect[];

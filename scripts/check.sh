@@ -38,17 +38,6 @@ finish() {
   return 1
 }
 
-# The committed Apple builds of HQC name the source they came from (a Nix store
-# path or git:<commit>:…); both carry the pinned commit's short id.
-apple_hqc_pinned() {
-  local pin
-  pin="$(sed -n 's/^PINNED_COMMIT=//p' "$root/native/hqc/HQC_UPSTREAM.txt")"
-  grep -q "${pin:0:7}" "$root/native/hqc/dist/apple/.source" || {
-    echo "native/hqc/dist/apple was not built from ${pin:0:7}: run native/hqc/build-apple.sh and commit it"
-    return 1
-  }
-}
-
 lint() {
   local shell_files
   mapfile -t shell_files < <(git -C "$root" ls-files '*.sh')
@@ -65,7 +54,6 @@ lint() {
   run "nixfmt" bash -c "cd '$root' && git ls-files '*.nix' | xargs nixfmt --check"
   run "statix" statix check "$root"
   run "deadnix" deadnix --fail "$root"
-  run "apple hqc build" apple_hqc_pinned
   run "names" "$root/scripts/lint-text.sh" names
   run "comments" "$root/scripts/lint-text.sh" comments
   finish

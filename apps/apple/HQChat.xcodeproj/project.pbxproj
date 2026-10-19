@@ -9,9 +9,10 @@
 /* Begin PBXBuildFile section */
 		5E27A00000000000000004 /* Sentry in Frameworks */ = {isa = PBXBuildFile; productRef = 5E27A00000000000000002 /* Sentry */; };
 		5E27A00000000000000005 /* Sentry in Frameworks */ = {isa = PBXBuildFile; productRef = 5E27A00000000000000003 /* Sentry */; };
-		D96B8E742EF6F4380063D07E /* libhqc_wrap.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = D96B8E732EF6F4380063D07E /* libhqc_wrap.dylib */; };
-		D96B8E762EF6F47B0063D07E /* libhqc_wrap.dylib in CopyFiles */ = {isa = PBXBuildFile; fileRef = D96B8E732EF6F4380063D07E /* libhqc_wrap.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
-		D9C0DE000000000000000002 /* HQC.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = D9C0DE000000000000000001 /* HQC.xcframework */; };
+		C0EE00000000000000000004 /* HQChatCore in Frameworks */ = {isa = PBXBuildFile; productRef = C0EE00000000000000000002 /* HQChatCore */; };
+		C0EE00000000000000000005 /* HQChatCore in Frameworks */ = {isa = PBXBuildFile; productRef = C0EE00000000000000000003 /* HQChatCore */; };
+		C0EE00000000000000000009 /* CoreShell in Frameworks */ = {isa = PBXBuildFile; productRef = C0EE00000000000000000007 /* CoreShell */; };
+		C0EE0000000000000000000A /* CoreShell in Frameworks */ = {isa = PBXBuildFile; productRef = C0EE00000000000000000008 /* CoreShell */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -24,24 +25,9 @@
 		};
 /* End PBXContainerItemProxy section */
 
-/* Begin PBXCopyFilesBuildPhase section */
-		D96B8E752EF6F4640063D07E /* CopyFiles */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = "";
-			dstSubfolderSpec = 10;
-			files = (
-				D96B8E762EF6F47B0063D07E /* libhqc_wrap.dylib in CopyFiles */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXCopyFilesBuildPhase section */
-
 /* Begin PBXFileReference section */
 		D96B8E5E2EF6EB4D0063D07E /* HQChat.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = HQChat.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		D96B8E732EF6F4380063D07E /* libhqc_wrap.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; path = libhqc_wrap.dylib; sourceTree = "<group>"; };
 		D96CE2E22FDC9750004125B6 /* HQChat iOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "HQChat iOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
-		D9C0DE000000000000000001 /* HQC.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = HQC.xcframework; path = ../../native/hqc/dist/apple/HQC.xcframework; sourceTree = "<group>"; };
 		DDE2E0000000000000000002 /* HQChatUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HQChatUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -68,49 +54,30 @@
 				Helpers/Redaction.swift,
 				Helpers/StatusPresentation.swift,
 				Helpers/UsernameRule.swift,
+				Migration/CoreImport.swift,
+				Migration/CoreMigration.swift,
+				Migration/LegacyFriend.swift,
+				Migration/LegacyKeychain.swift,
+				Migration/LegacyMessage.swift,
+				Migration/LegacyPendingFrame.swift,
 				Models/AppError.swift,
-				Models/Friend.swift,
-				Models/Message.swift,
-				Models/PendingFrame.swift,
+				Models/ChatMessage.swift,
+				Models/Contact.swift,
 				Models/MessageTypes.swift,
 				Models/Profile.swift,
 				Persistence.swift,
-				Services/AESKeyStore.swift,
-				Services/AESService.swift,
-				Services/APIClient.swift,
-				Services/AuthService.swift,
 				Services/BiometricAudit.swift,
 				Services/BiometricCoordinator.swift,
-				Services/ChatSession.swift,
-				Services/ConversationEnvelopeV3.swift,
-				Services/ConversationFrame.swift,
-				Services/ConversationRouter.swift,
+				Services/ChatStore.swift,
 				Services/DataResetService.swift,
 				Services/DeviceAuthCapability.swift,
-				Services/DirectorySync.swift,
-				Services/DoubleRatchet.swift,
-				Services/FriendService.swift,
-				Services/Handshake.swift,
-				Services/HQCKem.swift,
-				Services/HQCService.swift,
-				Services/InboundQueue.swift,
-				Services/KeyFingerprint.swift,
 				Services/MessageKeyStore.swift,
-				Services/MQTTConnectProof.swift,
-				Services/MQTTService.swift,
-				Services/MQTTTopics.swift,
-				Services/MQTTTransport.swift,
-				Services/MQTTWireClient.swift,
-				Services/NoiseHQN.swift,
 				Services/NotificationService.swift,
-				Services/PeerID.swift,
-				Services/PrekeyService.swift,
 				Services/ProfileManager.swift,
 				Services/PushManager.swift,
-				Services/RatchetSession.swift,
 				Services/Reachability.swift,
+				Services/SecureEnclaveVault.swift,
 				Services/TLSPinning.swift,
-				Services/UserService.swift,
 				Views/AccountSettingsView.swift,
 				Views/AddContactView.swift,
 				Views/Chat/ChatComposer.swift,
@@ -138,23 +105,11 @@
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
-/* Begin PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
-		D96CE3082FDC9A29004125B6 /* Exceptions for "HQChat" folder in "Compile Sources" phase from "HQChat iOS" target */ = {
-			isa = PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet;
-			buildPhase = D96CE2DE2FDC9750004125B6 /* Sources */;
-			membershipExceptions = (
-				"Core/HQC-Bridging-Header.h",
-				Core/public_wrapper.h,
-			);
-		};
-/* End PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
-
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		D96B8E602EF6EB4D0063D07E /* HQChat */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				D96CE3072FDC9A29004125B6 /* Exceptions for "HQChat" folder in "HQChat iOS" target */,
-				D96CE3082FDC9A29004125B6 /* Exceptions for "HQChat" folder in "Compile Sources" phase from "HQChat iOS" target */,
 			);
 			path = HQChat;
 			sourceTree = "<group>";
@@ -176,8 +131,9 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				D96B8E742EF6F4380063D07E /* libhqc_wrap.dylib in Frameworks */,
 				5E27A00000000000000004 /* Sentry in Frameworks */,
+				C0EE00000000000000000004 /* HQChatCore in Frameworks */,
+				C0EE00000000000000000009 /* CoreShell in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -185,8 +141,9 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				D9C0DE000000000000000002 /* HQC.xcframework in Frameworks */,
 				5E27A00000000000000005 /* Sentry in Frameworks */,
+				C0EE00000000000000000005 /* HQChatCore in Frameworks */,
+				C0EE0000000000000000000A /* CoreShell in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -224,8 +181,6 @@
 		D96B8E722EF6F3560063D07E /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
-				D96B8E732EF6F4380063D07E /* libhqc_wrap.dylib */,
-				D9C0DE000000000000000001 /* HQC.xcframework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -240,7 +195,6 @@
 				D96B8E5A2EF6EB4D0063D07E /* Sources */,
 				D96B8E5B2EF6EB4D0063D07E /* Frameworks */,
 				D96B8E5C2EF6EB4D0063D07E /* Resources */,
-				D96B8E752EF6F4640063D07E /* CopyFiles */,
 			);
 			buildRules = (
 			);
@@ -252,6 +206,8 @@
 			name = HQChat;
 			packageProductDependencies = (
 				5E27A00000000000000002 /* Sentry */,
+				C0EE00000000000000000002 /* HQChatCore */,
+				C0EE00000000000000000007 /* CoreShell */,
 			);
 			productName = HQChat;
 			productReference = D96B8E5E2EF6EB4D0063D07E /* HQChat.app */;
@@ -275,6 +231,8 @@
 			name = "HQChat iOS";
 			packageProductDependencies = (
 				5E27A00000000000000003 /* Sentry */,
+				C0EE00000000000000000003 /* HQChatCore */,
+				C0EE00000000000000000008 /* CoreShell */,
 			);
 			productName = "HQChat iOS";
 			productReference = D96CE2E22FDC9750004125B6 /* HQChat iOS.app */;
@@ -336,6 +294,8 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				5E27A00000000000000001 /* XCRemoteSwiftPackageReference "sentry-cocoa" */,
+				C0EE00000000000000000001 /* XCLocalSwiftPackageReference "../../core/swift/HQChatCore" */,
+				C0EE00000000000000000006 /* XCLocalSwiftPackageReference "CoreShell" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = D96B8E5F2EF6EB4D0063D07E /* Products */;
@@ -549,10 +509,6 @@
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
 				);
-				LIBRARY_SEARCH_PATHS = (
-					"$(inherited)",
-					"$(PROJECT_DIR)",
-				);
 				MARKETING_VERSION = 3.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = martin.rougeron.DissQus;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -562,7 +518,6 @@
 				SUPPORTED_PLATFORMS = macosx;
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				"SWIFT_OBJC_BRIDGING_HEADER[arch=arm64]" = "HQChat/Core/HQC-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 			};
 			name = Debug;
@@ -590,10 +545,6 @@
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
 				);
-				LIBRARY_SEARCH_PATHS = (
-					"$(inherited)",
-					"$(PROJECT_DIR)",
-				);
 				MARKETING_VERSION = 3.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = martin.rougeron.DissQus;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -603,7 +554,6 @@
 				SUPPORTED_PLATFORMS = macosx;
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				"SWIFT_OBJC_BRIDGING_HEADER[arch=arm64]" = "HQChat/Core/HQC-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 			};
 			name = Release;
@@ -616,12 +566,12 @@
 				CODE_SIGN_ENTITLEMENTS = "HQChat iOS/HQChat_iOS.entitlements";
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = 2K837KD8A7;
 				CURRENT_PROJECT_VERSION = 22;
+				DEVELOPMENT_TEAM = 2K837KD8A7;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				"INFOPLIST_KEY_CFBundleDisplayName[sdk=*]" = hqChad;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "HQChat uses Face ID to unlock your private encryption keys so only you can access your messages.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -633,17 +583,12 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				LIBRARY_SEARCH_PATHS = (
-					"$(inherited)",
-					"$(PROJECT_DIR)",
-				);
 				MARKETING_VERSION = 3.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "martin.rougeron.DissQus-iOS";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = iphoneos;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_OBJC_BRIDGING_HEADER = "HQChat/Core/HQC-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -657,12 +602,12 @@
 				CODE_SIGN_ENTITLEMENTS = "HQChat iOS/HQChat_iOS.entitlements";
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = 2K837KD8A7;
 				CURRENT_PROJECT_VERSION = 22;
+				DEVELOPMENT_TEAM = 2K837KD8A7;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				"INFOPLIST_KEY_CFBundleDisplayName[sdk=*]" = hqChat;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "HQChat uses Face ID to unlock your private encryption keys so only you can access your messages.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -674,17 +619,12 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				LIBRARY_SEARCH_PATHS = (
-					"$(inherited)",
-					"$(PROJECT_DIR)",
-				);
 				MARKETING_VERSION = 3.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "martin.rougeron.DissQus-iOS";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = iphoneos;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_OBJC_BRIDGING_HEADER = "HQChat/Core/HQC-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALIDATE_PRODUCT = YES;
@@ -770,6 +710,17 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		C0EE00000000000000000001 /* XCLocalSwiftPackageReference "../../core/swift/HQChatCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../core/swift/HQChatCore;
+		};
+		C0EE00000000000000000006 /* XCLocalSwiftPackageReference "CoreShell" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = CoreShell;
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCRemoteSwiftPackageReference section */
 		5E27A00000000000000001 /* XCRemoteSwiftPackageReference "sentry-cocoa" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -791,6 +742,22 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 5E27A00000000000000001 /* XCRemoteSwiftPackageReference "sentry-cocoa" */;
 			productName = Sentry;
+		};
+		C0EE00000000000000000002 /* HQChatCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = HQChatCore;
+		};
+		C0EE00000000000000000003 /* HQChatCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = HQChatCore;
+		};
+		C0EE00000000000000000007 /* CoreShell */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CoreShell;
+		};
+		C0EE00000000000000000008 /* CoreShell */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CoreShell;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

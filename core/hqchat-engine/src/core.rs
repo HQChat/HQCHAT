@@ -26,8 +26,43 @@ pub(crate) struct Peer {
     /// Their identity key, once fetched and checked against their id.
     pub pinned: Option<PublicKey>,
     pub online: bool,
-    /// Messages that arrived while locked and are not opened yet.
+    /// Received messages opened and not read yet.
     pub unread: u32,
+    /// Received messages at or before this time are read.
+    pub read_until: i64,
+    /// Frames from them that arrived while locked, not opened yet.
+    pub pending: u32,
+    /// When this user blocked them: the conversation is kept, read-only.
+    pub blocked_at: Option<i64>,
+    /// When their identity was replaced by another under the same username:
+    /// the conversation is kept, read-only, until the user forgets it.
+    pub vanished_at: Option<i64>,
+    /// The user compared the safety number with them.
+    pub verified: bool,
+}
+
+impl Peer {
+    pub fn new(id: PeerId) -> Self {
+        Self {
+            id,
+            username: None,
+            convo: None,
+            handshake: None,
+            pinned: None,
+            online: false,
+            unread: 0,
+            read_until: 0,
+            pending: 0,
+            blocked_at: None,
+            vanished_at: None,
+            verified: false,
+        }
+    }
+
+    /// Nothing can be sent to or received from them any more.
+    pub fn is_read_only(&self) -> bool {
+        self.blocked_at.is_some() || self.vanished_at.is_some()
+    }
 }
 
 /// My prekeys: the medium-term key and the one-time secrets not yet consumed.
@@ -82,6 +117,10 @@ pub(crate) struct Core {
     pub started: bool,
     pub network: Option<crate::types::NetworkInfo>,
     pub invites: Vec<crate::types::InviteView>,
+    /// Requests this user sent that are not answered yet.
+    pub sent: Vec<crate::types::SentInviteView>,
+    /// Friends whose key is being fetched for pinning.
+    pub key_fetches: std::collections::BTreeSet<PeerId>,
     pub net: crate::net::Net,
     /// Effects of the call in progress, in order.
     pub out: Vec<Effect>,
@@ -109,6 +148,8 @@ impl Core {
             started: false,
             network: None,
             invites: Vec::new(),
+            sent: Vec::new(),
+            key_fetches: Default::default(),
             net: Default::default(),
             out: Vec::new(),
         }
@@ -184,8 +225,14 @@ impl Core {
                     convo_id: p.convo.as_ref().map(|t| t.as_str().to_owned()),
                     handshake_id: p.handshake.as_ref().map(|t| t.as_str().to_owned()),
                     pinned_pk: p.pinned.as_ref().map(|k| k.as_bytes().to_vec()),
+                    unread: p.unread,
+                    read_until: p.read_until,
+                    blocked_at: p.blocked_at,
+                    vanished_at: p.vanished_at,
+                    verified: p.verified,
                 })
                 .collect(),
+            sent: self.sent.iter().map(|s| (s.to.clone(), s.at)).collect(),
             outbox: self
                 .convo
                 .outbox
@@ -272,12 +319,25 @@ impl Core {
                         .transpose()
                         .map_err(bad)?,
                     online: previous.is_some_and(|p| p.online),
-                    unread: previous.map_or(0, |p| p.unread),
+                    unread: p.unread,
+                    read_until: p.read_until,
+                    pending: previous.map_or(0, |p| p.pending),
+                    blocked_at: p.blocked_at,
+                    vanished_at: p.vanished_at,
+                    verified: p.verified,
                 },
             );
         }
         self.me = Some(PeerId::of(&identity.public));
         self.peers = peers;
+        self.sent = state
+            .sent
+            .iter()
+            .map(|(to, at)| crate::types::SentInviteView {
+                to: to.clone(),
+                at: *at,
+            })
+            .collect();
         self.convo.outbox = state
             .outbox
             .iter()
@@ -426,7 +486,11 @@ impl Core {
                 username: p.username.clone(),
                 online: p.online,
                 has_session: self.store.get(persist::session_slot(&p.id)).is_some(),
-                unread: p.unread,
+                unread: p.unread.saturating_add(p.pending),
+                blocked_at: p.blocked_at,
+                vanished_at: p.vanished_at,
+                has_key: p.pinned.is_some(),
+                verified: p.verified,
             })
             .collect();
         out.sort_by(|a, b| {

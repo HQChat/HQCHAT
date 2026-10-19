@@ -15,11 +15,20 @@ name = "hqchat_ffi"
 [[bin]]
 name = "uniffi-bindgen"
 path = "src/bin/uniffi-bindgen.rs"
+required-features = ["bindgen"]
+
+[features]
+# The binding generator: a build-machine tool, kept out of the library the
+# apps link.
+bindgen = ["uniffi/cli"]
 
 [dependencies]
+hqc = { path = "../hqc" }
 hqchat-engine = { path = "../hqchat-engine" }
+hqchat-protocol = { path = "../hqchat-protocol" }
 thiserror = "2"
-uniffi = { version = "0.32", features = ["cli"] }
+uniffi = "0.32"
+zeroize = "1"
 
 # No unsafe is written here. uniffi's macros expand to unsafe under their own
 # allow, which `forbid` rejects; `deny` still refuses any we write.

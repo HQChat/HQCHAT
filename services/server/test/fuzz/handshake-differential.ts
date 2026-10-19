@@ -1,6 +1,6 @@
 /**
  * Differential fuzzing: `encodeHandshake` / `decodeHandshake` (TypeScript)
- * against `Handshake.encode` / `Handshake.decode` (Swift), on identical inputs.
+ * against the Rust core's handshake codec, on identical inputs.
  *
  * The handshake topic carries the challenge and proof that authenticate an
  * `init`'s sender, and both ends parse it with hand-written offsets. A
@@ -22,9 +22,6 @@
  * Run against the Rust core (the default; scripts/check.sh core does this):
  *   cd core && cargo build --release -p hqchat-verdict
  *   cd services/server && npx tsx test/fuzz/handshake-differential.ts --iterations 20000
- * or against the Swift app, on a Mac:
- *   cd apps/apple/fuzz && ./run.sh handshake-verdict
- *   cd services/server && npx tsx test/fuzz/handshake-differential.ts --iterations 20000 --oracle swift
  *   …                                                                 --mode encode
  */
 
@@ -255,7 +252,7 @@ function tsRound(f: HandshakeFrame): string {
   return why.length ? `F ${why.join(",")}` : "T";
 }
 
-function swiftVerdicts(mode: string, lines: string[]): string[] {
+function oracleVerdicts(mode: string, lines: string[]): string[] {
   // A private directory, not a predictable name in a shared /tmp: a pid is
   // guessable, so `handshake-batch-1234.jsonl` is a path somebody else on the
   // box can create as a symlink first and have this overwrite for them.
@@ -285,7 +282,7 @@ function main() {
     console.error("--mode must be decode, encode or round");
     process.exit(2);
   }
-  ORACLE = oracle("handshake-verdict", "handshake");
+  ORACLE = oracle("handshake");
 
   console.log(
     `handshake differential · mode ${mode} · ${iterations} iterations · seed ${seed} · v${HANDSHAKE_VERSION}`,
@@ -324,16 +321,16 @@ function main() {
       }
     }
 
-    const swift = swiftVerdicts(mode, lines);
-    if (swift.length !== n) {
-      console.error(`❌ ${ORACLE.name} returned ${swift.length} verdicts for ${n} inputs`);
+    const theirs = oracleVerdicts(mode, lines);
+    if (theirs.length !== n) {
+      console.error(`❌ ${ORACLE.name} returned ${theirs.length} verdicts for ${n} inputs`);
       process.exit(2);
     }
 
     for (let i = 0; i < n; i++) {
       const input = inputs[i];
       const ts = mode === "decode" ? tsDecode(input) : mode === "encode" ? tsEncode(input) : tsRound(input);
-      const sw = swift[i]!;
+      const sw = theirs[i]!;
 
       // In `round` mode each side checks ITSELF, so both must say T. A pair of
       // R's is agreement that the frame was unencodable, which is fine.
@@ -346,8 +343,8 @@ function main() {
       const file = path.join(FINDINGS, `handshake-${mode}-${seed}-${done + i}.json`);
       const payload =
         mode === "decode"
-          ? { mode, seed, inputBase64: (input as Buffer).toString("base64"), swift: sw, ts }
-          : { mode, seed, frame: lines[i], swift: sw, ts };
+          ? { mode, seed, inputBase64: (input as Buffer).toString("base64"), oracle: sw, ts }
+          : { mode, seed, frame: lines[i], oracle: sw, ts };
       fs.writeFileSync(file, JSON.stringify(payload, null, 2));
 
       console.error("");

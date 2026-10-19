@@ -95,6 +95,7 @@ fn a_report_names_the_conversation_and_can_block() {
         peer: b.id(),
         reason: "spam".into(),
         msg_ids: vec![],
+        note: Some("again and again".into()),
         block: true,
     });
     a.pump(e);
@@ -102,13 +103,157 @@ fn a_report_names_the_conversation_and_can_block() {
     let report = s.reports.last().expect("filed");
     assert_eq!(report["peer"], b.id());
     assert_eq!(report["category"], "spam");
+    assert_eq!(report["note"], "again and again");
+    let log = &s.log;
+    let reported = log.iter().position(|(_, p)| p == "/report").unwrap();
+    let blocked = log.iter().position(|(_, p)| p == "/friends/block").unwrap();
+    assert!(reported < blocked, "the block waits for the report");
     assert_eq!(report["conversation"].as_str().unwrap().len(), 64);
     assert!(s.users[&a.id()].blocked.contains(&b.id()));
     drop(s);
+    let friends = a.engine.friends();
+    assert_eq!(friends.len(), 1, "the conversation is kept");
+    assert_eq!(friends[0].blocked_at, Some(support::NOW));
+}
+
+#[test]
+fn a_blocked_friend_is_kept_read_only_until_unblocked() {
+    let server = FakeServer::shared();
+    let mut a = Client::signed_in(&server, "a");
+    let mut b = Client::signed_in(&server, "b");
+    Client::befriend(&mut a, &mut b);
+    let e = a.engine.send_text(b.id(), "before".into(), a.now).unwrap();
+    a.pump(e);
+    support::settle(&mut [&mut a, &mut b]);
+
+    let e = a.engine.block(b.id());
+    a.pump(e);
+    let friends = a.engine.friends();
+    assert_eq!(friends.len(), 1);
+    assert!(friends[0].blocked_at.is_some());
     assert!(
-        a.engine.friends().is_empty(),
-        "blocking ends the friendship"
+        !friends[0].has_session,
+        "the session ends with the friendship"
     );
+    assert_eq!(
+        a.engine.history(b.id(), None, 10).unwrap().len(),
+        1,
+        "the history stays"
+    );
+    assert!(
+        a.engine.send_text(b.id(), "after".into(), a.now).is_err(),
+        "nothing is sent to a blocked friend"
+    );
+
+    // A sync later (the next poll, another device) keeps them.
+    a.start(a.now);
+    assert!(a.engine.friends()[0].blocked_at.is_some());
+
+    // Unblocking does not restore the friendship: the row is ordinary again,
+    // absent from /friends, and goes with its history.
+    let e = a.engine.unblock(b.id());
+    a.pump(e);
+    assert!(a.engine.friends().is_empty());
+    assert!(a.engine.history(b.id(), None, 10).unwrap().is_empty());
+}
+
+#[test]
+fn a_block_from_another_device_arrives_and_is_lifted_the_same_way() {
+    let server = FakeServer::shared();
+    let mut a = Client::signed_in(&server, "a");
+    let mut b = Client::signed_in(&server, "b");
+    Client::befriend(&mut a, &mut b);
+    {
+        let mut s = server.borrow_mut();
+        let pair = FakeServer::pair_of(&a.id(), &b.id());
+        s.friendships.remove(&pair);
+        s.users.get_mut(&a.id()).unwrap().blocked.push(b.id());
+    }
+    a.start(a.now);
+    assert!(a.engine.friends()[0].blocked_at.is_some(), "kept, blocked");
+    server
+        .borrow_mut()
+        .users
+        .get_mut(&a.id())
+        .unwrap()
+        .blocked
+        .clear();
+    a.start(a.now);
+    assert!(a.engine.friends().is_empty());
+}
+
+#[test]
+fn without_the_block_list_nobody_is_removed() {
+    let server = FakeServer::shared();
+    let mut a = Client::signed_in(&server, "a");
+    let mut b = Client::signed_in(&server, "b");
+    Client::befriend(&mut a, &mut b);
+    let pair = FakeServer::pair_of(&a.id(), &b.id());
+    server.borrow_mut().friendships.remove(&pair);
+    server.borrow_mut().fail_blocked = true;
+    a.start(a.now);
+    assert_eq!(
+        a.engine.friends().len(),
+        1,
+        "a blocked friend could not be told apart"
+    );
+    server.borrow_mut().fail_blocked = false;
+    a.start(a.now);
+    assert!(a.engine.friends().is_empty());
+}
+
+#[test]
+fn a_username_under_a_new_id_leaves_the_old_identity_vanished() {
+    let server = FakeServer::shared();
+    let mut a = Client::signed_in(&server, "a");
+    let mut b = Client::signed_in(&server, "b");
+    let e = b.engine.set_username("bob".into());
+    b.pump(e);
+    Client::befriend(&mut a, &mut b);
+    let e = a.engine.send_text(b.id(), "hello".into(), a.now).unwrap();
+    a.pump(e);
+
+    // Bob resets: the old identity is gone, a new one holds the name.
+    {
+        let mut s = server.borrow_mut();
+        let pair = FakeServer::pair_of(&a.id(), &b.id());
+        s.friendships.remove(&pair);
+        s.users.get_mut(&b.id()).unwrap().username = None;
+    }
+    let mut c = Client::signed_in(&server, "c");
+    let e = c.engine.set_username("bob".into());
+    c.pump(e);
+    let e = c.engine.invite(a.id());
+    c.pump(e);
+    a.start(a.now);
+    assert_eq!(
+        a.engine.friends().len(),
+        1,
+        "the invite is not a friend yet"
+    );
+    assert!(a.engine.friends()[0].vanished_at.is_some());
+    let e = a.engine.accept(c.id());
+    a.pump(e);
+    c.start(c.now);
+    support::settle(&mut [&mut a, &mut c]);
+
+    let friends = a.engine.friends();
+    assert_eq!(friends.len(), 2);
+    let old = friends.iter().find(|f| f.id == b.id()).unwrap();
+    let new = friends.iter().find(|f| f.id == c.id()).unwrap();
+    assert!(old.vanished_at.is_some() && !old.has_session);
+    assert!(new.vanished_at.is_none());
+    assert!(a.engine.send_text(b.id(), "again".into(), a.now).is_err());
+    assert_eq!(a.engine.history(b.id(), None, 10).unwrap().len(), 1);
+
+    assert!(
+        a.engine.forget(c.id()).is_err(),
+        "only a vanished identity is forgotten"
+    );
+    let e = a.engine.forget(b.id()).unwrap();
+    a.pump(e);
+    assert_eq!(a.engine.friends().len(), 1);
+    assert!(a.engine.history(b.id(), None, 10).unwrap().is_empty());
 }
 
 #[test]
@@ -149,16 +294,15 @@ fn signing_in_publishes_a_full_bundle_and_tops_it_up_when_low() {
 }
 
 #[test]
-fn the_safety_number_needs_a_pinned_key() {
+fn the_safety_number_is_the_same_on_both_sides() {
     let server = FakeServer::shared();
     let mut a = Client::signed_in(&server, "a");
     let mut b = Client::signed_in(&server, "b");
     Client::befriend(&mut a, &mut b);
-    assert_eq!(
-        a.engine.fingerprint(b.id()),
-        None,
-        "not pinned before the first session"
-    );
+    b.start(b.now);
+    let mine = a.engine.fingerprint(b.id());
+    assert!(mine.is_some(), "the key is pinned at sync");
+    assert_eq!(mine, b.engine.fingerprint(a.id()));
     assert_eq!(safety_number(&[1], &[2]), safety_number(&[2], &[1]));
 }
 
@@ -182,4 +326,71 @@ fn a_write_the_store_refuses_reaches_the_app() {
             .any(|e| matches!(e, Effect::StorageFailed { .. })),
         "a's store works"
     );
+}
+
+#[test]
+fn a_sent_request_is_listed_until_answered_or_withdrawn() {
+    let server = FakeServer::shared();
+    let mut a = Client::signed_in(&server, "a");
+    let mut b = Client::signed_in(&server, "b");
+    let mut c = Client::signed_in(&server, "c");
+    let e = b.engine.set_username("bob".into());
+    b.pump(e);
+    assert!(b.seen.contains(&Effect::ActionDone {
+        action: Action::SetUsername
+    }));
+
+    let e = a.engine.invite("bob".into());
+    a.pump(e);
+    assert!(a.seen.contains(&Effect::ActionDone {
+        action: Action::Invite
+    }));
+    assert_eq!(a.engine.sent_invites()[0].to, "bob");
+    let e = a.engine.invite(c.id());
+    a.pump(e);
+    assert_eq!(a.engine.sent_invites().len(), 2);
+
+    // Answered: bob accepts, and the request is gone from the list.
+    b.start(b.now);
+    let e = b.engine.accept(a.id());
+    b.pump(e);
+    a.start(a.now);
+    let sent = a.engine.sent_invites();
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert_eq!(sent[0].to, c.id());
+
+    // Withdrawn.
+    let e = a.engine.cancel(c.id());
+    a.pump(e);
+    assert!(a.engine.sent_invites().is_empty());
+    c.start(c.now);
+    assert!(c.engine.invites().is_empty(), "c no longer sees it");
+
+    // Survives a restart.
+    let e = a.engine.invite(c.id());
+    a.pump(e);
+    let restarted =
+        hqchat_engine::Engine::new(support::config("a"), a.vault.clone(), a.store.clone()).unwrap();
+    restarted.unlock(support::NOW).unwrap();
+    assert_eq!(restarted.sent_invites().len(), 1);
+}
+
+#[test]
+fn a_friends_key_is_pinned_on_sync_and_can_be_marked_verified() {
+    let server = FakeServer::shared();
+    let mut a = Client::signed_in(&server, "a");
+    let mut b = Client::signed_in(&server, "b");
+    Client::befriend(&mut a, &mut b);
+    let f = &a.engine.friends()[0];
+    assert!(f.has_key, "pinned before any message");
+    assert!(!f.verified);
+    assert!(a.engine.fingerprint(b.id()).is_some());
+
+    let e = a.engine.set_verified(b.id(), true).unwrap();
+    a.pump(e);
+    assert!(a.engine.friends()[0].verified);
+    let restarted =
+        hqchat_engine::Engine::new(support::config("a"), a.vault.clone(), a.store.clone()).unwrap();
+    restarted.unlock(support::NOW).unwrap();
+    assert!(restarted.friends()[0].verified);
 }

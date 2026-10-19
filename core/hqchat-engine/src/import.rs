@@ -15,7 +15,8 @@ use zeroize::Zeroizing;
 
 use crate::core::{Core, Peer, Prekeys, Unlocked};
 use crate::effect::Effect;
-use crate::types::CoreError;
+use crate::persist::{self, StoredMessage};
+use crate::types::{CoreError, Delivery};
 
 /// The identity being imported.
 pub enum ImportIdentity {
@@ -59,6 +60,42 @@ pub struct ImportPeer {
     pub pinned_pk: Option<Vec<u8>>,
     /// The ratchet session with them, if one was open.
     pub session: Option<SessionState>,
+    /// When this user blocked them, in milliseconds.
+    pub blocked_at: Option<i64>,
+    /// When their identity was found replaced, in milliseconds.
+    pub vanished_at: Option<i64>,
+    /// The user compared the safety number (needs a pinned key).
+    pub verified: bool,
+}
+
+/// One message of the history, as the UI showed it.
+pub struct ImportMessage {
+    /// The friend the conversation is with.
+    pub peer: String,
+    /// Its id.
+    pub msg_id: String,
+    /// Sent by this profile.
+    pub outgoing: bool,
+    /// The text.
+    pub text: String,
+    /// When, in milliseconds.
+    pub at: i64,
+    /// Where an outgoing message had got to.
+    pub delivery: Option<Delivery>,
+    /// A received message the user has seen. The conversation is read up to
+    /// the newest of these; any unseen one after it counts as unread.
+    pub read: bool,
+}
+
+/// A frame that arrived while the old implementation was locked and was
+/// never opened: still ciphertext, opened by the import's drain.
+pub struct ImportPending {
+    /// The topic it arrived on.
+    pub topic: String,
+    /// The frame as it arrived.
+    pub payload: Vec<u8>,
+    /// When it arrived, in milliseconds; the drain keeps this order.
+    pub at: i64,
 }
 
 /// Everything an import brings.
@@ -69,6 +106,12 @@ pub struct Import {
     pub prekeys: Option<ImportPrekeys>,
     /// The friends.
     pub peers: Vec<ImportPeer>,
+    /// The message history.
+    pub messages: Vec<ImportMessage>,
+    /// Frames still waiting for an unlock.
+    pub pending: Vec<ImportPending>,
+    /// Friend requests sent and not answered: (to, at).
+    pub sent: Vec<(String, i64)>,
 }
 
 fn invalid(what: &str) -> CoreError {
@@ -124,21 +167,64 @@ fn peer_of(p: ImportPeer) -> Result<(Peer, Option<SessionState>), CoreError> {
         }
         None => None,
     };
+    let verified = p.verified && pinned.is_some();
     let peer = Peer {
-        id,
         username: p.username,
         convo: topic(p.convo_id, "a conversation topic")?,
         handshake: topic(p.handshake_id, "a handshake topic")?,
         pinned,
-        online: false,
-        unread: 0,
+        blocked_at: p.blocked_at,
+        vanished_at: p.vanished_at,
+        verified,
+        ..Peer::new(id)
     };
     Ok((peer, p.session))
 }
 
+/// Read state from the per-message flags: read up to the newest received
+/// message seen, unread for every received one after it.
+fn read_state(peers: &mut BTreeMap<PeerId, Peer>, messages: &[(PeerId, StoredMessage, bool)]) {
+    for (peer, m, read) in messages {
+        if let Some(p) = peers.get_mut(peer)
+            && !m.outgoing
+            && *read
+        {
+            p.read_until = p.read_until.max(m.at);
+        }
+    }
+    for (peer, m, _) in messages {
+        if let Some(p) = peers.get_mut(peer)
+            && !m.outgoing
+            && m.at > p.read_until
+        {
+            p.unread = p.unread.saturating_add(1);
+        }
+    }
+}
+
+fn message_of(m: ImportMessage) -> Result<(PeerId, StoredMessage, bool), CoreError> {
+    let peer = PeerId::parse(&m.peer).map_err(|_| invalid("a message's peer id"))?;
+    if m.msg_id.is_empty() {
+        return Err(invalid("a message without an id"));
+    }
+    Ok((
+        peer,
+        StoredMessage {
+            format: persist::FORMAT,
+            msg_id: m.msg_id,
+            outgoing: m.outgoing,
+            text: m.text,
+            at: m.at,
+            delivery: m.delivery.map(persist::delivery_byte),
+        },
+        m.read,
+    ))
+}
+
 impl Core {
-    /// Imports `import` into this profile, which must have no identity yet.
-    pub fn import(&mut self, import: Import) -> Result<(), CoreError> {
+    /// Imports `import` into this profile, which must have no identity yet,
+    /// then opens the frames it brought that were waiting for an unlock.
+    pub fn import(&mut self, import: Import, now: i64) -> Result<(), CoreError> {
         if self.has_identity {
             return Err(CoreError::State(
                 "this profile already has an identity".into(),
@@ -158,15 +244,33 @@ impl Core {
             }
             peers.insert(peer.id.clone(), peer);
         }
+        let messages = import
+            .messages
+            .into_iter()
+            .map(message_of)
+            .collect::<Result<Vec<_>, _>>()?;
+        read_state(&mut peers, &messages);
+        let messages = messages.into_iter().map(|(p, m, _)| (p, m)).collect();
+        let pending = import.pending;
+        self.sent = import
+            .sent
+            .into_iter()
+            .map(|(to, at)| crate::types::SentInviteView { to, at })
+            .collect();
 
-        let result = self.write_import(identity, prekeys, peers, sessions);
+        let result = self.write_import(identity, prekeys, peers, sessions, messages, &pending);
         if result.is_err() {
             // Back to a profile with no identity, which can be imported again.
             self.unlocked = None;
             self.me = None;
             self.peers.clear();
+            self.sent.clear();
         }
-        result
+        result?;
+        if !pending.is_empty() {
+            self.drain_pending(now);
+        }
+        Ok(())
     }
 
     fn write_import(
@@ -175,6 +279,8 @@ impl Core {
         prekeys: Option<Prekeys>,
         peers: BTreeMap<PeerId, Peer>,
         sessions: Vec<(PeerId, SessionState)>,
+        messages: Vec<(PeerId, StoredMessage)>,
+        pending: &[ImportPending],
     ) -> Result<(), CoreError> {
         let tier = self.vault.create()?;
         let mut data_key = Zeroizing::new([0u8; 32]);
@@ -189,6 +295,14 @@ impl Core {
         self.peers = peers;
         for (peer, session) in sessions {
             self.put_session(&peer, session)?;
+        }
+        for (peer, message) in &messages {
+            self.put_message(peer, message)?;
+            // New messages sort after the history.
+            self.last_stamp = self.last_stamp.max(message.at);
+        }
+        for frame in pending {
+            self.store_pending(&frame.topic, frame.payload.clone(), frame.at)?;
         }
         // Last: until `state` exists the profile has no identity.
         self.save_state()?;

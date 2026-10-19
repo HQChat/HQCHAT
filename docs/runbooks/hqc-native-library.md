@@ -4,46 +4,36 @@ HQC-256 comes from the upstream reference implementation, wrapped by
 `native/hqc/src/low_wrap.c` (IND-CCA2 KEM: keypair from seed, encapsulate,
 decapsulate, each returning a status and writing into caller-allocated
 buffers). Every consumer builds it from the commit pinned in
-`native/hqc/HQC_UPSTREAM.txt`. The Apple builds are also committed, so the
-Xcode project runs on a device straight from a clone: after moving the pin,
-run `bash native/hqc/build-apple.sh` and commit `native/hqc/dist/apple` and
-`apps/apple/libhqc_wrap.dylib` (`scripts/check.sh lint` fails until you do).
-App Store builds rebuild from source either way.
+`native/hqc/HQC_UPSTREAM.txt`, and every client reaches it through the Rust
+core (`core/hqc-sys`), which compiles it for whatever target it is built for.
 
 | Consumer | Built by | Result |
 |---|---|---|
 | Server, gateway, bot, CI, hosts | `nix build .#hqchat-node` (`core/hqchat-node/package.nix`), which compiles the prepared tree (`.#hqc.source`) into the core's Node addon | `lib/hqchat_node.node`, loaded through `HQCHAT_NODE` |
 | Local server runs and the core's own tests | `core/hqchat-node/build.sh`, inside `nix develop` (`HQC_SOURCE`) | `core/hqchat-node/hqchat_node.node`, found by `src/common/core.ts` when `HQCHAT_NODE` is unset |
 | The standalone library and its self-test | `nix build .#hqc` (`native/hqc/package.nix`) | `lib/libhqc_wrap.so`; no server program loads it any more |
-| macOS app and the Swift test slices | `bash native/hqc/build-apple.sh` | `apps/apple/libhqc_wrap.dylib` (arm64) |
-| iOS app | the same script | `native/hqc/dist/apple/HQC.xcframework` (device arm64, simulator arm64 and x86_64) |
-| The App Store builds (Apple release workflow) | `apps/apple/release.sh ios\|macos`, which runs the same script | the xcframework or the dylib, then the signed upload |
+| The Apple apps and the Swift test slices | `core/hqchat-ffi/build-apple.sh`, inside `nix develop .#apple` | `core/swift/HQChatCore/HQChatCoreFFI.xcframework` (committed; `release.sh` refuses a stale one) |
 
 Every build compiles the same bytes: `native/hqc/prepare-source.sh` turns the
 pinned upstream tree into the compiled source (it guards the unused x86
-intrinsics headers and adds the wrapper), and both `package.nix` and
-`build-apple.sh` run it. Where Nix is missing (the Apple release workflow's macOS
-runner), `build-apple.sh` fetches `PINNED_COMMIT` from `REPO` with git and
-refuses any other commit.
+intrinsics headers and adds the wrapper); `package.nix` runs it, and the core
+builds from its output (`HQC_SOURCE`).
 
 The Nix package runs a self-test (deterministic keys from a seed, round trips,
 implicit rejection); the addon's build runs the core's known-answer tests, and
 the server's unit suite checks them again through the addon
 (`test/unit/hqc.test.ts`, `test/unit/core-addon.test.ts`), so a build that
-computes anything different fails. Swift reaches the C functions through
-`apps/apple/HQChat/Core/HQC-Bridging-Header.h` and `public_wrapper.h`; the
-Xcode project already links the dylib (macOS, embedded and signed on copy) and
-the xcframework (iOS).
+computes anything different fails. The apps never call the C functions
+themselves: Swift talks to the core.
 
 ## After a fresh clone, or a source bump
 
 ```bash
 core/hqchat-node/build.sh                 # server and tests, inside nix develop
-bash native/hqc/build-apple.sh            # Apple; a no-op when already built from this source
 ```
 
-Both outputs are gitignored. A linker error such as `library 'hqc_wrap' not
-found` means the Apple build has not run in this checkout.
+The Apple core package is committed, so the Xcode project builds straight from
+a clone.
 
 ## Moving to a new upstream commit
 
@@ -52,8 +42,10 @@ found` means the Apple build has not run in this checkout.
 2. `nix build .#hqc` must pass its self-test, and `npm run test:unit` its
    known-answer digests (a new upstream that changes outputs needs new
    digests, which means every existing identity changes too).
-3. Rebuild the Apple outputs and run the cross-implementation vectors:
-   `bash apps/apple/tests/run.sh` and `npm run test:unit` in `services/server`.
+3. Rebuild the core everywhere (`scripts/check.sh core`, and
+   `core/hqchat-ffi/build-apple.sh` for the Apple package) and run the
+   vectors: `cargo test` in `core/` and `npm run test:unit` in
+   `services/server`.
 
 The weekly `hqc-upstream.yml` workflow raises a notice when upstream has moved
 past the pinned commit.

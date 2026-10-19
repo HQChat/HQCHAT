@@ -52,10 +52,14 @@ pub enum Action {
     Invite,
     /// Accepting one.
     Accept,
+    /// Withdrawing a request sent, or declining one received.
+    Cancel,
     /// Removing a friend.
     Remove,
     /// Blocking a user.
     Block,
+    /// Lifting a block.
+    Unblock,
     /// Filing a report.
     Report,
     /// Deleting the account.
@@ -147,8 +151,14 @@ pub enum Effect {
     },
     /// The friend list changed; read `Engine::friends`.
     FriendsChanged,
-    /// The pending invites changed; read `Engine::invites`.
+    /// The pending invites changed, either way; read `Engine::invites` and
+    /// `Engine::sent_invites`.
     InvitesChanged,
+    /// A user action the server accepted.
+    ActionDone {
+        /// Which action.
+        action: Action,
+    },
     /// A friend came online or went offline.
     PresenceChanged {
         /// The friend's id.

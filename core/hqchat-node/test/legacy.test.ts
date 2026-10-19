@@ -73,7 +73,7 @@ test("a TS client's state file imports with its sessions, under the seed's id", 
     json.peers[broken] = { id: broken, session: { root: "AAAA", rkPub: "AA", rkSec: "AA" } };
 
     const engine = new core.Engine({ serverUrl: "https://hqchat.test", profileId: "bot", dir: path.join(dir, "core") });
-    const result = engine.importLegacy(botSeed, JSON.stringify(json));
+    const result = engine.importLegacy(botSeed, JSON.stringify(json), Date.now());
     assert.deepEqual(result.unreadable, [broken], "the cut-short session is reported, not fatal");
     assert.deepEqual(
       result.effects.map((e: { kind: string }) => e.kind),
@@ -84,7 +84,7 @@ test("a TS client's state file imports with its sessions, under the seed's id", 
     assert.ok(a?.hasSession, "alice's session came across");
     assert.equal(a.username, "alice");
     assert.equal(friends.find((f: { id: string }) => f.id === broken)?.hasSession, false);
-    assert.throws(() => engine.importLegacy(botSeed, null), /already has an identity/);
+    assert.throws(() => engine.importLegacy(botSeed, null, Date.now()), /already has an identity/);
 
     // The engine signs in as the seed's identity: the id the server's BOT_ID names.
     const start = engine.start(1_790_000_000_000, "wired");
@@ -100,10 +100,10 @@ test("a garbled state file is refused, and leaves the profile importable", () =>
   try {
     const engine = new core.Engine({ serverUrl: "https://hqchat.test", profileId: "bot", dir });
     const seed = randomBytes(32);
-    assert.throws(() => engine.importLegacy(seed, "{ not json"), /state file/);
-    assert.throws(() => engine.importLegacy(seed, JSON.stringify({ prekeys: { mediumPk: 1 } })), /prekeys/);
-    assert.throws(() => engine.importLegacy(Buffer.alloc(31), null), /32 bytes/);
-    engine.importLegacy(seed, null);
+    assert.throws(() => engine.importLegacy(seed, "{ not json", Date.now()), /state file/);
+    assert.throws(() => engine.importLegacy(seed, JSON.stringify({ prekeys: { mediumPk: 1 } }), Date.now()), /prekeys/);
+    assert.throws(() => engine.importLegacy(Buffer.alloc(31), null, Date.now()), /32 bytes/);
+    engine.importLegacy(seed, null, Date.now());
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

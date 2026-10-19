@@ -87,6 +87,9 @@ pub(crate) struct Net {
     retry_at: Option<i64>,
     next_poll: Option<i64>,
     scheduled: Option<i64>,
+    /// The app went to the background: presence says offline, so the push
+    /// bridge wakes this device for what arrives.
+    away: bool,
 }
 
 fn presence_payload(online: bool) -> Vec<u8> {
@@ -339,9 +342,10 @@ impl Core {
             filters.extend(crate::directory::peer_filters(p));
         }
         self.subscribe(filters, now);
+        let online = !self.net.away;
         self.publish(
             topics::presence_topic(&me),
-            presence_payload(true),
+            presence_payload(online),
             true,
             InFlight::Other,
             now,
@@ -440,6 +444,24 @@ impl Core {
             c.inflight.insert(packet_id, what);
         }
         true
+    }
+
+    /// Announces presence (retained). Offline when the app goes to the
+    /// background, where the OS freezes the link and the broker would keep
+    /// this client online until the keep-alive lapses; online on return.
+    /// True when the announcement was written to a live link.
+    pub fn set_presence(&mut self, online: bool, now: i64) -> bool {
+        self.net.away = !online;
+        let Some(me) = self.me.clone() else {
+            return false;
+        };
+        self.publish(
+            topics::presence_topic(&me),
+            presence_payload(online),
+            true,
+            InFlight::Other,
+            now,
+        )
     }
 
     pub fn link_up(&self) -> bool {

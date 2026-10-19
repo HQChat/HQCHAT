@@ -1,7 +1,7 @@
 /**
  * Differential fuzzing of hqn/1 — the raw-TCP transport's Noise handshake and
- * framing — test/reference/protocol/noise.ts (TypeScript, the gateway) against NoiseHQN.swift (the
- * app), plus the gateway's own responder on hostile input.
+ * framing — test/reference/protocol/noise.ts (TypeScript, the gateway) against the Rust core
+ * (the apps), plus the gateway's own responder on hostile input.
  *
  * WHY. The pinned vectors (test/helpers/noise-hqn-vectors.json) show the two
  * implementations agree on VALID transcripts. What an attacker controls is the
@@ -26,9 +26,6 @@
  * Run against the Rust core (the default; scripts/check.sh core does this):
  *   cd core && cargo build --release -p hqchat-verdict
  *   cd services/server && npx tsx test/fuzz/noise-differential.ts --mode frames --iterations 20000
- * or against the Swift app, on a Mac:
- *   cd apps/apple/fuzz && ./run.sh noise-verdict
- *   cd services/server && npx tsx test/fuzz/noise-differential.ts --mode frames --iterations 20000 --oracle swift
  *   …                                                            --mode msg2
  *   …                                                            --mode responder
  */
@@ -191,7 +188,7 @@ function tsMsg2(msg2: Buffer): string {
 
 // ── the Swift verdicts ─────────────────────────────────────────────────────────
 
-function swiftVerdicts(mode: string, lines: string[]): string[] {
+function oracleVerdicts(mode: string, lines: string[]): string[] {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "noise-batch-"));
   const file = path.join(dir, "batch.jsonl");
   fs.writeFileSync(file, `${lines.join("\n")}\n`);
@@ -210,10 +207,10 @@ function arg(flag: string, dflt: string): string {
   return i >= 0 ? (process.argv[i + 1] ?? dflt) : dflt;
 }
 
-function record(mode: string, seed: number, index: number, input: unknown, swift: string, ts: string): string {
+function record(mode: string, seed: number, index: number, input: unknown, oracle: string, ts: string): string {
   fs.mkdirSync(FINDINGS, { recursive: true });
   const file = path.join(FINDINGS, `noise-${mode}-${seed}-${index}.json`);
-  fs.writeFileSync(file, JSON.stringify({ mode, seed, input, swift, ts }, null, 2));
+  fs.writeFileSync(file, JSON.stringify({ mode, seed, input, oracle, ts }, null, 2));
   return file;
 }
 
@@ -290,7 +287,7 @@ function main() {
     process.exit(1);
   }
 
-  ORACLE = oracle("noise-verdict", "noise");
+  ORACLE = oracle("noise");
 
   const r = rng(seed);
   let mismatches = 0;
@@ -310,15 +307,15 @@ function main() {
         lines.push(JSON.stringify(m.toString("base64")));
       }
     }
-    const swift = swiftVerdicts(mode, lines);
-    if (swift.length !== n) {
-      console.error(`❌ ${ORACLE.name} returned ${swift.length} verdicts for ${n} inputs`);
+    const theirs = oracleVerdicts(mode, lines);
+    if (theirs.length !== n) {
+      console.error(`❌ ${ORACLE.name} returned ${theirs.length} verdicts for ${n} inputs`);
       process.exit(2);
     }
     for (let i = 0; i < n; i++) {
       const input = inputs[i]!;
       const ts = mode === "frames" ? tsFrames(input as Buffer[]) : tsMsg2(input as Buffer);
-      const sw = swift[i]!;
+      const sw = theirs[i]!;
       // Beyond agreement: in msg2 mode only the genuine reply may be accepted.
       const onlyGenuine = mode !== "msg2" || ts === "R" || (input as Buffer).equals(GENUINE_MSG2);
       if (ts === sw && onlyGenuine) continue;

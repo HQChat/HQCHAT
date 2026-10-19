@@ -309,10 +309,14 @@ pub enum Action {
     Invite,
     /// Accepting one.
     Accept,
+    /// Withdrawing or declining one.
+    Cancel,
     /// Removing a friend.
     Remove,
     /// Blocking.
     Block,
+    /// Lifting a block.
+    Unblock,
     /// A report.
     Report,
     /// Deleting the account.
@@ -353,6 +357,29 @@ pub struct FriendView {
     pub has_session: bool,
     /// Unread, including those waiting for an unlock.
     pub unread: u32,
+    /// When this user blocked them (Unix milliseconds): read-only.
+    pub blocked_at: Option<i64>,
+    /// When their identity was replaced under the same username: read-only.
+    pub vanished_at: Option<i64>,
+    /// Their identity key is pinned.
+    pub has_key: bool,
+    /// The safety number was compared.
+    pub verified: bool,
+}
+
+/// A friend request sent and not answered yet.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SentInviteView {
+    /// The username or id, as typed.
+    pub to: String,
+    /// When, in Unix milliseconds.
+    pub at: i64,
+}
+
+impl From<core::SentInviteView> for SentInviteView {
+    fn from(s: core::SentInviteView) -> Self {
+        SentInviteView { to: s.to, at: s.at }
+    }
 }
 
 /// A friend request waiting for an answer.
@@ -373,7 +400,9 @@ pub struct ReportInput {
     pub reason: String,
     /// Messages whose text is the excerpt.
     pub msg_ids: Vec<String>,
-    /// Block them too.
+    /// What the user added.
+    pub note: Option<String>,
+    /// Block them too, once the report is filed.
     pub block: bool,
 }
 
@@ -383,6 +412,7 @@ impl From<ReportInput> for core::ReportInput {
             peer: r.peer,
             reason: r.reason,
             msg_ids: r.msg_ids,
+            note: r.note,
             block: r.block,
         }
     }
@@ -479,8 +509,13 @@ pub enum Effect {
     },
     /// Read `friends`.
     FriendsChanged,
-    /// Read `invites`.
+    /// Read `invites` and `sent_invites`.
     InvitesChanged,
+    /// The server accepted an action.
+    ActionDone {
+        /// Which.
+        action: Action,
+    },
     /// A friend came online or left.
     PresenceChanged {
         /// The friend.
@@ -526,6 +561,18 @@ pub enum Effect {
     },
 }
 
+impl From<Delivery> for core::Delivery {
+    fn from(d: Delivery) -> Self {
+        match d {
+            Delivery::Sending => core::Delivery::Sending,
+            Delivery::Queued => core::Delivery::Queued,
+            Delivery::Sent => core::Delivery::Sent,
+            Delivery::Delivered => core::Delivery::Delivered,
+            Delivery::Failed => core::Delivery::Failed,
+        }
+    }
+}
+
 fn delivery(d: core::Delivery) -> Delivery {
     match d {
         core::Delivery::Sending => Delivery::Sending,
@@ -557,6 +604,10 @@ impl From<core::FriendView> for FriendView {
             online: f.online,
             has_session: f.has_session,
             unread: f.unread,
+            blocked_at: f.blocked_at,
+            vanished_at: f.vanished_at,
+            has_key: f.has_key,
+            verified: f.verified,
         }
     }
 }
@@ -613,6 +664,9 @@ impl From<core::Effect> for Effect {
             },
             core::Effect::FriendsChanged => Effect::FriendsChanged,
             core::Effect::InvitesChanged => Effect::InvitesChanged,
+            core::Effect::ActionDone { action } => Effect::ActionDone {
+                action: action.into(),
+            },
             core::Effect::PresenceChanged { peer, online } => {
                 Effect::PresenceChanged { peer, online }
             }
@@ -631,24 +685,32 @@ impl From<core::Effect> for Effect {
                 status,
                 code,
             } => Effect::ActionFailed {
-                action: match action {
-                    core::Action::SignIn => Action::SignIn,
-                    core::Action::SetUsername => Action::SetUsername,
-                    core::Action::Invite => Action::Invite,
-                    core::Action::Accept => Action::Accept,
-                    core::Action::Remove => Action::Remove,
-                    core::Action::Block => Action::Block,
-                    core::Action::Report => Action::Report,
-                    core::Action::DeleteAccount => Action::DeleteAccount,
-                    core::Action::RegisterPush => Action::RegisterPush,
-                    core::Action::PublishPrekeys => Action::PublishPrekeys,
-                },
+                action: action.into(),
                 status,
                 code,
             },
             core::Effect::AccountDeleted => Effect::AccountDeleted,
             core::Effect::Dropped { reason } => Effect::Dropped { reason },
             core::Effect::StorageFailed { reason } => Effect::StorageFailed { reason },
+        }
+    }
+}
+
+impl From<core::Action> for Action {
+    fn from(a: core::Action) -> Self {
+        match a {
+            core::Action::SignIn => Action::SignIn,
+            core::Action::SetUsername => Action::SetUsername,
+            core::Action::Invite => Action::Invite,
+            core::Action::Accept => Action::Accept,
+            core::Action::Cancel => Action::Cancel,
+            core::Action::Remove => Action::Remove,
+            core::Action::Block => Action::Block,
+            core::Action::Unblock => Action::Unblock,
+            core::Action::Report => Action::Report,
+            core::Action::DeleteAccount => Action::DeleteAccount,
+            core::Action::RegisterPush => Action::RegisterPush,
+            core::Action::PublishPrekeys => Action::PublishPrekeys,
         }
     }
 }

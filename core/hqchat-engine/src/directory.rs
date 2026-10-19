@@ -1,10 +1,11 @@
-//! Friends and prekeys: the directory synced from `/friends` and
-//! `/friends/invites`, the friendship actions, the safety number, and the
+//! Friends and prekeys: the directory synced from `/friends/blocked`,
+//! `/friends` and `/friends/invites`, the friendship actions, read state,
+//! the safety number, and the
 //! prekey bundle kept published (a medium-term key rotated weekly and a
 //! pool of one-time keys topped up to 8 when it falls to 4, as the TS and
 //! Swift clients do).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use hqc::KeyPair;
 use hqchat_protocol::PeerId;
@@ -16,7 +17,8 @@ use sha2::{Digest, Sha256};
 use crate::core::{Core, Peer, Prekeys};
 use crate::effect::{Action, Effect, Method};
 use crate::http::{Answer, Pending};
-use crate::types::{CoreError, InviteView, ReportInput};
+use crate::persist;
+use crate::types::{CoreError, InviteView, ReportInput, SentInviteView};
 
 /// One-time prekeys kept published.
 pub(crate) const PREKEY_POOL: u32 = 8;
@@ -57,21 +59,81 @@ pub fn safety_number(mine: &[u8], theirs: &[u8]) -> String {
 impl Core {
     // ── Directory ──────────────────────────────────────────────────────────
 
-    /// Re-reads friends and invites.
+    /// Re-reads the block list, then invites, then friends.
     pub fn sync_directory(&mut self) {
-        self.request(Method::Get, "/friends", None, true, Pending::Friends);
+        self.request(
+            Method::Get,
+            "/friends/blocked",
+            None,
+            true,
+            Pending::Blocked,
+        );
+    }
+
+    /// Adopts the block list, in both directions (the user may have blocked
+    /// or unblocked from another device), then reads invites. A blocked
+    /// peer is absent from `/friends` by construction, so this has to land
+    /// first or their conversation would be removed with them.
+    pub fn on_blocked(&mut self, a: Answer, now: i64) {
+        let blocked: Option<BTreeSet<PeerId>> = a
+            .body
+            .get("blocked")
+            .and_then(Value::as_array)
+            .filter(|_| a.ok())
+            .map(|ids| {
+                ids.iter()
+                    .filter_map(|v| PeerId::parse(&v.as_str()?.to_lowercase()).ok())
+                    .collect()
+            });
+        if let Some(blocked) = &blocked {
+            let mut unsubscribe = Vec::new();
+            let mut changed = false;
+            let ids: Vec<PeerId> = self.peers.keys().cloned().collect();
+            for id in ids {
+                let Some(peer) = self.peers.get_mut(&id) else {
+                    continue;
+                };
+                match (blocked.contains(&id), peer.blocked_at.is_some()) {
+                    (true, false) => {
+                        if !peer.is_read_only() {
+                            unsubscribe.extend(peer_topics(peer));
+                        }
+                        peer.blocked_at = Some(now);
+                        self.forget_session(&id);
+                        changed = true;
+                    }
+                    // Unblocked: an ordinary row again, which `/friends` no
+                    // longer lists, so the next pass removes it.
+                    (false, true) => {
+                        peer.blocked_at = None;
+                        changed = true;
+                    }
+                    _ => {}
+                }
+            }
+            if changed {
+                self.persist_state();
+                self.emit(Effect::FriendsChanged);
+                self.on_topics_changed(Vec::new(), unsubscribe);
+            }
+        }
         self.request(
             Method::Get,
             "/friends/invites",
             None,
             true,
-            Pending::Invites,
+            Pending::Invites {
+                can_remove: blocked.is_some(),
+            },
         );
     }
 
     /// Makes the directory match `/friends`: new friends added, names and
-    /// topic ids updated, removed friends forgotten with their sessions.
-    pub fn on_friends(&mut self, a: Answer) {
+    /// topic ids updated. A friend no longer listed is kept read-only when
+    /// blocked, marked vanished when their username now belongs to another
+    /// id (a friend's or an invite's), and otherwise removed with their
+    /// session and history.
+    pub fn on_friends(&mut self, a: Answer, can_remove: bool, now: i64) {
         let Some(rows) = a
             .body
             .get("friends")
@@ -110,30 +172,51 @@ impl Core {
         let mut subscribe: Vec<(String, QoS)> = Vec::new();
         let mut unsubscribe: Vec<String> = Vec::new();
         let mut changed = false;
+        let live_names: BTreeSet<String> = live
+            .values()
+            .filter_map(|(username, _, _)| username.clone())
+            .chain(self.invites.iter().map(|i| i.username.clone()))
+            .filter(|u| !u.is_empty())
+            .collect();
         let gone: Vec<PeerId> = self
             .peers
-            .keys()
-            .filter(|id| !live.contains_key(*id))
-            .cloned()
+            .iter()
+            .filter(|(id, p)| !live.contains_key(*id) && !p.is_read_only())
+            .map(|(id, _)| id.clone())
             .collect();
         for id in gone {
-            let Some(peer) = self.peers.remove(&id) else {
+            let Some(peer) = self.peers.get_mut(&id) else {
                 continue;
             };
-            unsubscribe.extend(peer_topics(&peer));
-            self.forget_session(&id);
-            changed = true;
+            // Same handle, another id, and this one is no longer listed: the
+            // person reset or moved device and this identity is gone. Kept,
+            // never merged into the new one (that would carry over a
+            // verification the new key never earned).
+            if peer
+                .username
+                .as_deref()
+                .is_some_and(|u| live_names.contains(u))
+            {
+                unsubscribe.extend(peer_topics(peer));
+                peer.vanished_at = Some(now);
+                self.forget_session(&id);
+                changed = true;
+            } else if can_remove {
+                unsubscribe.extend(peer_topics(peer));
+                self.forget_peer(&id);
+                changed = true;
+            }
         }
         for (id, (username, convo, handshake)) in live {
-            let peer = self.peers.entry(id.clone()).or_insert_with(|| Peer {
-                id: id.clone(),
-                username: None,
-                convo: None,
-                handshake: None,
-                pinned: None,
-                online: false,
-                unread: 0,
-            });
+            let peer = self
+                .peers
+                .entry(id.clone())
+                .or_insert_with(|| Peer::new(id.clone()));
+            // Listed again: a sync that missed them, not a vanished identity.
+            if peer.vanished_at.take().is_some() {
+                peer.convo = None;
+                changed = true;
+            }
             if peer.username != username {
                 peer.username = username;
                 changed = true;
@@ -146,20 +229,51 @@ impl Core {
                 changed = true;
             }
         }
+        // A request that was answered is no longer pending.
+        let before = self.sent.len();
+        let friends: Vec<(String, Option<String>)> = self
+            .peers
+            .values()
+            .filter(|p| !p.is_read_only())
+            .map(|p| (p.id.to_string(), p.username.clone()))
+            .collect();
+        self.sent.retain(|s| {
+            !friends.iter().any(|(id, name)| {
+                s.to.eq_ignore_ascii_case(id)
+                    || name
+                        .as_deref()
+                        .is_some_and(|n| s.to.eq_ignore_ascii_case(n))
+            })
+        });
+        if self.sent.len() != before {
+            changed = true;
+            self.emit(Effect::InvitesChanged);
+        }
         if changed {
             self.persist_state();
             self.emit(Effect::FriendsChanged);
             self.on_topics_changed(subscribe, unsubscribe);
         }
+        self.fetch_missing_keys();
     }
 
-    pub fn on_invites(&mut self, a: Answer) {
-        let Some(rows) = a
+    /// Adopts the invites waiting for an answer, then reads `/friends`.
+    pub fn on_invites(&mut self, a: Answer, can_remove: bool) {
+        let rows = a
             .body
             .get("invites")
             .and_then(Value::as_array)
-            .filter(|_| a.ok())
-        else {
+            .filter(|_| a.ok());
+        self.request(
+            Method::Get,
+            "/friends",
+            None,
+            true,
+            Pending::Friends {
+                can_remove: can_remove && rows.is_some(),
+            },
+        );
+        let Some(rows) = rows else {
             return;
         };
         let invites: Vec<InviteView> = rows
@@ -183,6 +297,45 @@ impl Core {
         }
     }
 
+    /// Removes a friend from this device: the peer, the session and every
+    /// message with them.
+    pub fn forget_peer(&mut self, id: &PeerId) {
+        self.peers.remove(id);
+        self.forget_session(id);
+        for slot in self.store.list(persist::messages_prefix(id)) {
+            self.store.delete(slot);
+        }
+    }
+
+    /// Forgets a vanished identity and its history, which only the user
+    /// decides: there is no friendship left on the server to end.
+    pub fn forget_vanished(&mut self, id: &PeerId) -> Result<(), CoreError> {
+        if self.peers.get(id).is_none_or(|p| p.vanished_at.is_none()) {
+            return Err(CoreError::State(
+                "only a vanished identity is forgotten".into(),
+            ));
+        }
+        self.forget_peer(id);
+        self.persist_state();
+        self.emit(Effect::FriendsChanged);
+        Ok(())
+    }
+
+    /// Marks every received message with `peer` read, up to now.
+    pub fn mark_read(&mut self, id: &PeerId) -> Result<(), CoreError> {
+        self.unlocked()?;
+        let last = self.last_stamp;
+        let peer = self.peers.get_mut(id).ok_or(CoreError::NotAFriend)?;
+        if peer.unread == 0 && peer.read_until >= last {
+            return Ok(());
+        }
+        peer.unread = 0;
+        peer.read_until = last;
+        self.persist_state();
+        self.emit(Effect::FriendsChanged);
+        Ok(())
+    }
+
     /// A friendship action; the directory is re-read when it succeeds.
     pub fn friendship(&mut self, action: Action, path: &str, body: Value) {
         self.request(
@@ -196,9 +349,118 @@ impl Core {
 
     pub fn on_then_sync(&mut self, action: Action, a: Answer) {
         if a.ok() {
+            self.emit(Effect::ActionDone { action });
             self.sync_directory();
         } else {
             self.fail(action, &a);
+        }
+    }
+
+    /// Sends a friend request to a username or id.
+    pub fn invite(&mut self, to: &str) {
+        self.request(
+            Method::Post,
+            "/friends/invite",
+            Some(json!({ "to": to })),
+            true,
+            Pending::Invite(to.to_owned()),
+        );
+    }
+
+    pub fn on_invite_sent(&mut self, to: String, a: Answer, now: i64) {
+        if !a.ok() {
+            return self.fail(Action::Invite, &a);
+        }
+        if !self.sent.iter().any(|s| s.to.eq_ignore_ascii_case(&to)) {
+            self.sent.push(SentInviteView { to, at: now });
+            self.persist_state();
+        }
+        self.emit(Effect::InvitesChanged);
+        self.emit(Effect::ActionDone {
+            action: Action::Invite,
+        });
+        self.sync_directory();
+    }
+
+    /// Withdraws a request sent to `peer`, or declines one from them.
+    pub fn cancel(&mut self, peer: &str) {
+        self.request(
+            Method::Post,
+            "/friends/cancel",
+            Some(json!({ "peer": peer })),
+            true,
+            Pending::Cancel(peer.to_owned()),
+        );
+    }
+
+    pub fn on_cancelled(&mut self, peer: &str, a: Answer) {
+        if !a.ok() {
+            return self.fail(Action::Cancel, &a);
+        }
+        self.sent.retain(|s| !s.to.eq_ignore_ascii_case(peer));
+        self.persist_state();
+        self.emit(Effect::InvitesChanged);
+        self.emit(Effect::ActionDone {
+            action: Action::Cancel,
+        });
+        self.sync_directory();
+    }
+
+    /// Records that the user compared the safety number with `peer`.
+    pub fn set_verified(&mut self, peer: &PeerId, verified: bool) -> Result<(), CoreError> {
+        self.unlocked()?;
+        let p = self.peers.get_mut(peer).ok_or(CoreError::NotAFriend)?;
+        if p.pinned.is_none() {
+            return Err(CoreError::State("no pinned key to verify".into()));
+        }
+        if p.verified != verified {
+            p.verified = verified;
+            self.persist_state();
+            self.emit(Effect::FriendsChanged);
+        }
+        Ok(())
+    }
+
+    /// Fetches the key of every friend who has none pinned, so the safety
+    /// number can be shown before the first message (a key never changes
+    /// for an id, so this happens once per friend).
+    fn fetch_missing_keys(&mut self) {
+        let missing: Vec<PeerId> = self
+            .peers
+            .values()
+            .filter(|p| p.pinned.is_none() && !p.is_read_only())
+            .map(|p| p.id.clone())
+            .filter(|id| !self.key_fetches.contains(id))
+            .collect();
+        for id in missing {
+            self.key_fetches.insert(id.clone());
+            self.request(
+                Method::Get,
+                &format!("/peer/{id}/key"),
+                None,
+                false,
+                Pending::PinKey(id),
+            );
+        }
+    }
+
+    pub fn on_pin_key(&mut self, peer: PeerId, a: Answer) {
+        self.key_fetches.remove(&peer);
+        let key = a
+            .str("publicKey")
+            .and_then(|h| hex::decode(h.to_lowercase()).ok())
+            .and_then(|b| hqc::PublicKey::from_bytes(&b).ok())
+            .filter(|k| peer.matches(k) && a.ok());
+        let Some(key) = key else {
+            // Unknown (a deleted account) or not their key: nothing is pinned.
+            return;
+        };
+        if let Some(p) = self.peers.get_mut(&peer)
+            && p.pinned.is_none()
+        {
+            p.pinned = Some(key);
+            self.persist_state();
+            self.emit(Effect::FriendsChanged);
         }
     }
 
@@ -232,22 +494,36 @@ impl Core {
         if let Some(first) = r.msg_ids.first() {
             body.insert("messageId".into(), json!(first));
         }
+        if let Some(note) = r.note.as_deref().filter(|n| !n.is_empty()) {
+            body.insert("note".into(), json!(note));
+        }
         let body = Value::Object(body);
         self.request(
             Method::Post,
             "/report",
             Some(body),
             true,
-            Pending::Action(Action::Report),
+            Pending::Report {
+                block: r.block.then_some(peer_id),
+            },
         );
-        if r.block {
+        Ok(())
+    }
+
+    pub fn on_reported(&mut self, block: Option<PeerId>, a: Answer) {
+        if !a.ok() {
+            return self.fail(Action::Report, &a);
+        }
+        self.emit(Effect::ActionDone {
+            action: Action::Report,
+        });
+        if let Some(peer) = block {
             self.friendship(
                 Action::Block,
                 "/friends/block",
-                json!({ "peer": peer_id.as_str() }),
+                json!({ "peer": peer.as_str() }),
             );
         }
-        Ok(())
     }
 
     pub fn fingerprint(&self, peer: &PeerId) -> Option<String> {
@@ -358,10 +634,13 @@ impl Core {
 }
 
 /// A friend's topics as MQTTService.swift follows them: conversation and
-/// handshake at QoS 1, presence at QoS 0.
+/// handshake at QoS 1, presence at QoS 0. None for a read-only peer.
 pub(crate) fn peer_filters(p: &Peer) -> Vec<(String, QoS)> {
     use hqchat_protocol::topics;
     let mut t = Vec::new();
+    if p.is_read_only() {
+        return t;
+    }
     if let (Some(c), Some(h)) = (&p.convo, &p.handshake) {
         t.push((topics::conversation_topic(c), QoS::AtLeastOnce));
         t.push((topics::handshake_topic(h), QoS::AtLeastOnce));

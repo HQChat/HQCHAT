@@ -7,8 +7,7 @@ struct AddContactView: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.dismiss) private var dismiss
 
-    @ObservedObject var friendService: FriendService
-    @ObservedObject var userService: UserService
+    @EnvironmentObject var chat: ChatStore
     /// Usernames with an invite already outstanding, so the row can say so
     /// instead of offering to invite them twice.
     let pendingUsernames: Set<String>
@@ -24,10 +23,9 @@ struct AddContactView: View {
     @State private var searchTask: Task<Void, Never>?
     @State private var isSearching = false
     @State private var justInvited: Set<String> = []
-
     /// The server does exact-username lookup only (bulk directory listing was
     /// removed for privacy), so there is nothing to filter client-side.
-    private var results: [UserListItem] { userService.userDirectory }
+    @State private var results: [UserListItem] = []
 
     /// How a result already relates to you — the row uses this instead of
     /// offering an add button unconditionally.
@@ -137,8 +135,9 @@ struct AddContactView: View {
         searchTask = Task {
             try? await Task.sleep(nanoseconds: 300_000_000)
             guard !Task.isCancelled else { return }
-            try? await userService.searchUsers(query: trimmed)
+            let found = await chat.lookup(username: trimmed)
             guard !Task.isCancelled else { return }
+            results = found.map { [$0] } ?? []
             isSearching = false
         }
     }
@@ -151,7 +150,7 @@ struct AddContactView: View {
         justInvited.insert(user.username)
         Task {
             do {
-                try await friendService.sendFriendRequest(username: user.username)
+                try await chat.invite(user.username)
             } catch {
                 justInvited.remove(user.username)
                 appError = .from(error)

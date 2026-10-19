@@ -138,13 +138,24 @@ impl Core {
 
     // ── Sending ────────────────────────────────────────────────────────────
 
+    /// Makes the next message to `peer` step the ratchet (a new KEM key
+    /// pair), whatever the step policy would otherwise wait for. A chain
+    /// nothing was sent on yet has nothing to step away from.
+    pub fn rotate_keys(&mut self, peer: &PeerId) -> Result<(), CoreError> {
+        let Some(session) = self.session(peer)? else {
+            return Err(CoreError::State("no session to rotate".into()));
+        };
+        session.chain_started_at = i64::MIN;
+        let session = session.clone();
+        self.put_session(peer, session)
+    }
+
     pub fn send_text(&mut self, peer: &PeerId, text: &str, now: i64) -> Result<(), CoreError> {
         self.unlocked()?;
-        if self
+        if !self
             .peers
             .get(peer)
-            .and_then(|p| p.convo.as_ref())
-            .is_none()
+            .is_some_and(|p| p.convo.is_some() && !p.is_read_only())
         {
             return Err(CoreError::NotAFriend);
         }
@@ -509,7 +520,12 @@ impl Core {
         if sender == me {
             return self.drop_frame("own frame");
         }
-        let Some(peer) = self.peers.get(&sender).cloned() else {
+        let Some(peer) = self
+            .peers
+            .get(&sender)
+            .filter(|p| !p.is_read_only())
+            .cloned()
+        else {
             return self.drop_frame(format!("frame from {sender}, not a friend"));
         };
         if frame.header.to != me {
@@ -538,34 +554,43 @@ impl Core {
             Ok((f, _)) if f.header.kind != Kind::Receipt => Some(f.header.sender),
             _ => None,
         };
-        self.convo.pending_seq = self.convo.pending_seq.wrapping_add(1);
-        let slot = persist::pending_slot(now, self.convo.pending_seq);
-        let record = StoredPending {
-            format: persist::FORMAT,
-            topic: topic.to_owned(),
-            payload,
-        };
-        let sealed = persist::encode(&record).and_then(|plain| {
-            persist::seal_device(&self.vault.device_public_key()?, &slot, &plain)
-        });
-        match sealed {
-            Ok(blob) => {
-                if let Err(e) = self.store.put(slot, blob) {
-                    self.storage_failed("a frame for the unlock", &e.into());
-                }
-            }
+        match self.store_pending(topic, payload, now) {
+            Ok(()) => {}
+            Err(e @ CoreError::Store(_)) => self.storage_failed("a frame for the unlock", &e),
             Err(e) => {
                 return self.drop_frame(format!("could not keep a frame for the unlock: {e:?}"));
             }
         }
         if let Some(sender) = notify
             && let Some(p) = self.peers.get_mut(&sender)
+            && !p.is_read_only()
         {
-            p.unread = p.unread.saturating_add(1);
+            p.pending = p.pending.saturating_add(1);
             self.emit(Effect::Notify {
                 peer: sender.to_string(),
             });
         }
+    }
+
+    /// Writes a frame, sealed to the device key, for `drain_pending` to open:
+    /// what arrived while locked, or what an import brought.
+    pub(crate) fn store_pending(
+        &mut self,
+        topic: &str,
+        payload: Vec<u8>,
+        at: i64,
+    ) -> Result<(), CoreError> {
+        self.convo.pending_seq = self.convo.pending_seq.wrapping_add(1);
+        let slot = persist::pending_slot(at, self.convo.pending_seq);
+        let record = StoredPending {
+            format: persist::FORMAT,
+            topic: topic.to_owned(),
+            payload,
+        };
+        let plain = persist::encode(&record)?;
+        let blob = persist::seal_device(&self.vault.device_public_key()?, &slot, &plain)?;
+        self.store.put(slot, blob)?;
+        Ok(())
     }
 
     /// Opens, in arrival order, the frames that came while locked.
@@ -588,10 +613,11 @@ impl Core {
                 Err(_) => self.store.delete(slot),
             }
         }
+        // What was opened is now counted as unread messages.
         let mut changed = false;
         for p in self.peers.values_mut() {
-            changed |= p.unread != 0;
-            p.unread = 0;
+            changed |= p.pending != 0;
+            p.pending = 0;
         }
         if changed {
             self.emit(Effect::FriendsChanged);
@@ -879,6 +905,10 @@ impl Core {
             if self.put_message(sender, &record).is_err() {
                 return;
             }
+            if let Some(p) = self.peers.get_mut(sender) {
+                p.unread = p.unread.saturating_add(1);
+            }
+            self.persist_state();
             self.emit(Effect::MessageAdded(Message {
                 msg_id: msg_id.to_owned(),
                 peer: sender.to_string(),

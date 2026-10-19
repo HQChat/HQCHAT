@@ -10,7 +10,8 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 DERIVED="${DERIVED_DATA_PATH:-$PWD/.build/DerivedData}"
-SIM_NAME="${SIM_NAME:-iPhone 16 Pro}"
+# The newest iPhone simulator this Xcode has, unless SIM_NAME names one.
+SIM_NAME="${SIM_NAME:-$(xcrun simctl list devices available | sed -n 's/^ *\(iPhone [^(]*[^ (]\) (.*/\1/p' | tail -1)}"
 mkdir -p "$DERIVED"
 
 command -v xcodebuild >/dev/null || {
@@ -20,18 +21,25 @@ command -v xcodebuild >/dev/null || {
 
 step() { printf '\n\033[1m── %s\033[0m\n' "$1"; }
 
-# 0. The HQC wrapper, built from the pinned source (its C self-test runs in `nix build .#hqc`).
-step "Native HQC wrapper"
-nix build "$(cd ../.. && pwd)#hqc" --no-link
-bash ../../native/hqc/build-apple.sh
+# 0. The Rust core (HQChatCore), rebuilt when its sources moved since the
+#     committed build, then its Swift tests against the xcframework.
+step "Rust core (HQChatCore)"
+core_pkg=../../core/swift/HQChatCore
+if [[ "$(cat "$core_pkg/.source" 2>/dev/null)" != "$(bash ../../core/hqchat-ffi/apple-source-hash.sh)" ]]; then
+  nix develop "$(cd ../.. && pwd)#apple" --command bash ../../core/hqchat-ffi/build-apple.sh
+  echo "⚠️  rebuilt core/swift/HQChatCore: commit it with the core change"
+fi
+(cd "$core_pkg" && xcrun swift test)
+# The shell that carries out the engine's effects (apps/apple/CoreShell).
+(cd CoreShell && xcrun swift test)
 
-# 1. The pure-Swift suites (crypto, ratchet, key fingerprint, MQTT wire codec,
-#    message-at-rest), compiled from the real implementations.
+# 1. The Swift suites (the move from 3.1.1, the store and reset, TLS pinning,
+#    the shared unlock, redaction), compiled from the real implementations.
 #
 #    A suite that skips a check fails unless tests/expected-skips.txt budgets
 #    it: some checks cannot run in an unsigned local build (Secure Enclave and
 #    the keychain access group).
-step "Swift tests (crypto / ratchet / codec)"
+step "Swift tests (move / store / pinning / unlock)"
 COVERAGE=1 bash tests/run.sh
 
 # The number that says how much of the app those suites actually reach.
@@ -86,59 +94,13 @@ TEST_RUNNER_HQCAT_UNSIGNED=1 \
   CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
   -quiet test-without-building
 
-# 4b. The two targets that need no TypeScript half.
-#
-#     `topic-route` is `MQTTTopics.route` on attacker-supplied strings — every
-#     inbound publish carries a topic the sender chose, and route decides which
-#     conversation the payload belongs to before anything authenticates who sent
-#     it. `scrub-verdict` is built here rather than run, because its driver lives
-#     on the TypeScript side (step 5b).
-step "Topic routing fuzz"
-bash fuzz/run.sh topic-route --iterations "${FUZZ_TOPIC_ITERATIONS:-50000}" --seed "${FUZZ_SEED:-$RANDOM}"
+# The protocol itself (frames, handshake, ratchet, hqn/1, MQTT) is the Rust
+# core's, tested and fuzzed against the TypeScript reference by
+# `scripts/check.sh core`; the app's store runs live against the local stack in
+# `scripts/check.sh scenarios` (apps/apple/e2e/hqn-live). What stays here is
+# what only Swift has.
 
-#     `n` and `pn` arrive on a frame header and are read to CHOOSE the message
-#     key, so they cannot have been authenticated by the payload that key opens.
-#     A gap walked before it is bounded is an HKDF per step — two billion of them
-#     at n = 2^31, on the MainActor.
-step "Ratchet state fuzz"
-bash fuzz/run.sh ratchet-state --iterations "${FUZZ_RATCHET_ITERATIONS:-10000}" --seed "${FUZZ_SEED:-$RANDOM}"
-
-# 5. Cross-implementation frame fuzzing.
-#
-# This is the check CI cannot run. `ConversationEnvelopeV3.decodeReporting`
-# and services/server/test/reference/protocol/envelope.ts `decodeFrame` must be the same
-# predicate over the same bytes; a divergence passes both suites while one
-# end silently drops the other's frames.
-#
-# Three oracles: verdict, AAD and the decoded fields. An AAD divergence
-# surfaces as a GCM tag mismatch, indistinguishable from a wrong key.
-#
-# Seeded from the shared vectors, then mutated. A finding is written to
-# services/server/test/fuzz/findings/. Frames carry up to 58 kB of KEM
-# material, so this runs at a few hundred per second; mutations aim at the
-# header, where the offsets are.
-step "Frame differential fuzz (Swift ↔ TypeScript)"
-bash fuzz/run.sh envelope-v3-verdict
-(cd ../../services/server && npx tsx test/fuzz/envelope-v3-differential.ts \
-  --iterations "${FUZZ_V3_ITERATIONS:-5000}" --seed "${FUZZ_SEED:-$RANDOM}")
-
-# 7. The same two implementations, from the other end.
-#
-#    Everything above tests DECODERS. The encoders were the half nobody had
-#    pointed a fuzzer at, and they disagreed on every malformed input, because
-#    they fail in structurally different ways: TypeScript copies into a fixed
-#    buffer (short pads, long clips), Swift appends (a wrong length shifts every
-#    field after it), and writeUInt32BE throws where truncatingIfNeeded wraps.
-#
-#    Structs in, frames out: both must refuse the same ones and produce
-#    byte-identical bytes for the rest. Faster than the decode driver — a
-#    generator, no mutation corpus — so the default count is higher.
-step "Envelope v3 ENCODE differential fuzz (Swift ↔ TypeScript)"
-bash fuzz/run.sh envelope-v3-encode-verdict
-(cd ../../services/server && npx tsx test/fuzz/envelope-v3-encode-differential.ts \
-  --iterations "${FUZZ_V3_ENCODE_ITERATIONS:-20000}" --seed "${FUZZ_SEED:-$RANDOM}")
-
-# 7b. The scrubber, against its TypeScript twin.
+# 5. The scrubber, against its TypeScript twin.
 #
 #     src/common/scrub.ts and Redaction.swift are one rule set maintained twice, and
 #     each file asks the next person to keep them in step. This is what checks
@@ -152,56 +114,6 @@ bash fuzz/run.sh scrub-verdict
     --iterations "${FUZZ_SCRUB_ITERATIONS:-20000}" --seed "${FUZZ_SEED:-$RANDOM}" --mode redact &&
   npx tsx test/fuzz/scrub-differential.ts \
     --iterations "${FUZZ_SCRUB_ITERATIONS:-20000}" --seed "${FUZZ_SEED:-$RANDOM}" --mode key)
-
-# 7c. The handshake frame, both directions.
-#
-#     h/{friendshipHash} carries what closes the impersonation gap an init leaves
-#     open, and both ends parse it with hand-written offset arithmetic. Until this
-#     existed the only thing comparing them was five pinned vectors they agree on
-#     by construction.
-#
-#     Three modes: decode (bytes in), encode (frames in — the half the envelope
-#     work found diverging on every malformed input while the decoders agreed),
-#     and round, which checks each side is its own inverse.
-step "Handshake differential fuzz (Swift ↔ TypeScript)"
-bash fuzz/run.sh handshake-verdict
-(cd ../../services/server &&
-  for m in decode encode round; do
-    npx tsx test/fuzz/handshake-differential.ts \
-      --iterations "${FUZZ_HANDSHAKE_ITERATIONS:-20000}" --seed "${FUZZ_SEED:-$RANDOM}" --mode "$m" || exit 1
-  done)
-
-#   hqn/1 — the raw-TCP transport's Noise handshake and framing. The pinned
-#   vectors cover VALID transcripts; this covers the input an attacker controls:
-#   frame streams cut anywhere, mutated server replies (Swift and TypeScript
-#   must refuse the same ones), and — TypeScript only — the gateway's responder,
-#   which must refuse every hostile msg1 without a single unexpected exception.
-step "hqn/1 differential fuzz (Swift ↔ TypeScript)"
-bash fuzz/run.sh noise-verdict
-(cd ../../services/server &&
-  for m in frames msg2 responder; do
-    npx tsx test/fuzz/noise-differential.ts \
-      --iterations "${FUZZ_NOISE_ITERATIONS:-20000}" --seed "${FUZZ_SEED:-$RANDOM}" --mode "$m" || exit 1
-  done)
-
-# 8. A whole interaction through the real Swift implementation: first contact
-#    to a verified transcript (friend request, prekey claim, init, the
-#    initiator-authentication handshake, five messages each way, replay
-#    refusal) over a file bus, with the real HQC library linked.
-step "End-to-end (file bus, real HQC)"
-bash e2e/run.sh
-
-# 9. The same script over a channel that misbehaves.
-#
-#    Nothing above is interesting over a perfect channel: the ratchet's
-#    skipped-key cache and the replay refusal are only reachable when delivery
-#    duplicates or reorders, and MQTT at QoS 1 promises at LEAST once, so a
-#    redelivery is ordinary rather than exotic. Seeded, so a failure replays.
-#
-#    The run asserts that the channel actually misbehaved — a fault injector that
-#    injects nothing reports the same green as a clean run.
-step "End-to-end over a lossy channel"
-bash e2e/run.sh --faults --seed "${FUZZ_SEED:-$RANDOM}"
 
 # Record WHAT was verified, so a push can check it.
 #

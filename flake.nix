@@ -2,11 +2,18 @@
   description = "HQChat: the server package, the NixOS hosts that run it, and the development toolchain";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
+  # Rust with the Apple targets' standard libraries, for the core's Apple
+  # build (`nix develop .#apple`); nixpkgs' rustc carries the host's only.
+  inputs.rust-overlay = {
+    url = "github:oxalica/rust-overlay";
+    inputs.nixpkgs.follows = "nixpkgs";
+  };
 
   outputs =
     {
       self,
       nixpkgs,
+      rust-overlay,
     }:
     let
       inherit (nixpkgs) lib;
@@ -145,9 +152,38 @@
 
       checks.${hostSystem}.stack = pkgs.testers.runNixOSTest ./infra/nixos/tests/stack.nix;
 
-      devShells = lib.genAttrs devSystems (system: {
-        default = devShellFor system;
-      });
+      devShells =
+        lib.genAttrs devSystems (system: {
+          default = devShellFor system;
+        })
+        // {
+          # The core for iOS and macOS: core/hqchat-ffi/build-apple.sh. Same Rust
+          # release as the default shell, plus the Apple targets.
+          aarch64-darwin = {
+            default = devShellFor "aarch64-darwin";
+            apple =
+              let
+                p = import nixpkgs {
+                  system = "aarch64-darwin";
+                  overlays = [ rust-overlay.overlays.default ];
+                };
+              in
+              p.mkShellNoCC {
+                HQC_SOURCE = (p.callPackage ./native/hqc/package.nix { }).source;
+                packages = [
+                  (p.rust-bin.stable."1.95.0".minimal.override {
+                    extensions = [ "clippy" ];
+                    targets = [
+                      "aarch64-apple-darwin"
+                      "aarch64-apple-ios"
+                      "aarch64-apple-ios-sim"
+                      "x86_64-apple-ios"
+                    ];
+                  })
+                ];
+              };
+          };
+        };
 
       formatter = lib.genAttrs devSystems (system: nixpkgs.legacyPackages.${system}.nixfmt);
     };

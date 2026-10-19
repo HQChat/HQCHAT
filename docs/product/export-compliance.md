@@ -37,7 +37,7 @@ Connect); the two targets must not disagree.
 
 | Purpose | Algorithm | Parameters | Implementation |
 |---|---|---|---|
-| End-to-end key agreement (session start, every ratchet step, sign-in challenge, sender proof) | **HQC-256** KEM | pk 7,237 B, sk 7,333 B, ct 14,421 B, ss 32 B; upstream commit pinned in `native/hqc/HQC_UPSTREAM.txt` | compiled C in the apps (`HQC.xcframework`, `libhqc_wrap.dylib`) and on the server (`libhqc_wrap.so`) |
+| End-to-end key agreement (session start, every ratchet step, sign-in challenge, sender proof) | **HQC-256** KEM | pk 7,237 B, sk 7,333 B, ct 14,421 B, ss 32 B; upstream commit pinned in `native/hqc/HQC_UPSTREAM.txt` | compiled C inside the Rust core, in the apps (`HQChatCoreFFI.xcframework`) and on the server (the Node addon) |
 | End-to-end message encryption | **AES-256-GCM** | 256-bit key, 12-byte IV, 16-byte tag, header as AAD | Apple CryptoKit; Node.js (OpenSSL) for the server-side bot |
 | Key derivation | **HKDF-SHA-256** | 32-byte outputs, one label per use | CryptoKit; Node.js |
 | Message-key schedule | KEM double ratchet over HQC-256 | a step after 32 messages or 15 minutes of a used chain; one key per message | `docs/architecture/e2ee-protocol.md` |

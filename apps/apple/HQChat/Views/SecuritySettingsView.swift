@@ -1,15 +1,11 @@
 // The technical detail, moved off the settings root: what's actually
-// protected, and the one control that trades security for convenience.
+// protected, and by what.
 
 import SwiftUI
 
 struct SecuritySettingsView: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.dismiss) private var dismiss
-
-    /// App-wide unsecure mode: hold the identity key in memory to cut biometric
-    /// prompts from three per launch to one. Off by default.
-    @AppStorage(AuthPrefs.unsecureKeyHoldKey) private var unsecureKeyHold = false
 
     /// Which gate the active profile's keys carry, read back from the tier marker.
     private var tier: KeyProtectionTier {
@@ -26,7 +22,6 @@ struct SecuritySettingsView: View {
             #endif
             ScrollView {
                 VStack(spacing: 22) {
-                    fastUnlockCard
                     protectionCard
                 }
                 .padding()
@@ -42,51 +37,15 @@ struct SecuritySettingsView: View {
         #endif
     }
 
-    private var fastUnlockCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HQFieldLabel(text: "unlocking", tint: HQColor.warning)
-
-            Toggle(isOn: $unsecureKeyHold) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Fast unlock")
-                        .font(HQFont.ui(15, weight: .semibold))
-                        .foregroundColor(HQColor.textPrimary)
-                    Text("less secure")
-                        .font(HQFont.mono(11, weight: .semibold))
-                        .foregroundColor(HQColor.warning)
-                }
-            }
-            .tint(HQColor.green)
-            .disabled(tier.holdsKeyForSession)
-            .onChange(of: unsecureKeyHold) { _, isOn in
-                // Turning it off must immediately drop any held key.
-                if !isOn { appState.clearCachedKey() }
-            }
-
-            // A toggle that changes nothing is worse than no toggle: this
-            // profile already holds its key for the session because that is what
-            // its tier IS, and leaving the switch live would let someone turn it
-            // "off" and believe they had tightened something.
-            Text(tier.holdsKeyForSession
-                 ? "Always on for this profile — quick unlock is what it was created with. One authentication covers the whole session; asking again would add friction without adding protection."
-                 : "Asks for biometric confirmation once per launch instead of on every secure action. Your identity key is then held in memory while the app is open, and cleared when it goes to the background.")
-                .font(HQFont.ui(12))
-                .foregroundColor(HQColor.textMuted)
-        }
-        .padding(16)
-        .hqCard(accent: HQColor.warning)
-    }
-
     private var protectionCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             HQFieldLabel(text: "what's protected", tint: HQColor.green)
 
             protectionRow(icon: "key.fill",
                           title: "Identity key",
-                          detail: unsecureKeyHold
-                            ? "Held in memory while open (fast unlock on)"
-                            : tier.detail,
-                          ok: !unsecureKeyHold && !tier.isReduced)
+                          detail: "Sealed to this device's Secure Enclave key · \(tier.detail). "
+                            + "Opened once per session, forgotten when the app goes to the background.",
+                          ok: !tier.isReduced)
             if tier.isReduced {
                 protectionRow(icon: "exclamationmark.triangle.fill",
                               title: "Reduced protection",
@@ -94,8 +53,8 @@ struct SecuritySettingsView: View {
                               ok: false)
             }
             protectionRow(icon: "key.horizontal.fill",
-                          title: "Message keys",
-                          detail: "Keychain — never in the database",
+                          title: "Session keys",
+                          detail: "Sealed on this device, never in a backup",
                           ok: true)
             protectionRow(icon: "lock.fill",
                           title: "Messages in transit",
@@ -103,7 +62,7 @@ struct SecuritySettingsView: View {
                           ok: true)
             protectionRow(icon: "externaldrive.fill",
                           title: "Messages at rest",
-                          detail: "Sealed with a per-profile key that never leaves the Keychain",
+                          detail: "Sealed with a per-profile key only the Secure Enclave opens",
                           ok: true)
         }
         .padding(16)

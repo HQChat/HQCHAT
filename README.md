@@ -41,7 +41,7 @@ server sees the graph, topic names, sizes and timing, never plaintext.
 | `apps/site/` | Cloudflare Worker: the website, the crypto write-up, legal pages, the donate page |
 | `services/server/` | the server, the hqn/1 gateway, the reference TypeScript client and the helper bot built on it |
 | `core/` | the Rust core: HQC, the protocol, the client engine, and its bindings for Node, Swift and Kotlin (not wired into the apps or the server yet; see [multiplatform](docs/architecture/multiplatform.md)) |
-| `native/hqc/` | the HQC-256 wrapper (C), built from a pinned upstream commit for Linux and Apple |
+| `native/hqc/` | the HQC-256 wrapper (C), built from a pinned upstream commit into the Rust core (every platform) and the standalone Nix package |
 | `infra/environments/` | one JSON file per environment: domain, region, sizes, non-secret configuration |
 | `infra/terraform/` | one environment from nothing: network, droplets, database, firewalls, DNS, the Worker |
 | `infra/nixos/` | the hosts: NixOS modules per role, the disk image, the host agent, the two-VM stack test |
@@ -57,10 +57,9 @@ Everything below runs inside `nix develop`, which pins every tool.
 **Apple apps** (Xcode 26+):
 
 ```bash
-bash native/hqc/build-apple.sh            # the HQC library and xcframework
 open apps/apple/HQChat.xcodeproj           # schemes: HQChat (macOS), HQChat iOS
 bash apps/apple/tests/run.sh               # the Swift suites, no Xcode target needed
-bash apps/apple/verify.sh                  # the full Apple gate: builds, suites, e2e, fuzzers, UI tests
+bash apps/apple/verify.sh                  # the full Apple gate: the core package, builds, suites, UI tests
 ```
 
 `verify.sh` runs on a Mac, not in CI (macOS runners cost ten times a Linux one).
@@ -84,7 +83,7 @@ setting, no rebuild. No secret is committed.
 | If you are… | Start with |
 |---|---|
 | a **backend** engineer | [message flow](docs/architecture/message-flow.md) · [protocol](docs/architecture/e2ee-protocol.md) · [`services/server/README.md`](services/server/README.md) |
-| an **Apple** engineer | [user journey](docs/product/user-journey.md) · `apps/apple/HQChat/Services/ChatSession.swift` |
+| an **Apple** engineer | [user journey](docs/product/user-journey.md) · `apps/apple/HQChat/Services/ChatStore.swift` |
 | a **designer** | [design system](docs/product/design-system.md) · [user journey](docs/product/user-journey.md) |
 | **operations** | [deploy](docs/runbooks/deploy.md) · [debugging](docs/runbooks/debugging.md) · [moderation](docs/runbooks/moderation.md) |
 | **security** | [security policy](SECURITY.md) · [pentest scope](docs/pentest-scope.md) · [protocol](docs/architecture/e2ee-protocol.md) |

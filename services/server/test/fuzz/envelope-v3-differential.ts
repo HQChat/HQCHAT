@@ -1,6 +1,6 @@
 /**
  * Differential fuzzing for the v3 binary framing: `decodeFrame` (TypeScript)
- * against `ConversationEnvelopeV3.decodeReporting` (Swift), on identical bytes.
+ * against the Rust core's frame decoder, on identical bytes.
  *
  * WHY A SECOND DRIVER. The v2 harness mutates JSON TEXT, because that is where
  * v2's disagreements live — duplicate keys, escapes, number spellings. v3 has no
@@ -24,9 +24,6 @@
  * Run against the Rust core (the default; scripts/check.sh core does this):
  *   cd core && cargo build --release -p hqchat-verdict
  *   cd services/server && npx tsx test/fuzz/envelope-v3-differential.ts --iterations 100000
- * or against the Swift app, on a Mac:
- *   cd apps/apple/fuzz && ./run.sh envelope-v3-verdict
- *   cd services/server && npx tsx test/fuzz/envelope-v3-differential.ts --iterations 100000 --oracle swift
  */
 
 import { execFileSync } from "node:child_process";
@@ -179,14 +176,14 @@ function tsVerdict(frame: Buffer): string {
   return `A ${aad.length}:${aadDigest}:${h.digest("hex")}`;
 }
 
-function agree(ts: string, swift: string): boolean {
-  if (ts[0] === "T" || swift[0] === "T") return false;
-  if (ts[0] !== swift[0]) return false;
-  if (ts[0] === "A") return ts === swift; // verdict, AAD and fields all at once
+function agree(ts: string, theirs: string): boolean {
+  if (ts[0] === "T" || theirs[0] === "T") return false;
+  if (ts[0] !== theirs[0]) return false;
+  if (ts[0] === "A") return ts === theirs; // verdict, AAD and fields all at once
   return true;
 }
 
-function swiftVerdicts(frames: Buffer[], batchFile: string): string[] {
+function oracleVerdicts(frames: Buffer[], batchFile: string): string[] {
   // NO trailing newline, and empty lines are meaningful: a truncation mutation
   // can produce a zero-length frame, whose hex is the empty string. Dropping
   // those silently is what made the two sides disagree about how many verdicts
@@ -216,7 +213,7 @@ function main() {
   const seed = num("--seed", 1);
   const batchSize = num("--batch", 2000);
 
-  ORACLE = oracle("envelope-v3-verdict", "envelope-v3");
+  ORACLE = oracle("envelope-v3");
 
   const seeds = loadSeeds();
   const rng = makeRng(seed);
@@ -232,13 +229,13 @@ function main() {
     for (let i = 0; i < n; i++) frames.push(mutate(rng.pick(seeds), rng));
 
     const ts = frames.map(tsVerdict);
-    const swift = swiftVerdicts(frames, batchFile);
-    if (swift.length !== frames.length) {
-      console.error(`✗ the ${ORACLE.name} half returned ${swift.length} verdicts for ${frames.length} frames`);
+    const theirs = oracleVerdicts(frames, batchFile);
+    if (theirs.length !== frames.length) {
+      console.error(`✗ the ${ORACLE.name} half returned ${theirs.length} verdicts for ${frames.length} frames`);
       process.exit(1);
     }
     for (let i = 0; i < frames.length; i++) {
-      if (agree(ts[i]!, swift[i]!)) continue;
+      if (agree(ts[i]!, theirs[i]!)) continue;
       mismatches++;
       fs.mkdirSync(FINDINGS, { recursive: true });
       const file = path.join(FINDINGS, `v3-mismatch-${seed}-${done + i}.hex`);
@@ -246,7 +243,7 @@ function main() {
       if (mismatches <= 10) {
         console.log(`\n✗ MISMATCH at iteration ${done + i}`);
         console.log(`  ts:    ${ts[i]}`);
-        console.log(`  ${ORACLE.name.padEnd(5)}: ${swift[i]}`);
+        console.log(`  ${ORACLE.name.padEnd(5)}: ${theirs[i]}`);
         console.log(`  input: ${file}`);
       }
     }

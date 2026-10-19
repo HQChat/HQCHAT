@@ -89,6 +89,26 @@ pub struct FriendView {
     pub has_session: bool,
     /// Unread messages, including those waiting for an unlock.
     pub unread: u32,
+    /// When this user blocked them (Unix milliseconds): read-only until
+    /// `Engine::unblock`.
+    pub blocked_at: Option<i64>,
+    /// When their identity was replaced by a new one under the same
+    /// username: read-only until `Engine::forget`. Also what an
+    /// impersonation looks like.
+    pub vanished_at: Option<i64>,
+    /// Their identity key is pinned (checked against their id).
+    pub has_key: bool,
+    /// The user compared the safety number with them.
+    pub verified: bool,
+}
+
+/// A friend request this user sent, not answered yet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SentInviteView {
+    /// The username or id it was sent to, as typed.
+    pub to: String,
+    /// When, in Unix milliseconds.
+    pub at: i64,
 }
 
 /// A friend request waiting for this user's answer.
@@ -109,7 +129,9 @@ pub struct ReportInput {
     pub reason: String,
     /// The message ids whose text is sent as the excerpt.
     pub msg_ids: Vec<String>,
-    /// Block them too.
+    /// What the user added, if anything.
+    pub note: Option<String>,
+    /// Block them too, once the report is filed.
     pub block: bool,
 }
 

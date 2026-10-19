@@ -7,7 +7,10 @@ use std::sync::Arc;
 
 use hqc::{KeyPair, SecretKey};
 use hqchat_engine::software::{MemoryStore, SoftwareVault};
-use hqchat_engine::{CoreError, Effect, Engine, Import, ImportIdentity, ImportPeer};
+use hqchat_engine::{
+    CoreError, Delivery, Effect, Engine, Import, ImportIdentity, ImportMessage, ImportPeer,
+    ImportPending,
+};
 use hqchat_protocol::ratchet::{self, PrekeyBundle, PrekeySecrets};
 use hqchat_protocol::{HqcKem, PeerId};
 use support::{Client, FakeServer, NOW, User, settle};
@@ -25,6 +28,9 @@ fn only_seed(fill: u8) -> Import {
         identity: ImportIdentity::Seed(seed(fill)),
         prekeys: None,
         peers: vec![],
+        messages: vec![],
+        pending: vec![],
+        sent: vec![],
     }
 }
 
@@ -34,14 +40,14 @@ fn a_seed_imports_as_the_identity_it_derives_and_survives_a_restart() {
     let store = Arc::new(MemoryStore::default());
     let engine = Engine::new(support::config("p"), vault.clone(), store.clone()).unwrap();
     assert_eq!(
-        engine.import(only_seed(9)).unwrap(),
+        engine.import(only_seed(9), 0).unwrap(),
         vec![Effect::TierChanged(hqchat_engine::Tier::Software)]
     );
     assert!(
         engine.create_identity().is_err(),
         "an imported profile has its identity"
     );
-    assert!(engine.import(only_seed(9)).is_err(), "imports once");
+    assert!(engine.import(only_seed(9), 0).is_err(), "imports once");
 
     let restarted = Engine::new(support::config("p"), vault, store).unwrap();
     restarted.unlock(0).unwrap();
@@ -66,11 +72,14 @@ fn a_key_that_does_not_hash_to_its_peer_is_refused_and_nothing_is_kept() {
         handshake_id: None,
         pinned_pk: Some(identity(2).public.as_bytes().to_vec()),
         session: None,
+        blocked_at: None,
+        vanished_at: None,
+        verified: false,
     });
-    assert!(matches!(engine.import(import), Err(CoreError::State(_))));
+    assert!(matches!(engine.import(import, 0), Err(CoreError::State(_))));
     assert!(store.snapshot().is_empty(), "nothing was written");
     engine
-        .import(only_seed(9))
+        .import(only_seed(9), 0)
         .expect("a refused import can be redone");
 }
 
@@ -141,22 +150,32 @@ fn imported_sessions_keep_the_conversation_going_both_ways() {
         handshake_id: Some(handshake.clone()),
         pinned_pk: Some(key.public.as_bytes().to_vec()),
         session: Some(session),
+        blocked_at: None,
+        vanished_at: None,
+        verified: false,
     };
     let start = |profile: &str, fill: u8, peers: Vec<ImportPeer>| {
         let mut c = Client::new(&server, profile);
         let e = c
             .engine
-            .import(Import {
-                identity: ImportIdentity::Seed(seed(fill)),
-                prekeys: None,
-                peers,
-            })
+            .import(
+                Import {
+                    identity: ImportIdentity::Seed(seed(fill)),
+                    prekeys: None,
+                    peers,
+                    messages: vec![],
+                    pending: vec![],
+                    sent: vec![],
+                },
+                NOW,
+            )
             .unwrap();
         c.pump(e);
         c.engine_id = PeerId::of(&identity(fill).public).to_string();
         c.start(NOW);
         c
     };
+    let alice_copy = alice_session.clone();
     let mut alice = start("a", 1, vec![peer(&b, &bob_id, alice_session)]);
     let mut bob = start("b", 2, vec![peer(&a, &alice_id, bob_session)]);
 
@@ -165,6 +184,14 @@ fn imported_sessions_keep_the_conversation_going_both_ways() {
         .send_text(alice.id(), "from bob".into(), NOW)
         .unwrap();
     bob.pump(e);
+    let from_bob = server
+        .borrow()
+        .broker
+        .routed
+        .iter()
+        .find(|(topic, _)| topic.starts_with("cv/"))
+        .cloned()
+        .expect("bob's frame went through the broker");
     settle(&mut [&mut alice, &mut bob]);
     let e = alice
         .engine
@@ -191,5 +218,131 @@ fn imported_sessions_keep_the_conversation_going_both_ways() {
             .iter()
             .any(|(_, path)| path == "/prekeys/claim"),
         "no new session was opened: the imported ones carried both messages"
+    );
+
+    // The same message, as a frame the old implementation had kept unopened
+    // while locked: the import's drain opens it into the new profile's history.
+    let mut later = Client::new(&server, "a-later");
+    let e = later
+        .engine
+        .import(
+            Import {
+                identity: ImportIdentity::Seed(seed(1)),
+                prekeys: None,
+                peers: vec![peer(&b, &bob_id, alice_copy)],
+                messages: vec![],
+                pending: vec![ImportPending {
+                    topic: from_bob.0,
+                    payload: from_bob.1,
+                    at: NOW,
+                }],
+                sent: vec![],
+            },
+            NOW,
+        )
+        .unwrap();
+    later.pump(e);
+    later.engine_id = a.clone();
+    assert_eq!(received(&later, &bob), ["from bob"]);
+}
+
+#[test]
+fn history_imports_in_order_and_new_messages_sort_after_it() {
+    let engine = Engine::new(
+        support::config("p"),
+        Arc::new(SoftwareVault::default()),
+        Arc::new(MemoryStore::default()),
+    )
+    .unwrap();
+    let friend = PeerId::of(&identity(1).public).to_string();
+    let message = |id: &str, outgoing, at| ImportMessage {
+        peer: friend.clone(),
+        msg_id: id.into(),
+        outgoing,
+        text: format!("text {id}"),
+        at,
+        delivery: outgoing.then_some(Delivery::Delivered),
+        read: true,
+    };
+    let mut import = only_seed(9);
+    import.messages = vec![message("b", false, NOW + 5), message("a", true, NOW)];
+    engine.import(import, NOW).unwrap();
+    let history = engine.history(friend.clone(), None, 10).unwrap();
+    assert_eq!(
+        history
+            .iter()
+            .map(|m| (m.msg_id.as_str(), m.outgoing))
+            .collect::<Vec<_>>(),
+        [("a", true), ("b", false)]
+    );
+    assert_eq!(history[0].delivery, Some(Delivery::Delivered));
+
+    let mut bad = only_seed(8);
+    bad.messages = vec![ImportMessage {
+        peer: "not an id".into(),
+        ..message("c", false, NOW)
+    }];
+    let other = Engine::new(
+        support::config("q"),
+        Arc::new(SoftwareVault::default()),
+        Arc::new(MemoryStore::default()),
+    )
+    .unwrap();
+    assert!(
+        other.import(bad, NOW).is_err(),
+        "a message for no valid peer refuses the import"
+    );
+}
+
+#[test]
+fn read_flags_and_friend_states_come_across() {
+    let engine = Engine::new(
+        support::config("p"),
+        Arc::new(SoftwareVault::default()),
+        Arc::new(MemoryStore::default()),
+    )
+    .unwrap();
+    let id = |fill| PeerId::of(&identity(fill).public).to_string();
+    let friend = |fill, blocked_at, vanished_at| ImportPeer {
+        id: id(fill),
+        username: None,
+        convo_id: Some("c".repeat(64)),
+        handshake_id: Some("d".repeat(64)),
+        pinned_pk: None,
+        session: None,
+        blocked_at,
+        vanished_at,
+        verified: false,
+    };
+    let message = |msg_id: &str, outgoing, at, read| ImportMessage {
+        peer: id(1),
+        msg_id: msg_id.into(),
+        outgoing,
+        text: msg_id.into(),
+        at,
+        delivery: None,
+        read,
+    };
+    let mut import = only_seed(9);
+    import.messages = vec![
+        message("seen", false, NOW, true),
+        message("mine", true, NOW + 1, false),
+        message("new 1", false, NOW + 2, false),
+        message("new 2", false, NOW + 3, false),
+    ];
+    import.peers = vec![
+        friend(1, None, None),
+        friend(2, Some(NOW), None),
+        friend(3, None, Some(NOW)),
+    ];
+    engine.import(import, NOW).unwrap();
+    let friends = engine.friends();
+    let by = |fill| friends.iter().find(|f| f.id == id(fill)).unwrap();
+    assert_eq!(by(1).unread, 2, "unread after the newest message seen");
+    assert_eq!(by(2).blocked_at, Some(NOW));
+    assert_eq!(by(3).vanished_at, Some(NOW));
+    assert!(
+        engine.send_text(id(2), "hi".into(), NOW).is_err(),
+        "a blocked friend stays read-only"
     );
 }

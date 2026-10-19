@@ -179,7 +179,7 @@ struct ProfileSelectionView: View {
 
     // MARK: Actions
 
-    /// Selecting a profile is one step: Face ID, then straight into the app.
+    /// Selecting a profile is one step: into the app, where the unlock is asked.
     private func selectProfile(_ profile: Profile) {
         do {
             try profileManager.switchToProfile(profile)
@@ -262,7 +262,7 @@ struct ProfileSelectionView: View {
             // Claimed with the server after the first sign-in (AppState.claimDesiredUsername).
             profile.desiredUsername = username
             try? modelContext.save()
-            try profileManager.switchToProfile(profile, skipBiometricVerification: true)
+            try profileManager.switchToProfile(profile)
             resetForm()
             showingCreateProfile = false
             enter()

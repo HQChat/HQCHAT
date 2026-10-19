@@ -6,9 +6,6 @@ import SwiftData
 struct SettingsView: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.modelContext) private var modelContext
-
-    @ObservedObject var userService: UserService
     let profileManager: ProfileManager?
     /// True when hosted in the iOS tab bar, where a "Done" button would make no
     /// sense. macOS still presents this as a sheet.
@@ -86,8 +83,7 @@ struct SettingsView: View {
             .navigationDestination(for: Route.self) { route in
                 switch route {
                 case .account:
-                    AccountSettingsView(userService: userService,
-                                        profileManager: profileManager)
+                    AccountSettingsView(profileManager: profileManager)
                 case .security:
                     SecuritySettingsView()
                 case .diagnostics:
@@ -144,7 +140,6 @@ struct SettingsView: View {
     /// counts as neither — showing it here would claim an identity this device
     /// does not own.
     private var handle: String? {
-        if let confirmed = userService.currentUsername { return confirmed }
         if appState.usernameRejected != nil { return nil }
         return profileManager?.currentProfile?.username
     }
@@ -160,11 +155,11 @@ struct SettingsView: View {
                     .foregroundColor(HQColor.textPrimary)
 
                 // Labelled, so the eight hex characters read as a fingerprint.
-                if let key = profileManager?.currentProfile?.publicKey {
-                    Text("key \(HQFingerprint.short(key))")
+                if let id = profileManager?.currentProfile?.peerID, !id.isEmpty {
+                    Text("key \(HQFingerprint.short(clientID: id))")
                         .font(HQFont.mono(12))
                         .foregroundColor(HQColor.textMuted)
-                        .accessibilityLabel("key fingerprint \(HQFingerprint.short(key))")
+                        .accessibilityLabel("key fingerprint \(HQFingerprint.short(clientID: id))")
                 }
             }
 

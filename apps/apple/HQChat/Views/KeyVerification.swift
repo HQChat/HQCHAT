@@ -30,12 +30,6 @@ import AppKit
 #endif
 
 enum KeyVerification {
-    /// A deterministic, symmetric fingerprint of the two public keys (pure logic
-    /// lives in KeyFingerprint so it's unit-testable without UI).
-    static func safetyNumber(myPublicKey: Data, theirPublicKey: Data) -> String {
-        KeyFingerprint.safetyNumber(myPublicKey: myPublicKey, theirPublicKey: theirPublicKey)
-    }
-
     /// A QR image of the safety number's raw digits (for quick visual compare).
     static func qrImage(for safetyNumber: String) -> Image? {
         let payload = safetyNumber.filter(\.isNumber)
@@ -58,16 +52,17 @@ enum KeyVerification {
 }
 
 struct KeyVerificationView: View {
-    let friend: Friend
-    let myPublicKey: Data?
+    let friend: Contact
+    /// From the core: SHA-256 of the two identity keys, sorted, as 12 groups
+    /// of 5 digits. Nil until their key is pinned.
+    let safetyNumber: String?
     let onMarkVerified: () -> Void
     let onClearVerification: () -> Void
     var onRotateKeys: () -> Void = {}
     @Environment(\.dismiss) private var dismiss
 
     private var safety: String? {
-        guard let myPublicKey, friend.hasPinnedKey else { return nil }
-        return KeyVerification.safetyNumber(myPublicKey: myPublicKey, theirPublicKey: friend.publicKey)
+        friend.hasPinnedKey ? safetyNumber : nil
     }
 
     var body: some View {

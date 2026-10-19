@@ -56,8 +56,8 @@ impl Engine {
 
     /// Brings another implementation's identity, prekeys and sessions into
     /// this profile, which must have none yet (see [`Import`]).
-    pub fn import(&self, import: Import) -> Result<Vec<Effect>, CoreError> {
-        self.run(|c| c.import(import))
+    pub fn import(&self, import: Import, now: i64) -> Result<Vec<Effect>, CoreError> {
+        self.run(|c| c.import(import, now))
     }
 
     /// Starts working: signs in when unlocked, otherwise asks for an unlock.
@@ -99,6 +99,21 @@ impl Engine {
         Vec::new()
     }
 
+    /// Announces presence: offline as the app goes to the background (the
+    /// push bridge then wakes the device), online on its return.
+    pub fn set_presence(&self, online: bool, now: i64) -> Vec<Effect> {
+        self.run(|c| {
+            c.set_presence(online, now);
+            Ok(())
+        })
+        .unwrap_or_default()
+    }
+
+    /// This profile's client id, known from the first unlock on.
+    pub fn my_id(&self) -> Option<String> {
+        self.core().me.as_ref().map(ToString::to_string)
+    }
+
     /// A timer fired, or the shell resumed: keep-alive, refresh, retries.
     pub fn tick(&self, now: i64) -> Vec<Effect> {
         self.run(|c| {
@@ -130,14 +145,26 @@ impl Engine {
     /// Sends a friend request to a username.
     pub fn invite(&self, username: String) -> Vec<Effect> {
         self.run(|c| {
-            c.friendship(
-                crate::Action::Invite,
-                "/friends/invite",
-                serde_json::json!({ "to": username }),
-            );
+            c.invite(&username);
             Ok(())
         })
         .unwrap_or_default()
+    }
+
+    /// Withdraws a friend request sent to `peer` (a username or id), or
+    /// declines one received from them.
+    pub fn cancel(&self, peer: String) -> Vec<Effect> {
+        self.run(|c| {
+            c.cancel(&peer);
+            Ok(())
+        })
+        .unwrap_or_default()
+    }
+
+    /// Records whether the user compared the safety number with `peer`.
+    pub fn set_verified(&self, peer: String, verified: bool) -> Result<Vec<Effect>, CoreError> {
+        let peer = hqchat_protocol::PeerId::parse(&peer)?;
+        self.run(|c| c.set_verified(&peer, verified))
     }
 
     /// Accepts a friend request.
@@ -177,6 +204,39 @@ impl Engine {
             Ok(())
         })
         .unwrap_or_default()
+    }
+
+    /// Lifts a block. The friendship is not restored on either side: the
+    /// two invite each other again, and the kept conversation is removed
+    /// with the next directory sync, as after any unfriend.
+    pub fn unblock(&self, peer: String) -> Vec<Effect> {
+        self.run(|c| {
+            c.friendship(
+                crate::Action::Unblock,
+                "/friends/unblock",
+                serde_json::json!({ "peer": peer }),
+            );
+            Ok(())
+        })
+        .unwrap_or_default()
+    }
+
+    /// Forgets a vanished identity and its conversation, on this device.
+    pub fn forget(&self, peer: String) -> Result<Vec<Effect>, CoreError> {
+        let peer = hqchat_protocol::PeerId::parse(&peer)?;
+        self.run(|c| c.forget_vanished(&peer))
+    }
+
+    /// Steps the ratchet with `peer` on the next message sent.
+    pub fn rotate_keys(&self, peer: String) -> Result<Vec<Effect>, CoreError> {
+        let peer = hqchat_protocol::PeerId::parse(&peer)?;
+        self.run(|c| c.rotate_keys(&peer))
+    }
+
+    /// Marks the conversation with `peer` read.
+    pub fn mark_read(&self, peer: String) -> Result<Vec<Effect>, CoreError> {
+        let peer = hqchat_protocol::PeerId::parse(&peer)?;
+        self.run(|c| c.mark_read(&peer))
     }
 
     /// Reports a friend's messages.
@@ -227,6 +287,11 @@ impl Engine {
     /// The friends, sorted for display.
     pub fn friends(&self) -> Vec<FriendView> {
         self.core().friends()
+    }
+
+    /// Friend requests this user sent, not answered yet.
+    pub fn sent_invites(&self) -> Vec<crate::SentInviteView> {
+        self.core().sent.clone()
     }
 
     /// Friend requests waiting for this user's answer.

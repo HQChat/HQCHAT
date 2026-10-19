@@ -1,9 +1,9 @@
 # Core wiring: from the UI to the server and back
 
-**Status: the core is built (`core/`), and the server, the gateway and the
-bot run on it (phase 2, deployment pending); the apps do not use it yet.**
-Where a step below says "Today" for the server, it is what the server did
-before phase 2. This document follows one message from the sender's UI, through the
+**Status: the core is built (`core/`); the server, the gateway and the bot
+run on it (phase 2, deployment pending), and so do the Apple apps (phase 3,
+shipping as the release after 3.1.1).** Where a step below says "Today", it is
+what the server did before phase 2 and the Apple app before phase 3. This document follows one message from the sender's UI, through the
 server, to the recipient's UI and back as a delivery receipt. Each step names
 the function that does it today, in the Apple app, the TS reference client
 or the server, and the Rust function that replaces it. The design and the
@@ -172,6 +172,38 @@ sequenceDiagram
 Every blob is bound to its key as AAD. Opening rows the Apple app sealed
 today is the importer's job (phase 3).
 
+## The switch (phase 3)
+
+There is no flag. 3.1.1 is the last build on the Swift implementation; the
+next release, 3.2.0, runs entirely on the core, and the Swift protocol,
+MQTT and session code goes in that same release. The only code that knows
+about the old implementation lives under `apps/apple/HQChat/Migration/`, and
+it is deleted a few weeks after 3.2.0 ships.
+
+### In 3.2.0
+
+| Step | What |
+|---|---|
+| A session per profile | `CoreSession`: the `Engine` (with `SecureEnclaveVault` and a `FileStore` in the profile's directory) and its `CoreShell`, created after the normal unlock. It turns effects into an observable model the views read: friends, invites, the open conversation, connection, tier |
+| The views on the model | Chat (`history`, `send_text`, `retry`, statuses, `mark_read` when shown), contacts (`invite`, `accept`, `remove`, `block`, `unblock`, `forget`; blocked and vanished banners), key verification (`fingerprint`), report, username, account deletion. `Notify` posts the content-free notification; the badge is unread plus invites |
+| The move | On the first unlock after the update, when the profile has no core state but has 3.1.1 data: `LegacySnapshot.read` → `CoreImport.importData` → `Engine.importState`, under a short "updating your data" screen. Only once the core has opened the profile are the old Keychain items, SwiftData rows and pending frames deleted. If it fails, nothing is deleted: the screen says so and the next launch tries again |
+| What `Migration/` holds | the importer, plus what reading 3.1.1 data needs and nothing else uses: the old SwiftData models (`Message`, `Friend`, `PendingFrame`), `RatchetSessionState`, `PrekeyStore`, and the read paths of `AESKeyStore` and `MessageKeyStore` |
+| Deleted | everything listed under "What goes" below |
+| Gate | `verify.sh` with the UI tests on the core; the Swift app live over hqn/1 in the scenarios; the importer run on a store captured from a 3.1.1 build; then the device checks (Secure Enclave, the move on a real 3.1.1 install), which come after the code |
+
+### A few weeks later
+
+`Migration/` goes, and with it everything that only reads 3.1.1 data: the
+old models leave the SwiftData schema (`Persistence.swift`, and
+`Profile.friends`), `MessageKeyStore.unwrap` and its ECIES algorithm go,
+`Profile.publicKeyHex` stops being read, and `DataResetService` stops naming
+the 3.1.1 Keychain services. The same release deletes what is left of that
+data on a device: the old store's rows and those Keychain items. A profile
+still holding only 3.1.1 data then has no core state and is set up as new:
+a new identity, which its friends see as vanished. That is the price of
+keeping the transition short, so the window has to be long enough for
+active users to open the app once.
+
 ## The functions the core exposes
 
 ### To Swift and Kotlin (`hqchat-ffi`, uniffi)
@@ -179,8 +211,10 @@ today is the importer's job (phase 3).
 - `Engine::new(config, vault, store)`, `create_identity`, `start`,
   `unlock`, `lock`, `tick`.
 - User actions: `send_text`, `retry`, `invite`, `accept`, `remove`, `block`,
-  `report`, `set_username`, `delete_account`, `register_push`.
-- Reads: `history`, `friends`, `invites`, `fingerprint`.
+  `unblock`, `forget` (a vanished identity), `mark_read`, `report`,
+  `set_username`, `delete_account`, `register_push`, and `import_state` once.
+- Reads: `history`, `friends` (with unread count, `blocked_at`,
+  `vanished_at`), `invites`, `fingerprint`.
 - I/O results: `on_http`, `on_opened`, `on_bytes`, `on_closed`,
   `on_network_changed`.
 - Effects: `Http`, `Open`, `Write`, `Close`, `Timer`, `NeedUnlock`,
@@ -207,10 +241,10 @@ today is the importer's job (phase 3).
 
 | Where | Deleted once the core is wired in | Kept |
 |---|---|---|
-| `apps/apple/HQChat/Services/` | `ChatSession` internals, `ConversationRouter`, `RatchetSession`, `DoubleRatchet`, `Handshake`, `ConversationEnvelopeV3`, `ConversationFrame`, `NoiseHQN`, `MQTTWireClient`, `MQTTService`, `MQTTConnectProof`, `MQTTTopics`, `PrekeyService`, `InboundQueue`, `AESService`, `HQCKem`, `HQCService`, `AuthService`, `DirectorySync`, `FriendService` logic, `KeyFingerprint` | an effect loop (`CoreShell`), `TLSPinning`, `PushManager`, `NotificationService`, `Reachability`, a `KeyVault` on the Secure Enclave (from `MessageKeyStore`), a `Store`, the importer, the views |
+| `apps/apple/HQChat/Services/` | done: `ChatSession`, `ConversationRouter`, `RatchetSession`, `DoubleRatchet`, `Handshake`, `ConversationEnvelopeV3`, `ConversationFrame`, `NoiseHQN`, `MQTTWireClient`, `MQTTService`, `MQTTConnectProof`, `MQTTTopics`, `PrekeyService`, `InboundQueue`, `AESService`, `HQCKem`, `HQCService`, `AuthService`, `DirectorySync`, `FriendService` logic, `KeyFingerprint` | `ChatStore` (the engine and its `CoreShell`, as the screens read them), `TLSPinning`, `PushManager`, `NotificationService`, `Reachability`, `SecureEnclaveVault` (from `MessageKeyStore`), `FileStore`, the views; the importer under `Migration/` until it is removed |
 | `services/server/src/protocol/`, `src/client/` | done: no production code uses them; they moved to `test/reference/` as the independent implementation the fuzzers and scenarios drive | `src/common/core-client.ts`, the effect loop over the napi `Engine` (fetch, `net`, WebSocket) for the bot |
 | `services/server/src/server/`, `gateway/` | done: the koffi loader and `HQC_LIB` | everything else, calling napi |
-| `native/hqc/` | nothing (the Rust build compiles it) | all |
+| `native/hqc/` | done: the Apple build (`build-apple.sh`, `dist/apple`, `apps/apple/libhqc_wrap.dylib`) | the C wrapper and `prepare-source.sh`, which the Rust build and the Nix package compile |
 
 ## Tests that hold it together
 
@@ -222,5 +256,6 @@ today is the importer's job (phase 3).
 | Bindings | Node: the vectors through the addon and the TS hqn/1 initiator against the Rust gateway; a TS state file imported into the engine; Swift: generated bindings with a CryptoKit `KeyVault` |
 | Differential | `hqchat-verdict` answers the fuzzers in `services/server/test/fuzz` (envelope decode and encode, handshake, hqn/1): Rust and the TS reference agree on every verdict, AAD and field |
 | Server | the unit and integration layers on the addon; the gateway driven by the TS initiator over real sockets |
-| Scenarios | the local stack (`run-local.sh`): the reference client against the server, the bot on the core, an engine user talking to a reference user, and the Swift app live over hqn/1 |
+| Scenarios | the local stack (`run-local.sh`): the reference client against the server, the bot on the core, an engine user talking to a reference user, and the Apple app's `ChatStore` live (`apps/apple/e2e/hqn-live`: two users over hqn/1, a third falling back to WSS) |
+| Apple | `verify.sh`: the core package's and `CoreShell`'s tests, the move from 3.1.1 on a session the shipped ratchet wrote, the store and reset, both builds, the UI tests |
 | CI | `scripts/check.sh core` on every pull request |

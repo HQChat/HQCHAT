@@ -30,34 +30,16 @@ struct HQChatIOSApp: App {
             .onChange(of: scenePhase) { _, phase in
                 switch phase {
                 case .background:
-                    // Tell the server first, while we still have a moment to
-                    // send: from here on, messages must be queued and pushed
-                    // rather than relayed into a socket iOS is about to freeze.
+                    // Tell the server first, while there is a moment to send:
+                    // from here on, messages are queued and pushed rather than
+                    // relayed into a socket iOS is about to freeze. Then the
+                    // core forgets its keys until the next unlock.
                     Task { await appState.enterBackground() }
-                    // Fast unlock holds the identity key in memory; don't retain
-                    // it while the app isn't in use. macOS already did this —
-                    // iOS did not, contradicting the setting's own description.
-                    appState.clearCachedKey()
                 case .active:
-                    Task {
-                        // If the socket survived the background, this asks for
-                        // whatever queued while we were away — no reconnect, so
-                        // no second handshake and no second Face ID.
-                        await appState.enterForeground()
-                        // And if it didn't survive, don't make the user wait out
-                        // the reconnect backoff.
-                        await appState.reconnectIfNeeded()
-                    }
-                    // Going to background dropped the read context above
-                    // (`clearCachedKey`), so coming back has to ask again — and
-                    // this is the only place on iOS that can. The screens ask
-                    // from a `.task`, which does not re-run for a view that
-                    // stayed on screen, and `onAuthSuccess` only fires when the
-                    // socket did NOT survive. Without this, returning to the app
-                    // left every row reading "🔒 locked" with nothing left to
-                    // ask. macOS has had this since #84; the iOS shell is a
-                    // separate file and simply never got it.
-                    Task { await MessageKeyGate.shared.unlock() }
+                    // Online again, and the unlock that opens the history. The
+                    // screens cannot ask: a view that stayed on screen does not
+                    // re-run its `.task`.
+                    Task { await appState.enterForeground() }
                 default: break
                 }
             }
