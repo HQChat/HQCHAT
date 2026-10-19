@@ -116,7 +116,6 @@ xcrun swiftc -O $COV_FLAGS \
   -o "$BINDIR/redactionTests"
 "$BINDIR/redactionTests"
 
-
 echo ""
 echo "── Key protection tier (the -25293 fix) ───────"
 # Pure mapping checks: capability→tier, tier→LAPolicy, tier→ACL flag, and the
@@ -130,7 +129,6 @@ xcrun swiftc -O $COV_FLAGS \
   "$LOG_SWIFT" \
   -o "$BINDIR/keyProtectionTierTests"
 EXPECTED_SKIPS="$(expected_skips KeyProtectionTierTests)" "$BINDIR/keyProtectionTierTests"
-
 
 echo ""
 echo "── Pure rules (username filter, error text) ───"
@@ -146,7 +144,6 @@ xcrun swiftc -O $COV_FLAGS \
   -o "$BINDIR/pureHelpersTests"
 "$BINDIR/pureHelpersTests"
 
-
 echo ""
 echo "── Protocol trace (what Release is allowed to log) ──"
 # The one log that survives Release, on a device with no Mac attached. It is only
@@ -161,7 +158,6 @@ xcrun swiftc -O $COV_FLAGS \
   "$LOG_SWIFT" \
   -o "$BINDIR/protocolLogTests"
 "$BINDIR/protocolLogTests"
-
 
 echo ""
 echo "── TLS pinning (MAS-2) ────────────────────────"
@@ -201,7 +197,6 @@ xcrun swiftc -O $COV_FLAGS \
   "$LOG_SWIFT" \
   -o "$BINDIR/tlsPinningTests"
 "$BINDIR/tlsPinningTests" "$PIN_FIXTURES"
-
 
 echo ""
 echo "── Shared auth context (one prompt, every key) ──"

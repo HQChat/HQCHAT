@@ -10,7 +10,7 @@ cd "$root"
 git ls-files -co --exclude-standard -- core/Cargo.toml core/Cargo.lock core/hqc-sys core/hqc \
   core/hqchat-protocol/src core/hqchat-protocol/Cargo.toml core/hqchat-engine/src core/hqchat-engine/Cargo.toml \
   core/hqchat-ffi/src core/hqchat-ffi/Cargo.toml core/hqchat-ffi/build-apple.sh core/hqchat-ffi/apple-source-hash.sh \
-  native/hqc/HQC_UPSTREAM.txt native/hqc/prepare-source.sh native/hqc/src \
-  | LC_ALL=C sort | while IFS= read -r f; do
-    [[ -f "$f" ]] && printf '%s  %s\n' "$(shasum -a 256 <"$f" | cut -d' ' -f1)" "$f"
-  done | shasum -a 256 | cut -d' ' -f1
+  native/hqc/HQC_UPSTREAM.txt native/hqc/prepare-source.sh native/hqc/src |
+  LC_ALL=C sort | while IFS= read -r f; do
+  [[ -f "$f" ]] && printf '%s  %s\n' "$(shasum -a 256 <"$f" | cut -d' ' -f1)" "$f"
+done | shasum -a 256 | cut -d' ' -f1

@@ -9,7 +9,7 @@
 #
 # Both are committed, so the Xcode project builds from a clone, as with
 # native/hqc. `.source` holds the hash of the core sources they came from;
-# apps/apple/verify.sh refuses a build that no longer matches.
+# apps/apple/verify.sh refuses a build that does not match its sources.
 #
 # Runs inside `nix develop .#apple` (Rust with the Apple targets, HQC_SOURCE),
 # or anywhere `cargo` has those four targets and HQC_SOURCE names the prepared

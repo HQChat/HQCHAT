@@ -2,8 +2,7 @@
  * The implementation a differential harness compares TypeScript against: the
  * Rust core's `hqchat-verdict` (built by `cargo build --release -p
  * hqchat-verdict`). It speaks a batch-file protocol, one verdict line per
- * input line. (The Swift app's verdict programs went with the Swift protocol
- * code, when the apps moved onto the core.)
+ * input line. The apps run the same core, so it stands for them too.
  */
 
 import * as fs from "node:fs";

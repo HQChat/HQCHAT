@@ -6,9 +6,8 @@
 #
 #   ./run.sh scrub-verdict              build it
 #
-# The protocol's parsers, which the other targets here used to fuzz, now live
-# in the Rust core: they are fuzzed against the TypeScript reference there
-# (`scripts/check.sh core`, `hqchat-verdict`).
+# The protocol's parsers live in the Rust core, and are fuzzed against the
+# TypeScript reference there (`scripts/check.sh core`, `hqchat-verdict`).
 set -euo pipefail
 cd "$(dirname "$0")"
 

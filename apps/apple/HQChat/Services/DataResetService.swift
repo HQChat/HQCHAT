@@ -171,7 +171,7 @@ class DataResetService {
                 modelContext.delete(profile)
             }
             
-            // 3.1.1 rows left over (their Keychain items went with the services above).
+            // 3.1.1 rows left over (their Keychain items are deleted with the services above).
             for friend in try modelContext.fetch(FetchDescriptor<Friend>()) {
                 modelContext.delete(friend)
             }
