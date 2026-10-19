@@ -408,6 +408,11 @@ RustBuffer uniffi_hqchat_ffi_fn_method_engine_lock(uint64_t ptr, RustCallStatus 
 RustBuffer uniffi_hqchat_ffi_fn_method_engine_mark_read(uint64_t ptr, RustBuffer peer, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_MY_ID
+#define UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_MY_ID
+RustBuffer uniffi_hqchat_ffi_fn_method_engine_my_id(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_ON_BYTES
 #define UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_ON_BYTES
 RustBuffer uniffi_hqchat_ffi_fn_method_engine_on_bytes(uint64_t ptr, uint64_t conn, RustBuffer bytes, int64_t now, RustCallStatus *_Nonnull out_status
@@ -461,6 +466,11 @@ RustBuffer uniffi_hqchat_ffi_fn_method_engine_send_text(uint64_t ptr, RustBuffer
 #ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_SENT_INVITES
 #define UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_SENT_INVITES
 RustBuffer uniffi_hqchat_ffi_fn_method_engine_sent_invites(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_SET_PRESENCE
+#define UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_SET_PRESENCE
+RustBuffer uniffi_hqchat_ffi_fn_method_engine_set_presence(uint64_t ptr, int8_t online, int64_t now, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_SET_USERNAME
@@ -919,6 +929,12 @@ uint16_t uniffi_hqchat_ffi_checksum_method_engine_mark_read(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_CHECKSUM_METHOD_ENGINE_MY_ID
+#define UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_CHECKSUM_METHOD_ENGINE_MY_ID
+uint16_t uniffi_hqchat_ffi_checksum_method_engine_my_id(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_CHECKSUM_METHOD_ENGINE_ON_BYTES
 #define UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_CHECKSUM_METHOD_ENGINE_ON_BYTES
 uint16_t uniffi_hqchat_ffi_checksum_method_engine_on_bytes(void
@@ -982,6 +998,12 @@ uint16_t uniffi_hqchat_ffi_checksum_method_engine_send_text(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_CHECKSUM_METHOD_ENGINE_SENT_INVITES
 #define UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_CHECKSUM_METHOD_ENGINE_SENT_INVITES
 uint16_t uniffi_hqchat_ffi_checksum_method_engine_sent_invites(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_CHECKSUM_METHOD_ENGINE_SET_PRESENCE
+#define UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_CHECKSUM_METHOD_ENGINE_SET_PRESENCE
+uint16_t uniffi_hqchat_ffi_checksum_method_engine_set_presence(void
     
 );
 #endif

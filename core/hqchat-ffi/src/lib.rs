@@ -184,6 +184,10 @@ impl Engine {
     pub fn forget(&self, peer: String) -> Result<Vec<Effect>, CoreError> {
         Ok(effects(self.inner.forget(peer)?))
     }
+    /// Steps the ratchet with `peer` on the next message sent.
+    pub fn rotate_keys(&self, peer: String) -> Result<Vec<Effect>, CoreError> {
+        Ok(effects(self.inner.rotate_keys(peer)?))
+    }
     /// Marks the conversation with `peer` read.
     pub fn mark_read(&self, peer: String) -> Result<Vec<Effect>, CoreError> {
         Ok(effects(self.inner.mark_read(peer)?))

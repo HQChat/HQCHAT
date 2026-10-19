@@ -258,3 +258,26 @@ fn sending_to_a_stranger_or_while_locked_is_refused() {
     );
     let _ = &mut a;
 }
+
+#[test]
+fn rotating_keys_steps_the_ratchet_and_the_conversation_goes_on() {
+    let (_s, mut a, mut b) = pair();
+    assert!(
+        a.engine.rotate_keys(b.id()).is_err(),
+        "no session yet, nothing to rotate"
+    );
+    send(&mut a, &b, "one");
+    settle(&mut [&mut a, &mut b]);
+    send(&mut b, &a, "two");
+    settle(&mut [&mut a, &mut b]);
+    send(&mut a, &b, "three");
+    settle(&mut [&mut a, &mut b]);
+    let e = a.engine.rotate_keys(b.id()).unwrap();
+    a.pump(e);
+    send(&mut a, &b, "four");
+    settle(&mut [&mut a, &mut b]);
+    send(&mut b, &a, "five");
+    settle(&mut [&mut a, &mut b]);
+    assert_eq!(texts(&b, &a), ["one", "three", "four"]);
+    assert_eq!(texts(&a, &b), ["two", "five"]);
+}

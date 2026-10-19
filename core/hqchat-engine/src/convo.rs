@@ -138,6 +138,18 @@ impl Core {
 
     // ── Sending ────────────────────────────────────────────────────────────
 
+    /// Makes the next message to `peer` step the ratchet (a new KEM key
+    /// pair), whatever the step policy would otherwise wait for. A chain
+    /// nothing was sent on yet has nothing to step away from.
+    pub fn rotate_keys(&mut self, peer: &PeerId) -> Result<(), CoreError> {
+        let Some(session) = self.session(peer)? else {
+            return Err(CoreError::State("no session to rotate".into()));
+        };
+        session.chain_started_at = i64::MIN;
+        let session = session.clone();
+        self.put_session(peer, session)
+    }
+
     pub fn send_text(&mut self, peer: &PeerId, text: &str, now: i64) -> Result<(), CoreError> {
         self.unlocked()?;
         if !self

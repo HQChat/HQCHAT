@@ -702,6 +702,11 @@ public protocol EngineProtocol: AnyObject, Sendable {
     func markRead(peer: String) throws  -> [Effect]
     
     /**
+     * This profile's client id, once unlocked.
+     */
+    func myId()  -> String?
+    
+    /**
      * Bytes arrived on a connection.
      */
     func onBytes(conn: UInt64, bytes: Data, now: Int64)  -> [Effect]
@@ -755,6 +760,11 @@ public protocol EngineProtocol: AnyObject, Sendable {
      * Friend requests sent and not answered yet.
      */
     func sentInvites()  -> [SentInviteView]
+    
+    /**
+     * Announces presence: offline on going to the background, online back.
+     */
+    func setPresence(online: Bool, now: Int64)  -> [Effect]
     
     /**
      * Claims a username.
@@ -1041,6 +1051,18 @@ open func markRead(peer: String)throws  -> [Effect]  {
 }
     
     /**
+     * This profile's client id, once unlocked.
+     */
+open func myId() -> String?  {
+    return try!  FfiConverterOptionString.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_hqchat_ffi_fn_method_engine_my_id(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * Bytes arrived on a connection.
      */
 open func onBytes(conn: UInt64, bytes: Data, now: Int64) -> [Effect]  {
@@ -1190,6 +1212,20 @@ open func sentInvites() -> [SentInviteView]  {
         uniffiCallStatus in
     uniffi_hqchat_ffi_fn_method_engine_sent_invites(
             self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Announces presence: offline on going to the background, online back.
+     */
+open func setPresence(online: Bool, now: Int64) -> [Effect]  {
+    return try!  FfiConverterSequenceTypeEffect.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_hqchat_ffi_fn_method_engine_set_presence(
+            self.uniffiCloneHandle(),
+        FfiConverterBool.lower(online),
+        FfiConverterInt64.lower(now),uniffiCallStatus
     )
 })
 }
@@ -6107,6 +6143,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_hqchat_ffi_checksum_method_engine_mark_read() != 4996) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_hqchat_ffi_checksum_method_engine_my_id() != 20658) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_hqchat_ffi_checksum_method_engine_on_bytes() != 37452) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -6138,6 +6177,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_hqchat_ffi_checksum_method_engine_sent_invites() != 62020) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_hqchat_ffi_checksum_method_engine_set_presence() != 17527) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_hqchat_ffi_checksum_method_engine_set_username() != 16999) {

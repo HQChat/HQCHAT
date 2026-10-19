@@ -467,6 +467,11 @@ impl JsEngine {
     }
 
     #[napi]
+    pub fn rotate_keys(&self, peer: String) -> napi::Result<Vec<JsEffect>> {
+        self.engine.rotate_keys(peer).map(all).map_err(err)
+    }
+
+    #[napi]
     pub fn mark_read(&self, peer: String) -> napi::Result<Vec<JsEffect>> {
         self.engine.mark_read(peer).map(all).map_err(err)
     }

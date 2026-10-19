@@ -190,6 +190,7 @@ export interface Engine {
   sentInvites(): CoreSentInvite[];
   forget(peer: string): CoreEffect[];
   markRead(peer: string): CoreEffect[];
+  rotateKeys(peer: string): CoreEffect[];
   report(peer: string, reason: string, msgIds: string[], block: boolean): CoreEffect[];
   setUsername(username: string): CoreEffect[];
   deleteAccount(): CoreEffect[];

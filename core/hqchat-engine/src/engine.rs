@@ -227,6 +227,12 @@ impl Engine {
         self.run(|c| c.forget_vanished(&peer))
     }
 
+    /// Steps the ratchet with `peer` on the next message sent.
+    pub fn rotate_keys(&self, peer: String) -> Result<Vec<Effect>, CoreError> {
+        let peer = hqchat_protocol::PeerId::parse(&peer)?;
+        self.run(|c| c.rotate_keys(&peer))
+    }
+
     /// Marks the conversation with `peer` read.
     pub fn mark_read(&self, peer: String) -> Result<Vec<Effect>, CoreError> {
         let peer = hqchat_protocol::PeerId::parse(&peer)?;
