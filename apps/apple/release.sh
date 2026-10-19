@@ -43,7 +43,6 @@ auth=(-allowProvisioningUpdates -authenticationKeyPath "$key"
 project="$here/HQChat.xcodeproj"
 
 xcodebuild -version
-bash "$root/native/hqc/build-apple.sh"
 # The Rust core ships as committed (core/swift/HQChatCore, written by
 # core/hqchat-ffi/build-apple.sh, which needs Rust's Apple targets). A build
 # older than the core's sources is refused rather than shipped.

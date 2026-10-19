@@ -31,8 +31,8 @@ apps/apple/tests/.coverage/
 tfplan
 tfplan.json
 
-# Built from native/hqc (nix build .#hqc). The Apple builds of it
-# (native/hqc/dist/apple, apps/apple/libhqc_wrap.dylib) are committed.
+# Built from native/hqc (nix build .#hqc). The apps get HQC through the
+# Rust core (core/swift/HQChatCore).
 native/hqc/result
 
 # Cargo build output
