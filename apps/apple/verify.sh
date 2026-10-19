@@ -34,6 +34,8 @@ if [[ "$(cat "$core_pkg/.source" 2>/dev/null)" != "$(bash ../../core/hqchat-ffi/
   echo "⚠️  rebuilt core/swift/HQChatCore: commit it with the core change"
 fi
 (cd "$core_pkg" && xcrun swift test)
+# The shell that carries out the engine's effects (apps/apple/CoreShell).
+(cd CoreShell && xcrun swift test)
 
 # 1. The pure-Swift suites (crypto, ratchet, key fingerprint, MQTT wire codec,
 #    message-at-rest), compiled from the real implementations.

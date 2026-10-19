@@ -11,6 +11,8 @@
 		5E27A00000000000000005 /* Sentry in Frameworks */ = {isa = PBXBuildFile; productRef = 5E27A00000000000000003 /* Sentry */; };
 		C0EE00000000000000000004 /* HQChatCore in Frameworks */ = {isa = PBXBuildFile; productRef = C0EE00000000000000000002 /* HQChatCore */; };
 		C0EE00000000000000000005 /* HQChatCore in Frameworks */ = {isa = PBXBuildFile; productRef = C0EE00000000000000000003 /* HQChatCore */; };
+		C0EE00000000000000000009 /* CoreShell in Frameworks */ = {isa = PBXBuildFile; productRef = C0EE00000000000000000007 /* CoreShell */; };
+		C0EE0000000000000000000A /* CoreShell in Frameworks */ = {isa = PBXBuildFile; productRef = C0EE00000000000000000008 /* CoreShell */; };
 		D96B8E742EF6F4380063D07E /* libhqc_wrap.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = D96B8E732EF6F4380063D07E /* libhqc_wrap.dylib */; };
 		D96B8E762EF6F47B0063D07E /* libhqc_wrap.dylib in CopyFiles */ = {isa = PBXBuildFile; fileRef = D96B8E732EF6F4380063D07E /* libhqc_wrap.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		D9C0DE000000000000000002 /* HQC.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = D9C0DE000000000000000001 /* HQC.xcframework */; };
@@ -181,6 +183,7 @@
 				D96B8E742EF6F4380063D07E /* libhqc_wrap.dylib in Frameworks */,
 				5E27A00000000000000004 /* Sentry in Frameworks */,
 				C0EE00000000000000000004 /* HQChatCore in Frameworks */,
+				C0EE00000000000000000009 /* CoreShell in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -191,6 +194,7 @@
 				D9C0DE000000000000000002 /* HQC.xcframework in Frameworks */,
 				5E27A00000000000000005 /* Sentry in Frameworks */,
 				C0EE00000000000000000005 /* HQChatCore in Frameworks */,
+				C0EE0000000000000000000A /* CoreShell in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -257,6 +261,7 @@
 			packageProductDependencies = (
 				5E27A00000000000000002 /* Sentry */,
 				C0EE00000000000000000002 /* HQChatCore */,
+				C0EE00000000000000000007 /* CoreShell */,
 			);
 			productName = HQChat;
 			productReference = D96B8E5E2EF6EB4D0063D07E /* HQChat.app */;
@@ -281,6 +286,7 @@
 			packageProductDependencies = (
 				5E27A00000000000000003 /* Sentry */,
 				C0EE00000000000000000003 /* HQChatCore */,
+				C0EE00000000000000000008 /* CoreShell */,
 			);
 			productName = "HQChat iOS";
 			productReference = D96CE2E22FDC9750004125B6 /* HQChat iOS.app */;
@@ -343,6 +349,7 @@
 			packageReferences = (
 				5E27A00000000000000001 /* XCRemoteSwiftPackageReference "sentry-cocoa" */,
 				C0EE00000000000000000001 /* XCLocalSwiftPackageReference "../../core/swift/HQChatCore" */,
+				C0EE00000000000000000006 /* XCLocalSwiftPackageReference "CoreShell" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = D96B8E5F2EF6EB4D0063D07E /* Products */;
@@ -782,6 +789,10 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../../core/swift/HQChatCore;
 		};
+		C0EE00000000000000000006 /* XCLocalSwiftPackageReference "CoreShell" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = CoreShell;
+		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCRemoteSwiftPackageReference section */
@@ -813,6 +824,14 @@
 		C0EE00000000000000000003 /* HQChatCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = HQChatCore;
+		};
+		C0EE00000000000000000007 /* CoreShell */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CoreShell;
+		};
+		C0EE00000000000000000008 /* CoreShell */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CoreShell;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
