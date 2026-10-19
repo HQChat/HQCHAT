@@ -6,9 +6,12 @@ import { DB } from "./db/api";
 
 /**
  * The push bridge: subscribes (as the internal superuser) to every presence
- * topic and, shared across replicas, every conversation topic, and sends a
- * content-free APNs wake to each member of a conversation who is offline.
- * It sees ciphertext and topic metadata only.
+ * topic and, shared across replicas, every conversation topic and every
+ * inbox, and sends a content-free APNs wake to each offline member of a
+ * conversation and to the offline owner of an inbox (where a first message,
+ * an `init`, arrives before the conversation topic is in use). The phone
+ * shows that a message is waiting; opening it still needs the unlock. The
+ * bridge sees ciphertext and topic metadata only.
  */
 
 const SHARE_GROUP = process.env.PUSH_SHARE_GROUP || "pushbridge";
@@ -29,6 +32,12 @@ export function createPushBridge(deps: PushDeps, presence: Set<string> = new Set
         else presence.delete(pres[1]);
         return;
       }
+      const inbox = topic.match(/^u\/([0-9a-f]{64})\/inbox$/);
+      if (inbox?.[1]) {
+        if (!presence.has(inbox[1]))
+          report(inbox[1], await deps.send(inbox[1], "New message", "You have a new message"));
+        return;
+      }
       const convo = topic.match(/^cv\/([0-9a-f]{64})$/);
       if (!convo?.[1]) return;
       const members = await deps.getTopicMembers(convo[1]);
@@ -46,11 +55,12 @@ export function createPushBridge(deps: PushDeps, presence: Set<string> = new Set
   return { handleMessage, presence };
 }
 
-/** Presence unshared (every replica needs all of it), conversations shared. */
+/** Presence unshared (every replica needs all of it), conversations and inboxes shared. */
 export function pushSubscriptions(shareGroup: string = SHARE_GROUP): Array<{ topic: string; qos: 0 | 1 }> {
   return [
     { topic: "u/+/presence", qos: 0 },
     { topic: `$share/${shareGroup}/cv/+`, qos: 1 },
+    { topic: `$share/${shareGroup}/u/+/inbox`, qos: 1 },
   ];
 }
 

@@ -22,9 +22,9 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
-import { isPeerId, keyMatchesId, PEER_ID_LENGTH, peerId } from "../../src/protocol/identity";
 import { q } from "../../src/server/db/pg";
 import { closePg, requirePg } from "../pg-helper";
+import { isPeerId, keyMatchesId, PEER_ID_LENGTH, peerId } from "../reference/protocol/identity";
 
 test.before(requirePg);
 
@@ -116,7 +116,7 @@ test("an id is NOT an authenticator — anyone holding the key can compute it", 
 });
 
 test("the id is NOT chainId — chainId is the same digest truncated to 32", () => {
-  // src/protocol/double-ratchet.ts derives a chain selector the same way and keeps 32
+  // test/reference/protocol/double-ratchet.ts derives a chain selector the same way and keeps 32
   // hex characters. Reusing it here would halve the collision resistance of
   // every name in the system for the sake of 32 bytes.
   const k = V.keys[0]!;

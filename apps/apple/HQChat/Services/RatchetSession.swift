@@ -1,5 +1,5 @@
 // The double-ratchet state machine, driven over an injected KEM. Mirrors
-// services/server/src/protocol/ratchet.ts.
+// services/server/test/reference/protocol/ratchet.ts.
 //
 // Split from DoubleRatchet.swift for the same reason the TypeScript is split:
 // that module stays pure and pinnable by cross-implementation vectors, and this

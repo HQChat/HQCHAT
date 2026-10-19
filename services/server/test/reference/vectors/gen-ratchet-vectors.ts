@@ -1,11 +1,11 @@
 // Regenerates test/helpers/double-ratchet-vectors.json.
 //
-//   npx tsx scripts/gen-ratchet-vectors.ts > test/helpers/double-ratchet-vectors.json
+//   npx tsx test/reference/vectors/gen-ratchet-vectors.ts > test/helpers/double-ratchet-vectors.json
 //
 // Committed rather than left in a scratch directory, which is what the v1
 // vectors did ("regenerate with scratch") — so the only way to reproduce them
 // was to rewrite the generator and hope it matched. Any change to the KDF
-// labels or the policy constants in src/protocol/double-ratchet.ts means re-running this
+// labels or the policy constants in test/reference/protocol/double-ratchet.ts means re-running this
 // AND re-running the Swift suite, which reads the same file.
 
 import {
@@ -18,7 +18,7 @@ import {
   RATCHET_MIN_STEP_INTERVAL_MS,
   rootStep,
   walkChain,
-} from "../src/protocol/double-ratchet";
+} from "../protocol/double-ratchet";
 
 const h = (b: Buffer) => b.toString("hex");
 const B = (s: string) => Buffer.from(s, "hex");

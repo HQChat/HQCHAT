@@ -232,8 +232,8 @@ jobs:
       API_HOST: ${{ needs.infra.outputs.api_host }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      # The scenarios load the native HQC library (HQC_LIB); the release's own
-      # build of it is in the cache, inside the server's closure.
+      # The scenarios load the core addon (HQCHAT_NODE); the release's own build
+      # is in the cache, inside the server's closure.
       - uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
         with:
           extra_nix_config: |
@@ -241,8 +241,8 @@ jobs:
             accept-flake-config = false
             extra-substituters = ${{ needs.build.outputs.cache_url }}
             extra-trusted-public-keys = ${{ needs.build.outputs.cache_key }}
-      - name: The HQC library
-        run: echo "HQC_LIB=$(nix build .#hqc --no-link --print-out-paths)/lib/libhqc_wrap.so" >>"$GITHUB_ENV"
+      - name: The core addon
+        run: echo "HQCHAT_NODE=$(nix build .#hqchat-node --no-link --print-out-paths)/lib/hqchat_node.node" >>"$GITHUB_ENV"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"

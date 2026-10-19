@@ -12,8 +12,9 @@ App Store builds rebuild from source either way.
 
 | Consumer | Built by | Result |
 |---|---|---|
-| Server, gateway, bot, CI, hosts | `nix build .#hqc` (`native/hqc/package.nix`) | `lib/libhqc_wrap.so`, loaded through `HQC_LIB` |
-| Local server runs | `nix build .#hqc -o native/hqc/result` | found by `src/protocol/hqc.ts` when `HQC_LIB` is unset |
+| Server, gateway, bot, CI, hosts | `nix build .#hqchat-node` (`core/hqchat-node/package.nix`), which compiles the prepared tree (`.#hqc.source`) into the core's Node addon | `lib/hqchat_node.node`, loaded through `HQCHAT_NODE` |
+| Local server runs and the core's own tests | `core/hqchat-node/build.sh`, inside `nix develop` (`HQC_SOURCE`) | `core/hqchat-node/hqchat_node.node`, found by `src/common/core.ts` when `HQCHAT_NODE` is unset |
+| The standalone library and its self-test | `nix build .#hqc` (`native/hqc/package.nix`) | `lib/libhqc_wrap.so`; no server program loads it any more |
 | macOS app and the Swift test slices | `bash native/hqc/build-apple.sh` | `apps/apple/libhqc_wrap.dylib` (arm64) |
 | iOS app | the same script | `native/hqc/dist/apple/HQC.xcframework` (device arm64, simulator arm64 and x86_64) |
 | The App Store builds (Apple release workflow) | `apps/apple/release.sh ios\|macos`, which runs the same script | the xcframework or the dylib, then the signed upload |
@@ -26,9 +27,10 @@ runner), `build-apple.sh` fetches `PINNED_COMMIT` from `REPO` with git and
 refuses any other commit.
 
 The Nix package runs a self-test (deterministic keys from a seed, round trips,
-implicit rejection), and the server's unit suite checks the built library
-against committed known-answer digests (`test/unit/hqc.test.ts`), so a build
-that computes anything different fails. Swift reaches the C functions through
+implicit rejection); the addon's build runs the core's known-answer tests, and
+the server's unit suite checks them again through the addon
+(`test/unit/hqc.test.ts`, `test/unit/core-addon.test.ts`), so a build that
+computes anything different fails. Swift reaches the C functions through
 `apps/apple/HQChat/Core/HQC-Bridging-Header.h` and `public_wrapper.h`; the
 Xcode project already links the dylib (macOS, embedded and signed on copy) and
 the xcframework (iOS).
@@ -36,7 +38,7 @@ the xcframework (iOS).
 ## After a fresh clone, or a source bump
 
 ```bash
-nix build .#hqc -o native/hqc/result      # server and tests
+core/hqchat-node/build.sh                 # server and tests, inside nix develop
 bash native/hqc/build-apple.sh            # Apple; a no-op when already built from this source
 ```
 

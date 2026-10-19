@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { Client } from "../../src/client";
+import type { Client } from "../reference/client";
 import { friends, stackUp } from "./stack";
 
 /**

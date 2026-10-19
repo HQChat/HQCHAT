@@ -11,6 +11,10 @@ pub struct Config {
     pub profile_id: String,
     /// What the engine runs on: names the push platform.
     pub device: Device,
+    /// Whether the broker may be reached over hqn/1 when the server offers
+    /// it. The apps always allow it; a server-side client (the bot) that has
+    /// a private path to the broker's WebSocket keeps to WSS.
+    pub allow_hqn: bool,
 }
 
 /// The kind of device, as the server's push registration names it.

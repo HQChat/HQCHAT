@@ -110,7 +110,7 @@ class AESService {
     }
 
     /// Auth proof from a KEM shared secret. Mirrors the server's
-    /// `authProof(ss)` in src/protocol/auth-proof.ts:
+    /// `authProof(ss)` in test/reference/protocol/auth-proof.ts:
     /// HKDF-SHA256(IKM=ss, salt="salt", info="auth", 32). Returned as raw Data to
     /// base64-encode into the AUTH_VERIFY payload; proves we hold the secret key
     /// (only it could decapsulate `ss`) without ever revealing `ss`.

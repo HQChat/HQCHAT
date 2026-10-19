@@ -24,8 +24,8 @@ import {
   handshakeNonce,
   handshakeProof,
   handshakeProofMatches,
-} from "../../src/protocol/handshake";
-import { peerId } from "../../src/protocol/identity";
+} from "../reference/protocol/handshake";
+import { peerId } from "../reference/protocol/identity";
 
 /** A stub KEM with HQC's shape, implicit rejection included. */
 function stubKem() {

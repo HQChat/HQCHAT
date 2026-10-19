@@ -1,4 +1,4 @@
-//! Conversations: `services/server/src/client/conversation.ts` on the
+//! Conversations: `services/server/test/reference/client/conversation.ts` on the
 //! protocol crate, with what the Apple app adds around it.
 //!
 //! - **Sending.** A message is stored, sealed, before anything leaves, and

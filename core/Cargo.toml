@@ -2,7 +2,7 @@
 # See docs/architecture/multiplatform.md and docs/architecture/core-wiring.md.
 [workspace]
 resolver = "3"
-members = ["hqc-sys", "hqc", "hqchat-protocol", "hqchat-engine", "hqchat-node", "hqchat-ffi"]
+members = ["hqc-sys", "hqc", "hqchat-protocol", "hqchat-engine", "hqchat-node", "hqchat-ffi", "hqchat-verdict"]
 
 [workspace.package]
 version = "0.1.0"
@@ -56,3 +56,9 @@ overflow-checks = true
 panic = "unwind"
 lto = "thin"
 codegen-units = 1
+
+[profile.release.build-override]
+# Build scripts and proc-macros run on the build machine and never ship.
+# Stripping them breaks the build on macOS: the Nix shell's `strip` corrupts
+# proc-macro dylibs, and rustc then cannot load zeroize_derive.
+strip = "none"

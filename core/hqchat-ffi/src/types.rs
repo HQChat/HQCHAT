@@ -177,6 +177,8 @@ impl From<Config> for core::Config {
         core::Config {
             server_url: c.server_url,
             profile_id: c.profile_id,
+            // The apps take hqn/1 whenever the server offers it.
+            allow_hqn: true,
             device: match c.device {
                 Device::Ios => core::Device::Ios,
                 Device::Macos => core::Device::Macos,

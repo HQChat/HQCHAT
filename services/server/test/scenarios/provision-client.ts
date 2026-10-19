@@ -7,10 +7,15 @@
  */
 
 import * as crypto from "node:crypto";
-import { Client, identityFromSeed, newSeed } from "../../src/client";
-import { requestJson } from "../../src/client/http";
-import { newSigningKey } from "../../src/protocol/mqtt-proof";
-import { BASE_URL, MQTT_URL } from "./stack";
+import { Client, identityFromSeed, newSeed } from "../reference/client";
+import { requestJson } from "../reference/client/http";
+import { newSigningKey } from "../reference/protocol/mqtt-proof";
+
+// Read here rather than imported from ./stack: stack.ts registers node:test
+// hooks, which turn on the test reporter and put TAP output on stdout, where
+// the Swift harness expects one line of JSON.
+const BASE_URL = (process.env.TEST_BASE_URL || "http://127.0.0.1:8090").replace(/\/$/, "");
+const MQTT_URL = process.env.TEST_MQTT_URL || "ws://127.0.0.1:8083/mqtt";
 
 async function main(): Promise<void> {
   const c = new Client({ baseUrl: BASE_URL, endpoint: { url: MQTT_URL }, identity: identityFromSeed(newSeed()) });

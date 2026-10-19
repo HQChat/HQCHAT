@@ -100,12 +100,12 @@ xcrun swiftc -O $COV_FLAGS \
 echo ""
 echo "── Client identifier (cross-impl vectors) ─────"
 # `id = sha256(lowercase-hex(pk))` is the name every other layer keys on. Four
-# implementations must agree — this one, src/protocol/identity.ts, Postgres's pk_digest,
+# implementations must agree — this one, test/reference/protocol/identity.ts, Postgres's pk_digest,
 # and /report's friendship hash — so the vectors are READ rather than pasted in.
 ID_VECTORS="../../../services/server/test/helpers/identity-vectors.json"
 if [ ! -f "$ID_VECTORS" ]; then
   echo "❌ missing $ID_VECTORS — regenerate with:"
-  echo "   npx tsx scripts/gen-identity-vectors.ts > test/helpers/identity-vectors.json"
+  echo "   npx tsx test/reference/vectors/gen-identity-vectors.ts > test/helpers/identity-vectors.json"
   exit 1
 fi
 MAIN="$(stage PeerIDTests.swift)"
@@ -124,7 +124,7 @@ echo "── MQTT connect proof (cross-impl vectors) ────"
 PROOF_VECTORS="../../../services/server/test/helpers/mqtt-proof-vectors.json"
 if [ ! -f "$PROOF_VECTORS" ]; then
   echo "❌ missing $PROOF_VECTORS — regenerate with:"
-  echo "   npx tsx scripts/gen-mqtt-proof-vectors.ts > test/helpers/mqtt-proof-vectors.json"
+  echo "   npx tsx test/reference/vectors/gen-mqtt-proof-vectors.ts > test/helpers/mqtt-proof-vectors.json"
   exit 1
 fi
 MAIN="$(stage MQTTProofTests.swift)"
@@ -138,11 +138,11 @@ xcrun swiftc -O $COV_FLAGS \
 echo ""
 echo "── hqn/1 Noise handshake (cross-impl vectors) ─"
 # The raw-TCP transport's handshake. The gateway runs the TypeScript half
-# (services/server/src/protocol/noise.ts); the vectors pin every byte between them.
+# (services/server/test/reference/protocol/noise.ts); the vectors pin every byte between them.
 NOISE_VECTORS="../../../services/server/test/helpers/noise-hqn-vectors.json"
 if [ ! -f "$NOISE_VECTORS" ]; then
   echo "❌ missing $NOISE_VECTORS — regenerate with:"
-  echo "   npx tsx scripts/gen-noise-hqn-vectors.ts > test/helpers/noise-hqn-vectors.json"
+  echo "   npx tsx test/reference/vectors/gen-noise-hqn-vectors.ts > test/helpers/noise-hqn-vectors.json"
   exit 1
 fi
 MAIN="$(stage NoiseHQNTests.swift)"
@@ -208,7 +208,7 @@ echo "── Double ratchet v2 (cross-impl vectors) ─────"
 VECTORS="../../../services/server/test/helpers/double-ratchet-vectors.json"
 if [ ! -f "$VECTORS" ]; then
   echo "❌ missing $VECTORS — regenerate with:"
-  echo "   npx tsx scripts/gen-ratchet-vectors.ts > test/helpers/double-ratchet-vectors.json"
+  echo "   npx tsx test/reference/vectors/gen-ratchet-vectors.ts > test/helpers/double-ratchet-vectors.json"
   exit 1
 fi
 MAIN="$(stage DoubleRatchetTests.swift)"
@@ -237,7 +237,7 @@ echo "── Handshake proof (cross-impl) ────────────�
 HS_VECTORS="../../../services/server/test/helpers/handshake-vectors.json"
 if [ ! -f "$HS_VECTORS" ]; then
   echo "❌ missing $HS_VECTORS — regenerate with:"
-  echo "   npx tsx scripts/gen-handshake-vectors.ts > test/helpers/handshake-vectors.json"
+  echo "   npx tsx test/reference/vectors/gen-handshake-vectors.ts > test/helpers/handshake-vectors.json"
   exit 1
 fi
 MAIN="$(stage HandshakeTests.swift)"
@@ -253,7 +253,7 @@ echo "── Envelope v3 (binary framing, cross-impl) ───"
 V3_VECTORS="../../../services/server/test/helpers/envelope-v3-vectors.json"
 if [ ! -f "$V3_VECTORS" ]; then
   echo "❌ missing $V3_VECTORS — regenerate with:"
-  echo "   npx tsx scripts/gen-envelope-v3-vectors.ts > test/helpers/envelope-v3-vectors.json"
+  echo "   npx tsx test/reference/vectors/gen-envelope-v3-vectors.ts > test/helpers/envelope-v3-vectors.json"
   exit 1
 fi
 MAIN="$(stage EnvelopeV3Tests.swift)"

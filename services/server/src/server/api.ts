@@ -1,7 +1,7 @@
 import type * as http from "node:http";
 import { DONATIONS_ENABLED } from "../common/config";
+import { core, isPeerId } from "../common/core";
 import { logger } from "../common/logger";
-import { isPeerId, PEER_ID_LENGTH } from "../protocol/identity";
 import { DB, type PushEnvironment, type PushPlatform, REPORT_CATEGORIES, type ReportCategory } from "./db/api";
 import { handleDonate } from "./donate";
 import { EMQX } from "./emqx";
@@ -258,7 +258,7 @@ async function publicRoute(res: http.ServerResponse, method: string, url: string
     if (!peerKey) return false;
     const id = decodeURIComponent(peerKey[1]!).toLowerCase();
     if (!isPeerId(id))
-      throw new HttpError(400, "INVALID_FIELD", `id must be ${PEER_ID_LENGTH} lowercase hex characters`);
+      throw new HttpError(400, "INVALID_FIELD", `id must be ${core.PEER_ID_LENGTH} lowercase hex characters`);
     const publicKey = await DB.identityKey(id);
     if (publicKey) send(res, 200, { id, publicKey });
     else send(res, 404, { error: "UNKNOWN_PEER" });

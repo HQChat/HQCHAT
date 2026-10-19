@@ -11,6 +11,7 @@
 
 pub mod engine;
 pub mod gateway;
+mod legacy;
 pub mod server;
 mod store;
 

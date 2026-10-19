@@ -1,8 +1,8 @@
 // Regenerates test/helpers/noise-hqn-vectors.json.
 //
-//   npx tsx scripts/gen-noise-hqn-vectors.ts > test/helpers/noise-hqn-vectors.json
+//   npx tsx test/reference/vectors/gen-noise-hqn-vectors.ts > test/helpers/noise-hqn-vectors.json
 //
-// hqn/1 (src/protocol/noise.ts) is implemented twice — here for the gateway, and in
+// hqn/1 (test/reference/protocol/noise.ts) is implemented twice — here for the gateway, and in
 // apps/apple/HQChat/Services/NoiseHQN.swift for the app — and one byte of
 // disagreement anywhere in the transcript is a handshake that fails with
 // nothing but "decryption failed" on both ends. Both suites READ this file:
@@ -27,7 +27,7 @@ import {
   HqnResponder,
   type Kem,
   x25519KeyPair,
-} from "../src/protocol/noise";
+} from "../protocol/noise";
 
 function bytes(label: string, n: number): Buffer {
   const out: Buffer[] = [];
@@ -102,9 +102,9 @@ process.stdout.write(
   `${JSON.stringify(
     {
       _comment:
-        "hqn/1 hybrid Noise handshake (src/protocol/noise.ts). Every random input is pinned, including the KEM's " +
+        "hqn/1 hybrid Noise handshake (test/reference/protocol/noise.ts). Every random input is pinned, including the KEM's " +
         "(ct, ss). Asserted by services/server/test/noise.test.ts and apps/apple/tests/NoiseHQNTests.swift, " +
-        "both of which READ this file. Regenerate with scripts/gen-noise-hqn-vectors.ts.",
+        "both of which READ this file. Regenerate with test/reference/vectors/gen-noise-hqn-vectors.ts.",
       version: 1,
       protocolName: HQN_PROTOCOL_NAME,
       prologueLabel: HQN_PROLOGUE_LABEL,

@@ -145,7 +145,9 @@ impl Core {
         self.net.retry_at = None;
         self.net.next_conn = self.net.next_conn.wrapping_add(1);
         let id = self.net.next_conn;
-        let use_hqn = self.net.hqn.is_some() && !self.net.hqn_failed.contains(&self.network_key());
+        let use_hqn = self.config.allow_hqn
+            && self.net.hqn.is_some()
+            && !self.net.hqn_failed.contains(&self.network_key());
         let endpoint = match (&self.net.hqn, use_hqn) {
             (Some(h), true) => Endpoint::Tcp {
                 host: h.host.clone(),

@@ -1,5 +1,5 @@
 // KEM double ratchet — the v2 message-key core. Mirrors
-// services/server/src/protocol/double-ratchet.ts byte-for-byte; both sides assert the
+// services/server/test/reference/protocol/double-ratchet.ts byte-for-byte; both sides assert the
 // same services/server/test/helpers/double-ratchet-vectors.json, and both READ
 // that file rather than copying the hex into source (which is what v1 did, so
 // "cross-impl" rested on someone remembering to update two places).

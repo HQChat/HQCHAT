@@ -18,6 +18,7 @@
 
       overlay = final: _prev: {
         hqc = final.callPackage ./native/hqc/package.nix { };
+        hqchat-node = final.callPackage ./core/hqchat-node/package.nix { };
         hqcat-server = final.callPackage ./infra/nixos/pkgs/hqcat-server.nix {
           version = self.rev or self.dirtyRev or "dev";
         };
@@ -110,12 +111,20 @@
       overlays.default = overlay;
 
       packages =
-        lib.genAttrs devSystems (system: {
-          hqc = nixpkgs.legacyPackages.${system}.callPackage ./native/hqc/package.nix { };
-        })
+        lib.genAttrs devSystems (
+          system:
+          let
+            sp = nixpkgs.legacyPackages.${system};
+            hqc = sp.callPackage ./native/hqc/package.nix { };
+          in
+          {
+            inherit hqc;
+            hqchat-node = sp.callPackage ./core/hqchat-node/package.nix { inherit hqc; };
+          }
+        )
         // {
           ${hostSystem} = {
-            inherit (pkgs) hqc hqcat-server;
+            inherit (pkgs) hqc hqchat-node hqcat-server;
           }
           // lib.listToAttrs (
             lib.concatMap (

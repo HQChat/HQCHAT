@@ -21,9 +21,12 @@
  *      byte offsets rather than out of a parsed object, so "both accepted, same
  *      AAD, different `pn`" is reachable and would be a frame-confusion bug.
  *
- * Run:
- *   cd apps/apple/fuzz && ./run.sh envelope-v3-verdict     # build the Swift half
+ * Run against the Rust core (the default; scripts/check.sh core does this):
+ *   cd core && cargo build --release -p hqchat-verdict
  *   cd services/server && npx tsx test/fuzz/envelope-v3-differential.ts --iterations 100000
+ * or against the Swift app, on a Mac:
+ *   cd apps/apple/fuzz && ./run.sh envelope-v3-verdict
+ *   cd services/server && npx tsx test/fuzz/envelope-v3-differential.ts --iterations 100000 --oracle swift
  */
 
 import { execFileSync } from "node:child_process";
@@ -31,11 +34,12 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { decodeFrame } from "../../src/protocol/envelope";
+import { decodeFrame } from "../reference/protocol/envelope";
+import { type Oracle, oracle } from "./oracle";
 import { makeRng, type Rng } from "./rng";
 
 const VECTORS = path.join(__dirname, "..", "helpers", "envelope-v3-vectors.json");
-const SWIFT = path.join(__dirname, "../../../../apps/apple/fuzz/build/envelope-v3-verdict");
+let ORACLE: Oracle;
 const FINDINGS = path.join(__dirname, "findings");
 
 // ── the mutator ──────────────────────────────────────────────────────────────
@@ -188,7 +192,7 @@ function swiftVerdicts(frames: Buffer[], batchFile: string): string[] {
   // those silently is what made the two sides disagree about how many verdicts
   // they were even discussing.
   fs.writeFileSync(batchFile, frames.map((f) => f.toString("hex")).join("\n"));
-  const out = execFileSync(SWIFT, [batchFile], { maxBuffer: 1 << 28 }).toString("utf8");
+  const out = execFileSync(ORACLE.command, [...ORACLE.args, batchFile], { maxBuffer: 1 << 28 }).toString("utf8");
   const lines = out.split("\n");
   // The binary ends its output with a newline, so the final element is empty.
   if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
@@ -212,10 +216,7 @@ function main() {
   const seed = num("--seed", 1);
   const batchSize = num("--batch", 2000);
 
-  if (!fs.existsSync(SWIFT)) {
-    console.error(`✗ missing ${SWIFT}\n  build it: cd apps/apple/fuzz && ./run.sh envelope-v3-verdict`);
-    process.exit(2);
-  }
+  ORACLE = oracle("envelope-v3-verdict", "envelope-v3");
 
   const seeds = loadSeeds();
   const rng = makeRng(seed);
@@ -233,7 +234,7 @@ function main() {
     const ts = frames.map(tsVerdict);
     const swift = swiftVerdicts(frames, batchFile);
     if (swift.length !== frames.length) {
-      console.error(`✗ the Swift half returned ${swift.length} verdicts for ${frames.length} frames`);
+      console.error(`✗ the ${ORACLE.name} half returned ${swift.length} verdicts for ${frames.length} frames`);
       process.exit(1);
     }
     for (let i = 0; i < frames.length; i++) {
@@ -245,7 +246,7 @@ function main() {
       if (mismatches <= 10) {
         console.log(`\n✗ MISMATCH at iteration ${done + i}`);
         console.log(`  ts:    ${ts[i]}`);
-        console.log(`  swift: ${swift[i]}`);
+        console.log(`  ${ORACLE.name.padEnd(5)}: ${swift[i]}`);
         console.log(`  input: ${file}`);
       }
     }

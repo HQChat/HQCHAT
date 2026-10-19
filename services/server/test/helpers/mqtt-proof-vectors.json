@@ -1,5 +1,5 @@
 {
-  "_comment": "v1 MQTT CONNECT proof: password = v1.<keyId>.<ts>.<nonce b64url>.<Ed25519 sig b64url> over context 0x00 clientid 0x00 keyId 0x00 ts 0x00 nonce. Asserted by services/server/test/mqtt-proof.test.ts and apps/apple/tests/MQTTProofTests.swift, both of which READ this file. Regenerate with scripts/gen-mqtt-proof-vectors.ts.",
+  "_comment": "v1 MQTT CONNECT proof: password = v1.<keyId>.<ts>.<nonce b64url>.<Ed25519 sig b64url> over context 0x00 clientid 0x00 keyId 0x00 ts 0x00 nonce. Asserted by services/server/test/mqtt-proof.test.ts and apps/apple/tests/MQTTProofTests.swift, both of which READ this file. Regenerate with test/reference/vectors/gen-mqtt-proof-vectors.ts.",
   "version": 1,
   "context": "hqchat-mqtt-connect/1",
   "skewSeconds": 60,

@@ -1,6 +1,6 @@
 // Regenerates test/helpers/handshake-vectors.json.
 //
-//   npx tsx scripts/gen-handshake-vectors.ts > test/helpers/handshake-vectors.json
+//   npx tsx test/reference/vectors/gen-handshake-vectors.ts > test/helpers/handshake-vectors.json
 //
 // The proof is the one value in this exchange that both implementations must
 // compute identically from the same inputs. If they disagree by a byte, every
@@ -19,8 +19,8 @@ import {
   HANDSHAKE_VERSION,
   handshakeProof,
   initTranscript,
-} from "../src/protocol/handshake";
-import { peerId } from "../src/protocol/identity";
+} from "../protocol/handshake";
+import { peerId } from "../protocol/identity";
 
 function bytes(label: string, length: number): Buffer {
   const out: Buffer[] = [];

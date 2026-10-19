@@ -50,6 +50,19 @@ fn with_a_gateway_the_engine_connects_over_hqn() {
 }
 
 #[test]
+fn an_engine_that_does_not_allow_hqn_keeps_to_wss_even_when_offered() {
+    let server = FakeServer::shared();
+    server.borrow_mut().enable_hqn();
+    let config = hqchat_engine::Config {
+        allow_hqn: false,
+        ..support::config("a")
+    };
+    let a = Client::signed_in_with(&server, "a", config);
+    assert_eq!(opens(&a), [false]);
+    assert!(connected(&a));
+}
+
+#[test]
 fn a_network_that_blocks_hqn_falls_back_to_wss_at_once_and_stays_there() {
     let server = FakeServer::shared();
     server.borrow_mut().enable_hqn();

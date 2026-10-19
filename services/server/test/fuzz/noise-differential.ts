@@ -1,6 +1,6 @@
 /**
  * Differential fuzzing of hqn/1 — the raw-TCP transport's Noise handshake and
- * framing — src/protocol/noise.ts (TypeScript, the gateway) against NoiseHQN.swift (the
+ * framing — test/reference/protocol/noise.ts (TypeScript, the gateway) against NoiseHQN.swift (the
  * app), plus the gateway's own responder on hostile input.
  *
  * WHY. The pinned vectors (test/helpers/noise-hqn-vectors.json) show the two
@@ -23,9 +23,12 @@
  *              gateway restart, i.e. a denial of service for everyone on it),
  *              and nothing but the genuine msg1 may be accepted.
  *
- * Run:
- *   cd apps/apple/fuzz && ./run.sh noise-verdict
+ * Run against the Rust core (the default; scripts/check.sh core does this):
+ *   cd core && cargo build --release -p hqchat-verdict
  *   cd services/server && npx tsx test/fuzz/noise-differential.ts --mode frames --iterations 20000
+ * or against the Swift app, on a Mac:
+ *   cd apps/apple/fuzz && ./run.sh noise-verdict
+ *   cd services/server && npx tsx test/fuzz/noise-differential.ts --mode frames --iterations 20000 --oracle swift
  *   …                                                            --mode msg2
  *   …                                                            --mode responder
  */
@@ -43,9 +46,10 @@ import {
   NoiseError,
   type ServerStatic,
   x25519KeyPair,
-} from "../../src/protocol/noise";
+} from "../reference/protocol/noise";
+import { type Oracle, oracle } from "./oracle";
 
-const SWIFT = path.join(__dirname, "../../../../apps/apple/fuzz/build/noise-verdict");
+let ORACLE: Oracle;
 const VECTORS = path.join(__dirname, "..", "helpers", "noise-hqn-vectors.json");
 const FINDINGS = path.join(__dirname, "findings");
 const BATCH = 500;
@@ -191,7 +195,10 @@ function swiftVerdicts(mode: string, lines: string[]): string[] {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "noise-batch-"));
   const file = path.join(dir, "batch.jsonl");
   fs.writeFileSync(file, `${lines.join("\n")}\n`);
-  const stdout = execFileSync(SWIFT, [mode, file, VECTORS], { maxBuffer: 512 * 1024 * 1024, encoding: "utf8" });
+  const stdout = execFileSync(ORACLE.command, [...ORACLE.args, mode, file, VECTORS], {
+    maxBuffer: 512 * 1024 * 1024,
+    encoding: "utf8",
+  });
   fs.rmSync(dir, { recursive: true, force: true });
   return stdout.split("\n").filter((l) => l.length > 0);
 }
@@ -283,11 +290,7 @@ function main() {
     process.exit(1);
   }
 
-  if (!fs.existsSync(SWIFT)) {
-    console.error(`❌ no Swift half at ${SWIFT}`);
-    console.error("   build it:  cd apps/apple/fuzz && ./run.sh noise-verdict");
-    process.exit(2);
-  }
+  ORACLE = oracle("noise-verdict", "noise");
 
   const r = rng(seed);
   let mismatches = 0;
@@ -309,7 +312,7 @@ function main() {
     }
     const swift = swiftVerdicts(mode, lines);
     if (swift.length !== n) {
-      console.error(`❌ Swift returned ${swift.length} verdicts for ${n} inputs`);
+      console.error(`❌ ${ORACLE.name} returned ${swift.length} verdicts for ${n} inputs`);
       process.exit(2);
     }
     for (let i = 0; i < n; i++) {
@@ -323,7 +326,7 @@ function main() {
       const file = record(mode, seed, done + i, lines[i], sw, ts);
       console.error("");
       console.error(`── ${onlyGenuine ? "MISMATCH" : "A MUTATED msg2 WAS ACCEPTED"} (${mode}) ──`);
-      console.error(`  swift  ${sw.slice(0, 160)}`);
+      console.error(`  ${ORACLE.name.padEnd(5)}  ${sw.slice(0, 160)}`);
       console.error(`  ts     ${ts.slice(0, 160)}`);
       console.error(`  saved  ${path.relative(process.cwd(), file)}`);
       if (mismatches >= 10) {

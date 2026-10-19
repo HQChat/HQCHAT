@@ -19,7 +19,7 @@
 import assert from "node:assert/strict";
 import * as crypto from "node:crypto";
 import { test } from "node:test";
-import { authProof } from "../../src/protocol/auth-proof";
+import { authProof } from "../reference/protocol/auth-proof";
 
 /** Exactly what `handleVerify` in auth/main.ts does with the field. */
 function serverParse(solution: unknown): string {

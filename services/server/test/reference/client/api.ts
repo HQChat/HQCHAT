@@ -1,6 +1,6 @@
+import type { TransportInfo } from "../../../src/server/transport-config";
 import { isPeerId, keyMatchesId } from "../protocol/identity";
 import { TOPIC_ID } from "../protocol/topics";
-import type { TransportInfo } from "../server/transport-config";
 import type { Auth } from "./auth";
 import { requestJson } from "./http";
 

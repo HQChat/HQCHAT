@@ -28,14 +28,14 @@ import {
   HANDSHAKE_TRANSCRIPT_BYTES,
   HANDSHAKE_VERSION,
   handshakeProof,
-} from "../../src/protocol/handshake";
+} from "../reference/protocol/handshake";
 
 const ID_A = "a".repeat(64);
 const ID_B = "b".repeat(64);
 const NONCE = Buffer.alloc(HANDSHAKE_NONCE_BYTES, 7);
 const T = Buffer.alloc(HANDSHAKE_TRANSCRIPT_BYTES, 3);
 
-// Offsets, from the wire format in src/protocol/handshake.ts. Spelled out rather than
+// Offsets, from the wire format in test/reference/protocol/handshake.ts. Spelled out rather than
 // imported because they are private there — and because a test that reads the
 // layout from the implementation cannot catch the layout changing.
 const OFF_BODY = 102;
@@ -249,11 +249,11 @@ test("the magic, the version and the kind are each checked", () => {
 // kept the `=== 0` half of every one of them alive, for the reason at the top of
 // this file: each test fed a length in between.
 //
-// Offsets are spelled out here rather than imported from src/protocol/envelope.ts, where
+// Offsets are spelled out here rather than imported from test/reference/protocol/envelope.ts, where
 // they are private. A test that reads the layout from the implementation cannot
 // catch the layout changing, which is most of what a wire-format test is for.
 
-import { decodeFrame, encodeFrame, FRAME_VERSION, validateFrame } from "../../src/protocol/envelope";
+import { decodeFrame, encodeFrame, FRAME_VERSION, validateFrame } from "../reference/protocol/envelope";
 
 const V3_OFF_MSGID = 96;
 const KIND_MSG = 0;
@@ -277,7 +277,7 @@ const u32 = (n: number): Buffer => {
 const blob = (bytes: Buffer, claimed = bytes.length): Buffer => Buffer.concat([u32(claimed), bytes]);
 
 /** The id a given senderPk hashes to: sha256 over the LOWERCASE HEX of the key,
- *  as utf8 — `peerId` in src/protocol/identity.ts, restated rather than imported so this
+ *  as utf8 — `peerId` in test/reference/protocol/identity.ts, restated rather than imported so this
  *  test notices if that definition moves. An init whose sender is anything else
  *  is refused by the key commitment before any length guard is reached, which is
  *  how the first version of the init test below passed while proving nothing. */

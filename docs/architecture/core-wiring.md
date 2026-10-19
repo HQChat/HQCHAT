@@ -1,7 +1,9 @@
 # Core wiring: from the UI to the server and back
 
-**Status: the core is built (`core/`); the apps and the server do not use it
-yet.** This document follows one message from the sender's UI, through the
+**Status: the core is built (`core/`), and the server, the gateway and the
+bot run on it (phase 2, deployment pending); the apps do not use it yet.**
+Where a step below says "Today" for the server, it is what the server did
+before phase 2. This document follows one message from the sender's UI, through the
 server, to the recipient's UI and back as a delivery receipt. Each step names
 the function that does it today, in the Apple app, the TS reference client
 or the server, and the Rust function that replaces it. The design and the
@@ -23,11 +25,11 @@ flowchart LR
 |---|---|---|
 | UI | SwiftUI views over SwiftData rows (`ChatView`, `FriendListView`) | the same views, fed by `Engine` effects and reads (`history`, `friends`) |
 | Client logic | Swift `Services/` (~9.5k lines); the TS client in `services/server/src/client` | `hqchat-engine`: one implementation, reached through `hqchat-ffi` (Swift, Kotlin) or `hqchat-node` (the bot) |
-| Protocol | Swift (`RatchetSession`, `ConversationEnvelopeV3`, `Handshake`, `NoiseHQN`, `MQTTWireClient` …) and TS (`src/protocol/*.ts`), held together by vectors | `hqchat-protocol`, checked against the same vectors |
+| Protocol | Swift (`RatchetSession`, `ConversationEnvelopeV3`, `Handshake`, `NoiseHQN`, `MQTTWireClient` …) and TS (`test/reference/protocol/*.ts`), held together by vectors | `hqchat-protocol`, checked against the same vectors |
 | HQC-256 | `libhqc_wrap` via the bridging header (Swift) and koffi (TS) | `hqc` over `hqc-sys`, the same C at the same commit |
 | I/O | inside the Swift services (URLSession, Network.framework) | the shell, which carries out effects: `Http`, `Open`, `Write`, `Close`, `Timer` |
 | Keys at rest | `MessageKeyStore` (Secure Enclave), `AESKeyStore` (Keychain) | the shell's `KeyVault` (Secure Enclave, Keystore, TPM): `device_public_key`, `agree` |
-| Server | TS, calling `src/protocol` | TS, calling `hqchat-node` for every protocol check |
+| Server | TS, calling `src/protocol` (moved to `test/reference/` in phase 2) | TS, calling `hqchat-node` for every protocol check (built) |
 
 The Engine is **sans-IO**: each command returns the effects to carry out, in
 order, and never blocks. The shell answers each effect with a command
@@ -190,25 +192,24 @@ today is the importer's job (phase 3).
 - Errors: `CoreError` (`NoIdentity`, `NotAFriend`, `NoPrekeys`, `Locked`,
   `Vault`, `Store`, `State`, `Protocol`).
 
-### To the server (`hqchat-node`, napi)
+### To the server (`hqchat-node`, napi): wired in phase 2
 
-| Export | Replaces |
+| Export | Replaced |
 |---|---|
-| `hqcKeypairFromSeed`, `hqcEncapsulate`, `hqcDecapsulate` | `protocol/hqc.ts` (koffi) in `auth.ts`, `gateway/keys.ts`, `gateway/decap-worker.ts` |
-| `authProof`, `authProofMatches` | `protocol/auth-proof.ts`, `safeEqual` in `auth.ts` |
-| `parseConnectProof`, `isFreshTimestamp`, `verifyConnectProof` | `protocol/mqtt-proof.ts` in `auth.ts verifyConnect` |
-| `peerId`, `isPeerId`, `keyMatchesId`, `conversationTopic`, `handshakeTopic` | `protocol/identity.ts`, `topics.ts` in `api.ts`, `emqx.ts` |
-| `HqnGatewayHandshake`, `HqnTransport`, `gatewayPublicKey`, `hqnMsg1Length`, `hqnFrame` | `protocol/noise.ts` in `gateway/gateway.ts`, `gateway/keys.ts` |
-| `Engine` (with a software vault and a directory store) | `src/client/*` for `hqcat-bot`, `provision-client.ts`, the scenarios |
+| `hqcKeypairFromSeed`, `hqcEncapsulate`, `hqcDecapsulate`, `HQC_PUBLIC_KEY_BYTES` | `protocol/hqc.ts` (koffi) in `auth.ts`, `gateway/keys.ts`, `gateway/decap-worker.ts` |
+| `authProof`, `authProofMatches` | `protocol/auth-proof.ts` in `auth.ts` |
+| `parseConnectProof`, `isFreshTimestamp`, `verifyConnectProof`, `isSigningKey`, `MQTT_PROOF_NONCE_TTL_SECONDS` | `protocol/mqtt-proof.ts` in `auth.ts` (`verifyConnect`, `readSigningKey`) |
+| `peerId`, `isPeerId`, `keyMatchesId`, `conversationTopic`, `handshakeTopic`, `PEER_ID_LENGTH` | `protocol/identity.ts`, `topics.ts` in `api.ts`, `emqx.ts`, `db/users.ts`, `scripts/check-push.ts` |
+| `GatewayKeyPair`, `HqnGatewayHandshake`, `HqnTransport`, `hqnMsg1Length`, `hqnFrame`, `HQN_VERSION` | `protocol/noise.ts` in `gateway/gateway.ts`, `gateway/keys.ts` |
+| `Engine` (software vault, directory store), with `importLegacy` | `src/client/*` for `hqcat-bot`, through `src/common/core-client.ts` |
 
 ## What goes and what stays
 
 | Where | Deleted once the core is wired in | Kept |
 |---|---|---|
 | `apps/apple/HQChat/Services/` | `ChatSession` internals, `ConversationRouter`, `RatchetSession`, `DoubleRatchet`, `Handshake`, `ConversationEnvelopeV3`, `ConversationFrame`, `NoiseHQN`, `MQTTWireClient`, `MQTTService`, `MQTTConnectProof`, `MQTTTopics`, `PrekeyService`, `InboundQueue`, `AESService`, `HQCKem`, `HQCService`, `AuthService`, `DirectorySync`, `FriendService` logic, `KeyFingerprint` | an effect loop (`CoreShell`), `TLSPinning`, `PushManager`, `NotificationService`, `Reachability`, a `KeyVault` on the Secure Enclave (from `MessageKeyStore`), a `Store`, the importer, the views |
-| `services/server/src/protocol/` | everything | none |
-| `services/server/src/client/` | `conversation.ts`, `auth.ts`, `transport.ts`, `hqn-stream.ts`, `store.ts` | a thin effect loop over the napi `Engine` (fetch, `net`, `ws`) for the bot |
-| `services/server/src/server/`, `gateway/` | the koffi loader | everything else, calling napi |
+| `services/server/src/protocol/`, `src/client/` | done: no production code uses them; they moved to `test/reference/` as the independent implementation the fuzzers and scenarios drive | `src/common/core-client.ts`, the effect loop over the napi `Engine` (fetch, `net`, WebSocket) for the bot |
+| `services/server/src/server/`, `gateway/` | done: the koffi loader and `HQC_LIB` | everything else, calling napi |
 | `native/hqc/` | nothing (the Rust build compiles it) | all |
 
 ## Tests that hold it together
@@ -218,5 +219,8 @@ today is the importer's job (phase 3).
 | HQC | the shipped known answers (`core/hqc/tests/kem.rs`), and again through Node |
 | Protocol | the shared vector files, read in place from `services/server/test/helpers/` (identity, envelope, handshake, ratchet, CONNECT proof, hqn/1), the published Noise NK vector, RFC 7748, Node's crypto, mqtt.js's encoder; hostile input to every decoder |
 | Engine | two engines through a fake server and broker in Rust: the scenarios of `messaging.test.ts`, the locked queue, crossing inits, hqn/1 blocked, reconnects, history at rest |
-| Bindings | Node: the vectors through the addon and the TS hqn/1 initiator against the Rust gateway; Swift: generated bindings with a CryptoKit `KeyVault` |
+| Bindings | Node: the vectors through the addon and the TS hqn/1 initiator against the Rust gateway; a TS state file imported into the engine; Swift: generated bindings with a CryptoKit `KeyVault` |
+| Differential | `hqchat-verdict` answers the fuzzers in `services/server/test/fuzz` (envelope decode and encode, handshake, hqn/1): Rust and the TS reference agree on every verdict, AAD and field |
+| Server | the unit and integration layers on the addon; the gateway driven by the TS initiator over real sockets |
+| Scenarios | the local stack (`run-local.sh`): the reference client against the server, the bot on the core, an engine user talking to a reference user, and the Swift app live over hqn/1 |
 | CI | `scripts/check.sh core` on every pull request |

@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import * as crypto from "node:crypto";
 import * as net from "node:net";
 import { after, test } from "node:test";
+import { core } from "../../src/common/core";
 import { createGateway, type GatewayEvent, type GatewayLimits } from "../../src/gateway/gateway";
 import { parseKeySeeds } from "../../src/gateway/keys";
 import { connectClientId } from "../../src/gateway/mqtt-connect";
@@ -23,11 +24,9 @@ import {
   HqnInitiator,
   type Kem,
   msg1Length,
-  type ServerStatic,
   sealFrames,
   type Transport,
-  x25519KeyPair,
-} from "../../src/protocol/noise";
+} from "../reference/protocol/noise";
 
 // --- fixtures ----------------------------------------------------------------
 
@@ -39,12 +38,10 @@ const fakeKem: Kem = {
   decapsulate: (_sk, ct) => crypto.createHash("sha256").update(ct).digest(),
 };
 
-const KEY: ServerStatic = {
-  keyId: 3,
-  x25519: x25519KeyPair(),
-  hqc: { pk: crypto.randomBytes(HQC_PUBLIC_KEY_BYTES), sk: crypto.randomBytes(7333) },
-};
-const KEY_PUB = { keyId: KEY.keyId, x25519: KEY.x25519.pub, hqc: KEY.hqc.pk };
+// The gateway's key is the core's; the client below is the TypeScript
+// initiator with a fake KEM, so the two sides are independent implementations.
+const KEY = new core.GatewayKeyPair({ keyId: 3, x25519: crypto.randomBytes(32), hqcSeed: crypto.randomBytes(32) });
+const KEY_PUB = { keyId: KEY.keyId, x25519: KEY.publicKey().x25519, hqc: KEY.publicKey().hqc };
 
 const CLIENT_ID = "ab".repeat(32);
 
@@ -413,18 +410,12 @@ test("the key file is validated strictly", () => {
 
 // --- the real decapsulation pool ------------------------------------------------
 
-test("the worker pool decapsulates with the real HQC library, off the main thread", async (t) => {
-  let HqcWrapper: typeof import("../../src/protocol/hqc").HqcWrapper;
-  try {
-    ({ HqcWrapper } = await import("../../src/protocol/hqc"));
-  } catch (e) {
-    return t.skip(`native HQC unavailable: ${(e as Error).message}`);
-  }
+test("the worker pool decapsulates with the core's HQC, off the main thread", async () => {
   const { DecapPool } = await import("../../src/gateway/decap-pool");
-  const kp = HqcWrapper.keypairFromSeed(crypto.randomBytes(32));
+  const kp = core.hqcKeypairFromSeed(crypto.randomBytes(32));
   const pool = new DecapPool([{ keyId: 5, sk: kp.sk }], 2, 8);
   try {
-    const jobs = Array.from({ length: 4 }, () => HqcWrapper.encapsulate(kp.pk));
+    const jobs = Array.from({ length: 4 }, () => core.hqcEncapsulate(kp.pk));
     const secrets = await Promise.all(jobs.map((j) => pool.decapsulate(5, j.ct)));
     for (const [i, ss] of secrets.entries()) assert.ok(ss.equals(jobs[i]!.ss), `job ${i}`);
     await assert.rejects(
@@ -437,12 +428,7 @@ test("the worker pool decapsulates with the real HQC library, off the main threa
   }
 });
 
-test("a full pool queue refuses at once rather than growing", async (t) => {
-  try {
-    await import("../../src/protocol/hqc");
-  } catch (e) {
-    return t.skip(`native HQC unavailable: ${(e as Error).message}`);
-  }
+test("a full pool queue refuses at once rather than growing", async () => {
   const { DecapPool } = await import("../../src/gateway/decap-pool");
   const pool = new DecapPool([], 1, 0);
   try {
@@ -452,12 +438,7 @@ test("a full pool queue refuses at once rather than growing", async (t) => {
   }
 });
 
-test("noise-gw-keys fills an empty seed file, and appends rather than overwrites", async (t) => {
-  try {
-    await import("../../src/protocol/hqc");
-  } catch (e) {
-    return t.skip(`native HQC unavailable: ${(e as Error).message}`);
-  }
+test("noise-gw-keys fills an empty seed file, and appends rather than overwrites", async () => {
   const fs = await import("node:fs");
   const os = await import("node:os");
   const path = await import("node:path");

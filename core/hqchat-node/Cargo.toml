@@ -12,11 +12,15 @@ publish.workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
+base64 = "0.22"
+hex = "0.4"
 hqc = { path = "../hqc" }
 hqchat-engine = { path = "../hqchat-engine" }
 hqchat-protocol = { path = "../hqchat-protocol" }
 napi = "3"
 napi-derive = "3"
+serde_json = "1"
+zeroize = "1"
 
 [build-dependencies]
 napi-build = "2"
