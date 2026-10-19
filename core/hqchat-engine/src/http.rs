@@ -24,6 +24,11 @@ pub(crate) enum Pending {
     Invite(String),
     /// Withdrawing (or declining) the request with `peer`.
     Cancel(String),
+    /// A report; on success the reported friend is blocked when asked
+    /// (a block ends the membership the server checks a report against).
+    Report {
+        block: Option<hqchat_protocol::PeerId>,
+    },
     /// A friend's key, fetched to pin it.
     PinKey(hqchat_protocol::PeerId),
     /// The directory, read in this order: the block list, invites, then
@@ -120,6 +125,7 @@ impl Core {
             Pending::Invite(to) => self.on_invite_sent(to, answer, now),
             Pending::Cancel(peer) => self.on_cancelled(&peer, answer),
             Pending::PinKey(peer) => self.on_pin_key(peer, answer),
+            Pending::Report { block } => self.on_reported(block, answer),
             Pending::DeleteAccount => self.on_account_deleted(answer),
             Pending::ThenSync(action) => self.on_then_sync(action, answer),
             Pending::Blocked => self.on_blocked(answer, now),

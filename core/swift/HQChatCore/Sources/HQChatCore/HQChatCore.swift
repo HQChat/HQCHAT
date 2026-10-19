@@ -752,6 +752,11 @@ public protocol EngineProtocol: AnyObject, Sendable {
     func retry(msgId: String, now: Int64)  -> [Effect]
     
     /**
+     * Steps the ratchet with `peer` on the next message sent.
+     */
+    func rotateKeys(peer: String) throws  -> [Effect]
+    
+    /**
      * Sends `text` to a friend.
      */
     func sendText(peer: String, text: String, now: Int64) throws  -> [Effect]
@@ -1185,6 +1190,19 @@ open func retry(msgId: String, now: Int64) -> [Effect]  {
             self.uniffiCloneHandle(),
         FfiConverterString.lower(msgId),
         FfiConverterInt64.lower(now),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Steps the ratchet with `peer` on the next message sent.
+     */
+open func rotateKeys(peer: String)throws  -> [Effect]  {
+    return try  FfiConverterSequenceTypeEffect.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_hqchat_ffi_fn_method_engine_rotate_keys(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(peer),uniffiCallStatus
     )
 })
 }
@@ -6171,6 +6189,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_hqchat_ffi_checksum_method_engine_retry() != 18926) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_hqchat_ffi_checksum_method_engine_rotate_keys() != 57255) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_hqchat_ffi_checksum_method_engine_send_text() != 52652) {

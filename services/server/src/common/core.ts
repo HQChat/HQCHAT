@@ -191,7 +191,7 @@ export interface Engine {
   forget(peer: string): CoreEffect[];
   markRead(peer: string): CoreEffect[];
   rotateKeys(peer: string): CoreEffect[];
-  report(peer: string, reason: string, msgIds: string[], block: boolean): CoreEffect[];
+  report(peer: string, reason: string, msgIds: string[], block: boolean, note?: string | null): CoreEffect[];
   setUsername(username: string): CoreEffect[];
   deleteAccount(): CoreEffect[];
   registerApns(token: string, sandbox: boolean): CoreEffect[];

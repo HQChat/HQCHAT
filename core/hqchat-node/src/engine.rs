@@ -483,11 +483,13 @@ impl JsEngine {
         reason: String,
         msg_ids: Vec<String>,
         block: bool,
+        note: Option<String>,
     ) -> Vec<JsEffect> {
         all(self.engine.report(ReportInput {
             peer,
             reason,
             msg_ids,
+            note,
             block,
         }))
     }

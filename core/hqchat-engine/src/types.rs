@@ -129,7 +129,9 @@ pub struct ReportInput {
     pub reason: String,
     /// The message ids whose text is sent as the excerpt.
     pub msg_ids: Vec<String>,
-    /// Block them too.
+    /// What the user added, if anything.
+    pub note: Option<String>,
+    /// Block them too, once the report is filed.
     pub block: bool,
 }
 

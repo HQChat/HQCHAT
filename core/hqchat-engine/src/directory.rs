@@ -494,22 +494,36 @@ impl Core {
         if let Some(first) = r.msg_ids.first() {
             body.insert("messageId".into(), json!(first));
         }
+        if let Some(note) = r.note.as_deref().filter(|n| !n.is_empty()) {
+            body.insert("note".into(), json!(note));
+        }
         let body = Value::Object(body);
         self.request(
             Method::Post,
             "/report",
             Some(body),
             true,
-            Pending::Action(Action::Report),
+            Pending::Report {
+                block: r.block.then_some(peer_id),
+            },
         );
-        if r.block {
+        Ok(())
+    }
+
+    pub fn on_reported(&mut self, block: Option<PeerId>, a: Answer) {
+        if !a.ok() {
+            return self.fail(Action::Report, &a);
+        }
+        self.emit(Effect::ActionDone {
+            action: Action::Report,
+        });
+        if let Some(peer) = block {
             self.friendship(
                 Action::Block,
                 "/friends/block",
-                json!({ "peer": peer_id.as_str() }),
+                json!({ "peer": peer.as_str() }),
             );
         }
-        Ok(())
     }
 
     pub fn fingerprint(&self, peer: &PeerId) -> Option<String> {

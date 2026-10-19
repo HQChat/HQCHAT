@@ -400,7 +400,9 @@ pub struct ReportInput {
     pub reason: String,
     /// Messages whose text is the excerpt.
     pub msg_ids: Vec<String>,
-    /// Block them too.
+    /// What the user added.
+    pub note: Option<String>,
+    /// Block them too, once the report is filed.
     pub block: bool,
 }
 
@@ -410,6 +412,7 @@ impl From<ReportInput> for core::ReportInput {
             peer: r.peer,
             reason: r.reason,
             msg_ids: r.msg_ids,
+            note: r.note,
             block: r.block,
         }
     }

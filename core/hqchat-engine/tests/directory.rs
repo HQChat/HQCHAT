@@ -95,6 +95,7 @@ fn a_report_names_the_conversation_and_can_block() {
         peer: b.id(),
         reason: "spam".into(),
         msg_ids: vec![],
+        note: Some("again and again".into()),
         block: true,
     });
     a.pump(e);
@@ -102,6 +103,11 @@ fn a_report_names_the_conversation_and_can_block() {
     let report = s.reports.last().expect("filed");
     assert_eq!(report["peer"], b.id());
     assert_eq!(report["category"], "spam");
+    assert_eq!(report["note"], "again and again");
+    let log = &s.log;
+    let reported = log.iter().position(|(_, p)| p == "/report").unwrap();
+    let blocked = log.iter().position(|(_, p)| p == "/friends/block").unwrap();
+    assert!(reported < blocked, "the block waits for the report");
     assert_eq!(report["conversation"].as_str().unwrap().len(), 64);
     assert!(s.users[&a.id()].blocked.contains(&b.id()));
     drop(s);

@@ -458,6 +458,11 @@ RustBuffer uniffi_hqchat_ffi_fn_method_engine_report(uint64_t ptr, RustBuffer re
 RustBuffer uniffi_hqchat_ffi_fn_method_engine_retry(uint64_t ptr, RustBuffer msg_id, int64_t now, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_ROTATE_KEYS
+#define UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_ROTATE_KEYS
+RustBuffer uniffi_hqchat_ffi_fn_method_engine_rotate_keys(uint64_t ptr, RustBuffer peer, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_SEND_TEXT
 #define UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_SEND_TEXT
 RustBuffer uniffi_hqchat_ffi_fn_method_engine_send_text(uint64_t ptr, RustBuffer peer, RustBuffer text, int64_t now, RustCallStatus *_Nonnull out_status
@@ -986,6 +991,12 @@ uint16_t uniffi_hqchat_ffi_checksum_method_engine_report(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_CHECKSUM_METHOD_ENGINE_RETRY
 #define UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_CHECKSUM_METHOD_ENGINE_RETRY
 uint16_t uniffi_hqchat_ffi_checksum_method_engine_retry(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_CHECKSUM_METHOD_ENGINE_ROTATE_KEYS
+#define UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_CHECKSUM_METHOD_ENGINE_ROTATE_KEYS
+uint16_t uniffi_hqchat_ffi_checksum_method_engine_rotate_keys(void
     
 );
 #endif
