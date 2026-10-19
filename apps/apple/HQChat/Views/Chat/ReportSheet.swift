@@ -1,6 +1,4 @@
 import SwiftUI
-import SwiftData
-import CryptoKit
 
 /// What a report is about, snapshotted when the user asks. A value with its own
 /// UUID, so the sheet's identity cannot change under it the way a SwiftData
@@ -19,11 +17,13 @@ struct ReportDraft: Identifiable {
 /// own, unverifiable copy. The report is sent before the block, because the
 /// server only accepts reports from conversation members.
 struct ReportSheet: View {
-    let friend: Friend
+    let friend: Contact
     /// What is being reported.
     let draft: ReportDraft
-    let session: ChatSession
-    let onFinished: () -> Void
+    /// Called once filed, with whether the friend was blocked too.
+    let onFinished: (Bool) -> Void
+
+    @EnvironmentObject private var chat: ChatStore
 
     @Environment(\.dismiss) private var dismiss
     @State private var category = "harassment"
@@ -212,36 +212,18 @@ struct ReportSheet: View {
 
     private func send() {
         sending = true
-        let peer = friend.peerID
-        guard let convoID = friend.convoTopicID else {
-            sending = false
-            return
-        }
         Task {
             do {
-                // Report before blocking: the block ends membership.
-                _ = try await session.api.report(
-                    conversation: convoID,
-                    peer: peer,
-                    category: category,
-                    note: note.isEmpty ? nil : note,
-                    // Nil for a conversation report.
-                    excerpt: draft.excerpt,
-                    messageId: draft.messageId)
-                if alsoBlock {
-                    try await session.api.block(peer: peer)
-                    await MainActor.run { friend.blockedAt = Date() }
-                }
-                await MainActor.run {
-                    sending = false
-                    onFinished()
-                    dismiss()
-                }
+                // The core files the report first and blocks only once it is
+                // in: the block ends the membership the server checks.
+                try await chat.report(friend, category: category, note: note.isEmpty ? nil : note,
+                                      messageID: draft.messageId, block: alsoBlock)
+                sending = false
+                onFinished(alsoBlock)
+                dismiss()
             } catch {
-                await MainActor.run {
-                    sending = false
-                    appError = .from(error)
-                }
+                sending = false
+                appError = .from(error)
             }
         }
     }

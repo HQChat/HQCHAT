@@ -4,8 +4,6 @@ import SwiftUI
 /// (a tab bar on iOS, a sidebar and split view on macOS).
 struct MainAppView: View {
     @EnvironmentObject var appState: AppState
-    let session: ChatSession
-    let userService: UserService
     let profileManager: ProfileManager?
     @State private var showingProfileSelection = false
     
@@ -47,14 +45,10 @@ struct MainAppView: View {
 
             Divider()
 
-            FriendListView(session: session, userService: userService, profileManager: profileManager)
+            FriendListView(profileManager: profileManager)
         }
         #else
-        RootTabView(
-            session: session,
-            userService: userService,
-            profileManager: profileManager
-        )
+        RootTabView(profileManager: profileManager)
         #endif
     }
 

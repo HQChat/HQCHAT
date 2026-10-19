@@ -2,7 +2,7 @@ import SwiftUI
 
 /// The notices above a conversation: an unverified key, a vanished identity, a block.
 struct ChatBanners: View {
-    let friend: Friend
+    let friend: Contact
     let isEmpty: Bool
     let onVerify: () -> Void
 
@@ -33,7 +33,7 @@ struct ChatBanners: View {
 /// The conversation's top bar: back, the contact and its encryption status,
 /// search, the report menu, and (macOS) the profile switcher.
 struct ChatHeader: View {
-    let friend: Friend
+    let friend: Contact
     let profileManager: ProfileManager?
     @Binding var isSearching: Bool
     let onVerify: () -> Void
@@ -121,7 +121,7 @@ struct ChatHeader: View {
 
 /// Online state and whether the contact's key is verified; tapping it opens verification.
 private struct SessionStatus: View {
-    let friend: Friend
+    let friend: Contact
     let onVerify: () -> Void
 
     private var presence: String { friend.isOnline ? "live" : "offline" }

@@ -6,13 +6,11 @@
 # Read by run.sh, which exports EXPECTED_SKIPS before each suite. A suite with
 # no line is allowed zero skips.
 #
-# Every non-zero entry needs a reason and a route to zero. All of these are
-# at-rest sealing checks: they need a signed build on real hardware,
-# run by hand from Xcode before a release.
+# Every non-zero entry needs a reason and a route to zero. These need a
+# signed build on real hardware, run by hand from Xcode before a release.
 #
 # format: <suite>\t<allowed skips>\t<reason>
 
-MessageAtRestTests	3	Secure Enclave key cannot be created in an unsigned headless binary (-25308) or the Simulator (-25293)
 KeyProtectionTierTests	3	an unsigned binary has no keychain access group, so the marker WRITE is refused (-34018) while reads still work
 
 # Not read by run.sh: the XCUITest bundle is run by xcodebuild from verify.sh.
@@ -20,4 +18,4 @@ KeyProtectionTierTests	3	an unsigned binary has no keychain access group, so the
 # `requireSignedBuild()` when verify.sh sets TEST_RUNNER_HQCAT_UNSIGNED: their
 # blocker is -34018 (no keychain access group in an unsigned build), the same
 # as KeyProtectionTierTests, not the Enclave-absence one above.
-HQChatUITests	2	testOpenConversationShowsSeededMessages and testCreatingProfileEntersTheApp both need an Enclave-backed key, which an unsigned build cannot create: no keychain access group, SecKeyCreateRandomKey -34018
+HQChatUITests	1	testCreatingProfileEntersTheApp needs an Enclave-backed key, which an unsigned build cannot create: no keychain access group, SecKeyCreateRandomKey -34018

@@ -1,7 +1,9 @@
-// The move to the core (Services/CoreImport.swift): a profile's records as the
-// Swift implementation keeps them, mapped into the core's import and opened
-// by a real engine. The session is made by the app's own ratchet with real
-// HQC, so what is checked is the field-for-field mapping, not a fixture.
+// The move to the core (Migration/CoreImport.swift): a profile's records as
+// 3.1.1 kept them, mapped into the core's import and opened by a real engine.
+// The keys and the session come from fixtures/legacy-3.1.1-session.json,
+// written once by the shipped Swift ratchet with real HQC (the generator ran
+// against the 3.1.1 sources before they were deleted), so what is checked is
+// the field-for-field mapping of a real session.
 
 import CryptoKit
 import Foundation
@@ -36,18 +38,26 @@ func engine() -> Engine {
                 vault: TestVault(), store: TestStore())
 }
 
-let hqc = HQCKem()
-let me = try! hqc.generateKeypair()
-let friendKey = try! hqc.generateKeypair()
-let medium = try! hqc.generateKeypair()
-let friendID = peerID(friendKey.pk)
-let started = try! RatchetSession.startAsInitiator(
-    kem: hqc,
-    bundle: PrekeyBundle(identityPk: friendKey.pk, mediumPk: medium.pk, oneTimePk: nil, oneTimeId: nil)
+struct Pair: Codable { let pk: Data; let sk: Data }
+struct Fixture: Codable {
+    let me: Pair
+    let friendPk: Data
+    let medium: Pair
+    let oneTime: Pair
+    let session: RatchetSessionState
+}
+let fixture = try! JSONDecoder().decode(
+    Fixture.self,
+    from: Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1]))
 )
-let oneTime = try! hqc.generateKeypair()
-let blockedID = peerID(try! hqc.generateKeypair().pk)
-let vanishedID = peerID(try! hqc.generateKeypair().pk)
+let me = fixture.me
+let friendPk = fixture.friendPk
+let medium = fixture.medium
+let oneTime = fixture.oneTime
+let session = fixture.session
+let friendID = peerID(friendPk)
+let blockedID = peerID(Data(repeating: 1, count: HQCPublicKeySize))
+let vanishedID = peerID(Data(repeating: 2, count: HQCPublicKeySize))
 
 func snapshot() -> LegacySnapshot {
     LegacySnapshot(
@@ -59,13 +69,16 @@ func snapshot() -> LegacySnapshot {
             nextId: 8, rotatedAt: Date(timeIntervalSince1970: 1_790_000_000)
         ),
         friends: [
-            .init(peerID: friendID, username: "friend", publicKey: friendKey.pk,
+            .init(peerID: friendID, username: "friend", publicKey: friendPk,
                   convoTopicID: String(repeating: "c", count: 64),
                   handshakeTopicID: String(repeating: "d", count: 64),
-                  session: started.state),
+                  session: session, verified: true),
             // An invite nobody accepted yet: no id, so nothing to import.
             .init(peerID: "", username: "pending", publicKey: Data(), convoTopicID: nil,
-                  handshakeTopicID: nil, session: nil),
+                  handshakeTopicID: nil, session: nil, accepted: false, inviteSent: true),
+            // A request received: the server lists it again, nothing to import.
+            .init(peerID: peerID(Data(repeating: 3, count: HQCPublicKeySize)), username: "asking",
+                  publicKey: Data(), convoTopicID: nil, handshakeTopicID: nil, session: nil, accepted: false),
             .init(peerID: blockedID, username: "blocked", publicKey: Data(),
                   convoTopicID: String(repeating: "e", count: 64),
                   handshakeTopicID: String(repeating: "f", count: 64), session: nil,
@@ -89,9 +102,11 @@ func snapshot() -> LegacySnapshot {
 print("── Moving a profile to the core ───────────────")
 
 let data = try! CoreImport.importData(from: snapshot())
-check(data.peers.count == 3, "an invite without an id is not a friend to import")
-check(data.peers[0].pinnedPublicKey == friendKey.pk, "a full identity key is pinned")
-check(data.peers[0].session?.chainStartedAt == CoreImport.milliseconds(started.state.chainStartedAt),
+check(data.peers.count == 3, "requests either way are not friends to import")
+check(data.sent.map(\.to) == ["pending"], "a request sent to a handle is kept as sent")
+check(data.peers[0].verified, "a verified friend stays verified")
+check(data.peers[0].pinnedPublicKey == friendPk, "a full identity key is pinned")
+check(data.peers[0].session?.chainStartedAt == CoreImport.milliseconds(session.chainStartedAt),
       "the chain's start time is carried in milliseconds")
 check(data.peers[0].session?.pendingInit?.chain.count == 16, "chain ids go from hex to 16 bytes")
 check(data.prekeys?.oneTime.map(\.id) == [7] && data.prekeys?.nextId == 8, "one-time prekeys keep their ids")

@@ -9,10 +9,10 @@
 # app's Swift files are in that position, so a report over llvm-cov's output alone
 # would describe a third of the app and call it the whole thing.
 #
-# SCOPE: the tests/run.sh slices only. e2e/run.sh and fuzz/run.sh compile some
-# further files (ConversationFrame, HQCService, HQCKem) without instrumentation,
-# so those read as unreached here. Instrumenting them is the obvious next
-# increment; until then this number is a floor, not an estimate.
+# SCOPE: the tests/run.sh slices only. e2e/hqn-live compiles the store and the
+# rest of the non-view files live against the local stack, without
+# instrumentation, so what only it reaches reads as unreached here: this
+# number is a floor, not an estimate.
 #
 # So the denominator comes from the filesystem instead:
 #
@@ -162,8 +162,7 @@ if unreached:
     lost = sum(f["loc"] for f in unreached)
     print()
     print(f"  Never compiled into a unit-test slice — {lost} lines ({100.0*lost/total_loc:.1f}% of the source):")
-    print("  (e2e/run.sh and fuzz/run.sh compile a few of these — ConversationFrame,")
-    print("   HQCService, HQCKem — but neither is instrumented yet, so they read as zero here.)")
+    print("  (e2e/hqn-live drives the store live, but is not instrumented, so it reads as zero here.)")
     for f in unreached:
         print(f"    {f['loc']:6d}  {f['rel']}")
 

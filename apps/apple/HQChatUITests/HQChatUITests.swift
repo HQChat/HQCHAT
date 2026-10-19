@@ -11,7 +11,7 @@ final class HQChatUITests: XCTestCase {
         continueAfterFailure = false
     }
 
-    /// Two tests below need a key the app cannot create in an UNSIGNED build.
+    /// A test below needs a key the app cannot create in an UNSIGNED build.
     /// They are skipped there rather than failed.
     ///
     /// At-rest sealing "cannot be exercised off real hardware… that coverage
@@ -83,13 +83,9 @@ final class HQChatUITests: XCTestCase {
                       "Demo chat list should show the seeded contacts")
     }
 
-    /// Opening a conversation shows the seeded message history.
-    ///
-    /// Enclave-bound even in demo mode: a seeded message is sealed at rest by
-    /// `Message.content`'s setter before it can be read back, and without an
-    /// Enclave key that seal fails and nothing is persisted to show.
+    /// Opening a conversation shows the seeded message history (demo mode
+    /// serves it from memory, so no Enclave is needed).
     func testOpenConversationShowsSeededMessages() throws {
-        try requireSignedBuild()
         let app = launchDemoApp()
         let sarah = app.staticTexts["sarah_k"]
         XCTAssertTrue(sarah.waitForExistence(timeout: 20))
@@ -158,9 +154,9 @@ final class HQChatUITests: XCTestCase {
     /// gate any more. Runs against the real store and the real Keychain path on
     /// purpose; DEMO_MODE would skip all of it.
     func testCreatingProfileEntersTheApp() throws {
-        // Genuine HQC keygen and a real Keychain write, on purpose — DEMO_MODE
-        // would skip the very thing this covers. Which also means no Enclave, no
-        // test.
+        // A genuine identity from the core, sealed to a real Enclave key, on
+        // purpose — DEMO_MODE would skip the very thing this covers. Which also
+        // means no Enclave, no test.
         try requireSignedBuild()
         let app = XCUIApplication()
         app.launchEnvironment["UITEST_FRESH"] = "1"
@@ -201,7 +197,7 @@ final class HQChatUITests: XCTestCase {
         XCTAssertTrue(create.isEnabled, "create should enable once all three are answered")
         create.tap()
 
-        // Key generation is genuine HQC keygen, so allow real time for it.
+        // The identity is genuine HQC keygen, so allow real time for it.
         let landed = app.tabBars.buttons["chats"].waitForExistence(timeout: 90)
         XCTAssertTrue(landed, "Creating a profile should enter the app")
 

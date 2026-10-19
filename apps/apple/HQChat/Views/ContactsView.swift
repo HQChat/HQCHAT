@@ -1,35 +1,29 @@
 #if os(iOS)
 import SwiftUI
-import SwiftData
 
 /// The Contacts tab: pending invites, established contacts, blocked and vanished
 /// identities, and adding someone new.
 struct ContactsView: View {
     @EnvironmentObject var appState: AppState
-    @Query(sort: \Friend.username) private var allFriends: [Friend]
+    @EnvironmentObject var chat: ChatStore
 
-    @ObservedObject var friendService: FriendService
-    @ObservedObject var userService: UserService
     let profileManager: ProfileManager?
 
     @State private var path = NavigationPath()
     @State private var appError: AppError?
-    @State private var friendToRemove: Friend?
-    @State private var friendToBlock: Friend?
+    @State private var friendToRemove: Contact?
+    @State private var friendToBlock: Contact?
 
-    private var scoped: [Friend] {
-        guard let currentProfile = profileManager?.currentProfile else { return [] }
-        return allFriends.filter { $0.profile?.id == currentProfile.id }
-    }
+    private var scoped: [Contact] { chat.contacts.sorted { $0.username < $1.username } }
 
-    private var incoming: [Friend] { scoped.filter { $0.inviteStatus == .inviteReceived } }
-    private var outgoing: [Friend] { scoped.filter { $0.inviteStatus == .inviteSent } }
-    private var accepted: [Friend] { scoped.filter { $0.inviteStatus == .accepted } }
+    private var incoming: [Contact] { scoped.filter { $0.inviteStatus == .inviteReceived } }
+    private var outgoing: [Contact] { scoped.filter { $0.inviteStatus == .inviteSent } }
+    private var accepted: [Contact] { scoped.filter { $0.inviteStatus == .accepted } }
     /// Read-only histories (a vanished identity, or one the user blocked) are
     /// listed apart from the people who can be written to.
-    private var vanished: [Friend] { accepted.filter(\.isVanished) }
-    private var blocked: [Friend] { scoped.filter(\.isBlocked) }
-    private var reachable: [Friend] { accepted.filter { !$0.isVanished && !$0.isBlocked } }
+    private var vanished: [Contact] { accepted.filter(\.isVanished) }
+    private var blocked: [Contact] { scoped.filter(\.isBlocked) }
+    private var reachable: [Contact] { accepted.filter { !$0.isVanished && !$0.isBlocked } }
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -109,7 +103,7 @@ struct ContactsView: View {
                 ContactRow(friend: friend)
                     .swipeActions(edge: .trailing) {
                         Button {
-                            run { try await friendService.unblock(friend: friend) }
+                            run { try await chat.unblock(friend) }
                         } label: {
                             Label("Unblock", systemImage: "hand.raised.slash")
                         }
@@ -129,15 +123,12 @@ struct ContactsView: View {
             }
         }
         .scrollContentBackground(.hidden)
-        .refreshable {
-            try? await friendService.requestFriendsList()
-            try? await friendService.requestInvitesList()
-        }
+        .refreshable { chat.refresh() }
     }
 
     @ViewBuilder
-    private func section<Row: View>(_ title: String, _ friends: [Friend],
-                                    @ViewBuilder row: @escaping (Friend) -> Row) -> some View {
+    private func section<Row: View>(_ title: String, _ friends: [Contact],
+                                    @ViewBuilder row: @escaping (Contact) -> Row) -> some View {
         if !friends.isEmpty {
             Section(header: HQFieldLabel(text: title)) {
                 ForEach(friends) { friend in
@@ -148,12 +139,11 @@ struct ContactsView: View {
     }
 
     private var addContact: some View {
-        AddContactView(friendService: friendService, userService: userService,
-                       pendingUsernames: Set(outgoing.map(\.username)),
+        AddContactView(pendingUsernames: Set(outgoing.map(\.username)),
                        // A vanished identity's handle belongs to whoever holds it now.
                        contactUsernames: Set(accepted.filter { !$0.isVanished }.map(\.username)),
                        incomingUsernames: Set(incoming.map(\.username)),
-                       myUsername: userService.currentUsername)
+                       myUsername: profileManager?.currentProfile?.username)
     }
 
     /// The single navigation destination of this tab.
@@ -161,21 +151,21 @@ struct ContactsView: View {
 
     // MARK: Actions
 
-    private func accept(_ friend: Friend) {
-        run { try await friendService.acceptInvite(username: friend.username) }
+    private func accept(_ friend: Contact) {
+        run { try await chat.accept(friend) }
     }
 
-    private func cancel(_ friend: Friend) {
-        run { try await friendService.cancelInvite(username: friend.username) }
+    private func cancel(_ friend: Contact) {
+        run { try await chat.cancel(friend) }
     }
 
-    /// By row, not by handle: after an identity change two rows share a handle.
-    private func remove(_ friend: Friend) {
-        run { try await friendService.remove(friend: friend) }
+    /// By id, not by handle: after an identity change two rows share a handle.
+    private func remove(_ friend: Contact) {
+        run { try await chat.remove(friend) }
     }
 
-    private func block(_ friend: Friend) {
-        run { try await friendService.block(friend: friend) }
+    private func block(_ friend: Contact) {
+        run { try await chat.block(friend) }
     }
 
     /// Runs a friend-graph action, surfacing its error.

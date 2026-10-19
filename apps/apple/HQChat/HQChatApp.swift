@@ -27,18 +27,12 @@ struct HQChatApp: App {
             .onChange(of: scenePhase) { _, phase in
                 switch phase {
                 case .background:
-                    // Unsecure mode: don't retain the key while backgrounded.
-                    appState.clearCachedKey()
+                    // Presence offline, then the core forgets its keys.
+                    Task { await appState.enterBackground() }
                 case .active:
-                    // Don't make the user wait out the reconnect backoff after
-                    // coming back from background or a network drop.
-                    Task { await appState.reconnectIfNeeded() }
-                    // And ask for the message unlock from somewhere STABLE. The
-                    // screens that show bodies ask too, but SwiftUI cancels a
-                    // `.task` whenever its view rebuilds — and the view that
-                    // lists conversations rebuilds exactly when conversations
-                    // arrive. This scene handler outlives all of that.
-                    Task { await MessageKeyGate.shared.unlock() }
+                    // Back online, and the one unlock that opens the history,
+                    // asked from here because this handler outlives the views.
+                    Task { await appState.enterForeground() }
                 default: break
                 }
             }

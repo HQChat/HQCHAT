@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import SwiftData
 
@@ -15,32 +16,11 @@ struct PersistenceController {
         #endif
     }
 
-    @MainActor
-    static let preview: ModelContainer = {
-        let config = ModelConfiguration(isStoredInMemoryOnly: true)
-        let container = try! ModelContainer(for: Profile.self, Friend.self, Message.self, PendingFrame.self,
-                                       configurations: config)
-        
-        // Add sample data for preview
-        let sampleProfile = Profile(username: "tester", publicKeyHex: Data(count: 7237).hexString)
-        container.mainContext.insert(sampleProfile)
-        
-        let samplePk = Data(count: 7237)
-        let sampleFriend = Friend(username: "alice",
-                                  peerID: PeerID.from(publicKey: samplePk),
-                                  publicKey: samplePk,
-                                  profile: sampleProfile)
-        container.mainContext.insert(sampleFriend)
-        
-        let sampleMessage = Message(content: "Hello!", isOutgoing: false, friend: sampleFriend)
-        container.mainContext.insert(sampleMessage)
-        
-        return container
-    }()
-    
     let container: ModelContainer
     
     init() {
+        // The 3.1.1 models stay in the schema until Migration/ goes: the move
+        // reads and deletes their rows.
         let schema = Schema([Profile.self, Friend.self, Message.self, PendingFrame.self])
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: Self.isDemo)
 
@@ -95,79 +75,47 @@ struct PersistenceController {
     }
     #endif
 
-    /// An inert session, so demo contacts derive `hasSession == true` the same
-    /// way a real one does. The key material is zeroed — nothing in the demo
-    /// encrypts anything, and random bytes here would only look like secrets.
-    private static func demoSession() -> RatchetSessionState {
-        RatchetSessionState(
-            root: Data(count: 32),
-            rkPub: Data(count: 32),
-            rkSec: Data(count: 32),
-            peerRkPub: Data(count: 32),
-            send: RatchetChain(ck: Data(count: 32), n: 0),
-            recv: RatchetChain(ck: Data(count: 32), n: 0),
-            prevSendN: 0,
-            skipped: [],
-            seenChains: [],
-            sentOnChain: 0,
-            chainStartedAt: Date()
-        )
-    }
-
-    /// Populate the demo store with a believable conversation set.
+    /// The demo profile, so the profile chrome has something to show.
     static func seedDemoData(into container: ModelContainer) {
         let context = ModelContext(container)
-        let profile = Profile(username: "alexrivera",
-                              publicKeyHex: Data(count: 7237).hexString)
+        let profile = Profile(username: "alexrivera", publicKeyHex: "")
+        profile.clientID = String(repeating: "a1", count: 32)
         profile.isActive = true
         context.insert(profile)
+        try? context.save()
+    }
 
-        func friend(_ name: String, online: Bool, secure: Bool) -> Friend {
-            // A real-size key, and the id it commits to. Deriving rather than
-            // inventing keeps the demo store internally consistent: a screenshot
-            // taken from it shows an id that really is the hash of the key beside
-            // it, which is the invariant every other layer relies on.
-            let pk = Data((0..<7237).map { _ in UInt8.random(in: 0...255) })
-            let f = Friend(username: name,
-                           peerID: PeerID.from(publicKey: pk),
-                           publicKey: pk,
-                           isOnline: online,
-                           inviteStatus: .accepted,
-                           profile: profile)
-            context.insert(f)
-            // A contact is ready when it has a ratchet session, so the demo writes a real
-            // (inert) session.
-            if secure { f.ratchetSession = Self.demoSession() }
-            return f
+    /// A believable conversation set, served by a store with no engine.
+    @MainActor
+    static func demoStore() -> ChatStore {
+        func id(_ name: String) -> String {
+            SHA256.hash(data: Data(name.utf8)).map { String(format: "%02x", $0) }.joined()
         }
-
-        let sarah = friend("sarah_k", online: true, secure: true)
-        _ = friend("mike99", online: true, secure: true)
-        _ = friend("elena.m", online: false, secure: true)
-        _ = friend("tom_dev", online: false, secure: false)
-        // An invite we sent: a handle and nothing else (`Friend.isPending`).
-        let pending = Friend(username: "jordan",
-                             isOnline: true,
-                             inviteStatus: .inviteReceived,
-                             profile: profile)
-        context.insert(pending)
-
-        // A short conversation with Sarah.
+        let sarah = id("sarah_k")
         let now = Date()
-        let convo: [(String, Bool, TimeInterval, Message.DeliveryStatus)] = [
+        let convo: [(String, Bool, TimeInterval, ChatMessage.DeliveryStatus)] = [
             ("Hey! Did the post-quantum keys sync ok?", false, -3600, .sent),
             ("Yep — handshake went through, fully encrypted 🔒", true, -3500, .delivered),
             ("Nice. Calling you in a bit to test voice", false, -3400, .sent),
             ("Standing by 👍", true, -3300, .delivered),
-            ("Sent you the build too", true, -120, .queued)
+            ("Sent you the build too", true, -120, .queued),
         ]
-        for (text, outgoing, offset, status) in convo {
-            let m = Message(content: text, isOutgoing: outgoing, friend: sarah,
-                            messageId: UUID().uuidString, deliveryStatus: status)
-            m.timestamp = now.addingTimeInterval(offset)
-            context.insert(m)
+        let messages = convo.map { text, outgoing, offset, status in
+            ChatMessage(id: UUID().uuidString, peer: sarah, isOutgoing: outgoing, content: text,
+                        timestamp: now.addingTimeInterval(offset), deliveryStatus: status)
         }
-
-        try? context.save()
+        func friend(_ name: String, online: Bool, secure: Bool) -> Contact {
+            Contact(peerID: id(name), username: name, inviteStatus: .accepted, isOnline: online,
+                    hasSession: secure, hasPinnedKey: true,
+                    lastMessage: name == "sarah_k" ? messages.last : nil)
+        }
+        let contacts = [
+            friend("sarah_k", online: true, secure: true),
+            friend("mike99", online: true, secure: true),
+            friend("elena.m", online: false, secure: true),
+            friend("tom_dev", online: false, secure: false),
+            Contact(peerID: id("jordan"), username: "jordan", inviteStatus: .inviteReceived),
+        ]
+        return ChatStore(demo: contacts, conversations: [sarah: messages], myID: id("alexrivera"))
     }
 }

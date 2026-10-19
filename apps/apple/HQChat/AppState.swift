@@ -3,6 +3,7 @@
 import SwiftUI
 import SwiftData
 import Foundation
+import HQChatCore
 #if os(iOS)
 import UIKit
 #endif
@@ -29,11 +30,11 @@ enum AppTab: Hashable {
 @MainActor
 class AppState: ObservableObject {
     @Published var isAuthenticated = false
-    @Published var connectionError: String?
     /// Errors with no owning screen, presented once at the root.
     @Published var lastError: AppError?
-    @Published var isConnecting = false
     @Published var connectionStatus: ConnectionStatus = .disconnected
+    /// The link dropped after being up, and the core is bringing it back.
+    @Published var isReconnecting = false
     @Published var profileManager: ProfileManager?
     @Published var hasActiveProfile = false
     @Published var showingProfileSwitcher = false  // iOS: drives the profile-switch sheet
@@ -43,32 +44,18 @@ class AppState: ObservableObject {
     @Published var selectedTab: AppTab = AppTab.initialFromEnvironment
     /// A username the server refused as taken; drives the banner offering another.
     @Published var usernameRejected: String?
-
     /// Set to push Settings → Account (the banner's "choose another" action).
     @Published var openAccountSettings = false
+    /// The active profile's conversations and actions.
+    @Published private(set) var chat: ChatStore?
+    /// The one-time move of a 3.1.1 profile to the core.
+    @Published private(set) var migration: MigrationState = .none
 
-    /// Opens Settings → Account: a tab switch on iOS, a sheet on macOS.
-    func showAccountSettings() {
-        #if os(iOS)
-        selectedTab = .settings
-        #else
-        showingSettings = true
-        #endif
-        openAccountSettings = true
+    enum MigrationState: Equatable {
+        case none
+        case running
+        case failed(String)
     }
-    /// The profile already checked this session, so `initialize()` does not repeat it.
-    private var unlockedProfileId: UUID?
-
-    #if DEBUG
-    /// The `UITEST_FRESH` wipe runs once per launch.
-    private static var didResetForUITest = false
-    #endif
-
-    /// Serialises `initialize()`, which several views call.
-    private var isInitializing = false
-
-    /// The profile the live connection authenticated as, to detect a switch.
-    private var connectedProfileId: UUID?
 
     enum ConnectionStatus: Equatable {
         case disconnected
@@ -80,8 +67,25 @@ class AppState: ObservableObject {
         case error(String)
     }
 
-    /// REST for control, MQTT for messages and presence.
-    let session = ChatSession()
+    /// Opens Settings → Account: a tab switch on iOS, a sheet on macOS.
+    func showAccountSettings() {
+        #if os(iOS)
+        selectedTab = .settings
+        #else
+        showingSettings = true
+        #endif
+        openAccountSettings = true
+    }
+
+    #if DEBUG
+    /// The `UITEST_FRESH` wipe runs once per launch.
+    private static var didResetForUITest = false
+    #endif
+
+    /// Serialises `initialize()`, which several views call.
+    private var isInitializing = false
+    private var wasConnected = false
+
     /// The device's network path, shared by every consumer.
     let reachability = Reachability()
     private var modelContext: ModelContext?
@@ -89,78 +93,50 @@ class AppState: ObservableObject {
     init() {
         reachability.onBecameOnline = { [weak self] in
             guard let self else { return }
-            Log.app.info("[AppState] 📶 Network came back — waking reconnect")
-            if case .offline = self.connectionStatus {
-                self.connectionStatus = .connecting
-            }
-            self.wakeReconnect()
+            Log.app.info("[AppState] 📶 Network came back")
+            self.chat?.networkChanged()
+            self.updateStatus()
         }
         reachability.onInterfaceChanged = { [weak self] in
-            guard let self else { return }
-            Log.app.info("[AppState] 📶 Network interface changed — dropping the link")
-            // A link bound to the old interface can look healthy for minutes: drop it
-            // and cut any running backoff short.
-            self.wakeReconnect()
-            Task { await self.session.networkPathChanged() }
+            Log.app.info("[AppState] 📶 Network interface changed")
+            // A link bound to the old interface can look healthy for minutes:
+            // the core drops it and reconnects.
+            self?.chat?.networkChanged()
         }
     }
 
-
-    // Reconnect state: jittered exponential backoff, capped at 30 s.
-    @Published var isReconnecting = false
-    fileprivate var reconnectAttempt = 0
-    fileprivate var reconnectTask: Task<Void, Never>?
-    /// Cuts the current backoff short (the network came back or moved).
-    private var backoffWakeRequested = false
-    private static let maxReconnectDelay: Double = 30.0
-    /// How long to wait for the auth handshake after a socket reconnects.
-    private static let authGrace: TimeInterval = 10.0
-    @Published var userService: UserService?
-
-    /// Going to the background: announces presence offline, so the push bridge
-    /// wakes this device (iOS freezes the socket, so the broker would otherwise
-    /// keep it online until keepalive lapses).
+    /// Going to the background: presence says offline (so the push bridge
+    /// wakes this device), then the core forgets its keys.
     func enterBackground() async {
         // Nothing is on screen now, so every arrival is announced.
         NotificationService.shared.isForeground = false
-        guard isAuthenticated else { return }
+        guard let chat else { return }
         #if os(iOS)
-        // Hold a background assertion until the presence frame reaches the socket.
+        // Hold a background assertion until the presence frame is written.
         let task = UIApplication.shared.beginBackgroundTask(withName: "hq.presence")
-        let announced = await session.setPresence(online: false)
-        if !announced {
-            // The socket was gone; the broker's Last-Will will mark us offline.
-            Log.app.info("[AppState] could not announce offline before suspending — relying on the Last-Will")
-        }
+        await chat.enterBackground()
         if task != .invalid { UIApplication.shared.endBackgroundTask(task) }
         #else
-        await session.setPresence(online: false)
+        await chat.enterBackground()
         #endif
+        chat.lock()
     }
 
-    /// Back in front: re-announces presence and re-reads the graph. Messages
-    /// received meanwhile are replayed by the persistent MQTT session.
+    /// Back in front: online again, and the unlock that opens the history.
     func enterForeground() async {
         NotificationService.shared.isForeground = true
-        guard isAuthenticated else { return }
-        guard session.isConnected else {
-            // The link did not survive the background: reconnect.
-            Log.app.info("[AppState] link is gone on foreground — reconnecting")
-            isAuthenticated = false
-            connectionStatus = .disconnected
-            await disconnectSession()
-            return
-        }
-        await session.setPresence(online: true)
-        await session.refreshDirectory()
+        guard let chat else { return }
+        await chat.enterForeground()
+        await chat.unlock()
     }
 
-    /// Drops held keys; called on background.
+    /// Drops the unlock; called on background.
     func clearCachedKey() {
         profileManager?.clearCachedKey()
+        chat?.lock()
     }
 
-    /// Loads profiles and, with one active, wires the session and connects.
+    /// Loads profiles and, with one active, opens its core and connects.
     /// Re-entrant calls return at once.
     func initialize() async {
         if isInitializing { return }
@@ -181,7 +157,7 @@ class AppState: ObservableObject {
         // Demo mode: show the seeded UI without biometrics or a server.
         if PersistenceController.isDemo {
             hasActiveProfile = true
-            if userService == nil { userService = UserService(api: session.api) }
+            if chat == nil { chat = PersistenceController.demoStore() }
             isAuthenticated = true
             connectionStatus = .authenticated
             return
@@ -191,27 +167,111 @@ class AppState: ObservableObject {
             hasActiveProfile = false
             return
         }
-        if unlockedProfileId != profile.id {
-            // Diagnostics only: sign-in is what proves key access.
-            profileManager?.hasStoredKey()
-            unlockedProfileId = profile.id
-        }
         hasActiveProfile = true
-        if userService == nil {
-            userService = UserService(api: session.api)
+        if chat?.profileID != profile.id {
+            await closeChat()
+            do {
+                chat = try open(profile)
+            } catch {
+                lastError = .unknown("This profile could not be opened: \(error.localizedDescription)")
+                return
+            }
         }
+        await prepare(profile)
+    }
 
-        // Recreated on every call, so a profile switch cannot leave the router
-        // writing into the previous profile's rows.
-        session.configure(modelContext: context, profileManager: profileManager)
-        wireSessionCallbacks()
-
-        // A different active profile needs a fresh connection and sign-in.
-        if let connected = connectedProfileId, connected != profile.id {
-            Log.app.info("[AppState] 🔄 Active profile changed — resetting connection")
-            await resetConnectionState()
+    /// The core store for `profile`, wired to this state.
+    private func open(_ profile: Profile) throws -> ChatStore {
+        // Endpoints shown in the app follow the profile's home server.
+        ServerConfig.activeHost = profile.serverHost
+        let store = try ChatStore(profile: profile)
+        store.onEffect = { [weak self] effect in
+            if case .connection = effect { self?.updateStatus() }
         }
-        await connectToServer()
+        store.onAccountDeleted = { [weak self] in
+            Task { await self?.forgetDeletedAccount() }
+        }
+        return store
+    }
+
+    /// Makes sure the core holds the profile's identity (moving a 3.1.1
+    /// profile once, or making a new identity), then connects.
+    private func prepare(_ profile: Profile) async {
+        guard let chat, let context = modelContext else { return }
+        if !ChatStore.hasIdentity(profileID: profile.id) {
+            if CoreMigration.isNeeded(for: profile) {
+                migration = .running
+                do {
+                    _ = try await CoreMigration.run(profile: profile, into: chat, context: context)
+                    migration = .none
+                } catch {
+                    migration = .failed(error.localizedDescription)
+                    return
+                }
+            } else {
+                do {
+                    try await chat.createIdentity()
+                    profile.clientID = chat.myID
+                    try? context.save()
+                } catch {
+                    lastError = .keychain("This profile's key could not be created: \(error.localizedDescription)")
+                    return
+                }
+            }
+        }
+        connect()
+    }
+
+    /// Retries the move after it failed (the screen's button).
+    func retryMigration() async {
+        guard let profile = profileManager?.currentProfile else { return }
+        await prepare(profile)
+    }
+
+    /// Starts the core: it asks for the unlock, signs in and connects.
+    private func connect() {
+        guard let chat else { return }
+        updateStatus()
+        chat.start()
+        PushManager.shared.requestAndRegister()
+        PushManager.shared.setSender { [weak self] token in
+            self?.chat?.registerPush(token)
+        }
+    }
+
+    private func closeChat() async {
+        await chat?.stop()
+        chat = nil
+        isAuthenticated = false
+        wasConnected = false
+        connectionStatus = .disconnected
+    }
+
+    /// The core's link state, in the status bar's words.
+    private func updateStatus() {
+        guard let chat else { return }
+        let state = chat.connection
+        let previous = connectionStatus
+        switch state {
+        case .connected:
+            connectionStatus = .authenticated
+            isAuthenticated = true
+            isReconnecting = false
+            if !wasConnected { Task { await claimDesiredUsername() } }
+            wasConnected = true
+        case .authenticating:
+            connectionStatus = .connected
+        case .connecting:
+            connectionStatus = .connecting
+            isReconnecting = wasConnected
+        case .offline:
+            connectionStatus = reachability.isOnline ? (wasConnected ? .connecting : .disconnected) : .offline
+            isAuthenticated = false
+            isReconnecting = wasConnected && reachability.isOnline
+        }
+        if previous != connectionStatus {
+            Log.app.info("[AppState] link: \(String(describing: self.connectionStatus))")
+        }
     }
 
     /// `UITEST_FRESH=1` (debug builds) starts UI tests from an empty store, once per launch.
@@ -223,295 +283,39 @@ class AppState: ObservableObject {
         #endif
     }
 
-    private func wireSessionCallbacks() {
-        // A dismissed unlock is a choice: return to profile selection, no retries.
-        session.onUnlockFailed = { [weak self] in
-            guard let self else { return }
-            Log.app.info("[AppState] 🔒 Unlock dismissed — returning to profile selection")
-            self.reconnectTask?.cancel()
-            self.reconnectTask = nil
-            self.isReconnecting = false
-            self.unlockedProfileId = nil
-            self.hasActiveProfile = false
-            self.lastError = .validation("Unlock cancelled. Pick a profile to try again.")
-            Task { await self.disconnectSession() }
-        }
-        session.onConnected = { [weak self] in self?.didConnect() }
-        session.onDisconnect = { [weak self] in self?.handleDisconnect() }
-    }
-
-    /// Signed in: ends any reconnect cycle, asks for the message-read unlock,
-    /// registers for push and claims the chosen username.
-    private func didConnect() {
-        isAuthenticated = true
-        connectionStatus = .authenticated
-        connectionError = nil
-        reconnectAttempt = 0
-        reconnectTask?.cancel()
-        reconnectTask = nil
-        // Asked now, while the biometric hardware is free; views also ask on
-        // appear, but their tasks are cancelled on rebuild.
-        Task { await MessageKeyGate.shared.unlock() }
-        PushManager.shared.requestAndRegister()
-        PushManager.shared.setSender { [weak self] token in
-            try? await self?.userService?.registerPushToken(token)
-        }
-        Task { await claimDesiredUsername() }
-    }
-
-    /// - Parameter force: connect even if the state says connected (a stale socket).
+    /// A retry the user asked for (the status chip, the banner).
     func connectToServer(force: Bool = false) async {
-        if isConnecting && !force {
-            return
-        }
-
-        if !force {
-            switch connectionStatus {
-            case .connected, .authenticated:
-                return // Already connected
-            default:
-                break // Proceed with connection
-            }
-        }
-
-        // No network path: say so rather than fail on transport.
-        guard reachability.isOnline else {
-            isConnecting = false
-            connectionError = nil
-            connectionStatus = .offline
-            return
-        }
-
-        isConnecting = true
-        connectionStatus = .connecting
-        connectionError = nil
-
-        do {
-            try await performConnectAndAuth()
-            isConnecting = false
-        } catch {
-            isConnecting = false
-            if !reachability.isOnline {
-                connectionError = nil
-                connectionStatus = .offline
-            } else {
-                let errorMessage = Self.friendlyConnectError(error)
-                connectionError = errorMessage
-                connectionStatus = .error(errorMessage)
-            }
-            Log.app.error("[AppState] ❌ Failed to connect: \(String(describing: error))")
-        }
+        guard let chat else { return await initialize() }
+        if case .failed = migration { return await retryMigration() }
+        chat.reconnect()
     }
 
-    /// Brings the link up via `session.reconnect()`, which re-uses the REST
-    /// session and signs in again only when it must. A profile switch clears the
-    /// session first (`resetConnectionState`), forcing a full sign-in.
-    private func performConnectAndAuth() async throws {
-        guard let currentProfile = profileManager?.currentProfile,
-              currentProfile.publicKey != nil else {
-            throw NSError(domain: "AppState", code: 1, userInfo: [NSLocalizedDescriptionKey: "No active profile"])
-        }
-        connectionStatus = .connected      // the UI labels this "Authenticating…"
-        try await session.reconnect()
-        connectedProfileId = currentProfile.id
+    /// Back in front: catch up, and reconnect if the link did not survive.
+    func reconnectIfNeeded() async {
+        guard hasActiveProfile, let chat else { return }
+        chat.start()
     }
 
     /// Claims the username chosen at profile creation. A refusal drops the
     /// request and sets `usernameRejected` for the banner.
     func claimDesiredUsername() async {
         guard let profile = profileManager?.currentProfile,
-              let desired = profile.desiredUsername, !desired.isEmpty else { return }
+              let desired = profile.desiredUsername, !desired.isEmpty, let chat else { return }
         do {
-            try await userService?.setUsername(desired)
+            try await chat.setUsername(desired)
             profile.desiredUsername = nil
             usernameRejected = nil
             try? modelContext?.save()
         } catch {
-            guard Self.isUsernameTaken(error) else { return }  // transient — retry next connect
+            guard ChatStore.isUsernameTaken(error) else { return }  // transient — retry next connect
             usernameRejected = desired
-            profile.desiredUsername = nil                      // stop re-firing it
+            profile.desiredUsername = nil                           // stop re-firing it
             try? modelContext?.save()
         }
     }
 
-    /// Whether the server refused a username as taken (409 USERNAME_TAKEN).
-    static func isUsernameTaken(_ error: Error) -> Bool {
-        if case APIClient.APIError.badResponse(_, let body) = error {
-            return body.contains("USERNAME_TAKEN")
-        }
-        return false
-    }
-
-    /// Tears down the connection so the next connect signs in as the new profile.
-    private func resetConnectionState() async {
-        reconnectTask?.cancel()
-        reconnectTask = nil
-        reconnectAttempt = 0
-        isReconnecting = false
-        await session.logout()
-        isAuthenticated = false
-        connectionError = nil
-        connectionStatus = .disconnected
-        connectedProfileId = nil
-    }
-
-    /// Called by `ChatSession` when the link drops unexpectedly.
-    func handleDisconnect() {
-        guard reconnectTask == nil else { return }
-        isAuthenticated = false
-        isReconnecting = true
-        connectionStatus = reachability.isOnline ? .connecting : .offline
-        scheduleReconnect()
-    }
-
-    /// Reconnects with full-jitter exponential backoff until sign-in succeeds,
-    /// parked while the device is offline.
-    private func scheduleReconnect() {
-        reconnectTask?.cancel()
-        reconnectTask = Task { [weak self] in
-            guard let self else { return }
-            while !Task.isCancelled {
-                if !self.reachability.isOnline {
-                    self.connectionStatus = .offline
-                    self.reconnectAttempt = 0
-                    await self.reachability.waitUntilOnline()
-                    if Task.isCancelled { break }
-                    self.connectionStatus = .connecting
-                }
-
-                let ceiling = min(pow(2.0, Double(self.reconnectAttempt)), Self.maxReconnectDelay)
-                let delay = Double.random(in: 0...ceiling)
-                Log.app.info("[AppState] 🔄 Reconnect attempt \(String(describing: self.reconnectAttempt + 1)) in \(String(describing: String(format: "%.1f", delay)))s")
-                await self.backoff(seconds: delay)
-                if Task.isCancelled { break }
-                self.reconnectAttempt += 1
-
-                do {
-                    try await self.performConnectAndAuth()
-                } catch {
-                    Log.app.warning("[AppState] ⚠️ Reconnect attempt failed: \(String(describing: error))")
-                    continue
-                }
-
-                // On success the auth callback cancels this task; this poll is the failure path.
-                if await self.awaitAuthentication(timeout: Self.authGrace) {
-                    self.isReconnecting = false
-                    break
-                }
-                if Task.isCancelled { break }
-            }
-        }
-    }
-
-    /// The network came back or moved: retry now.
-    private func wakeReconnect() {
-        guard reconnectTask != nil else { return }
-        reconnectAttempt = 0
-        backoffWakeRequested = true
-    }
-
-    /// A backoff sleep `wakeReconnect` can cut short.
-    private func backoff(seconds: Double) async {
-        let deadline = Date().addingTimeInterval(seconds)
-        while Date() < deadline, !backoffWakeRequested, !Task.isCancelled {
-            try? await Task.sleep(nanoseconds: 100_000_000)
-        }
-        backoffWakeRequested = false
-    }
-
-    /// Whether sign-in completes within `timeout`.
-    private func awaitAuthentication(timeout: TimeInterval) async -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            if Task.isCancelled { return false }
-            if case .authenticated = connectionStatus { return true }
-            try? await Task.sleep(nanoseconds: 100_000_000)
-        }
-        if case .authenticated = connectionStatus { return true }
-        return false
-    }
-
-    /// A readable sentence for a server error code, or the text itself.
-    private static func serverErrorMessage(_ payload: String) -> String {
-        switch payload {
-        case "USER_NOT_FOUND":
-            return "No account with that username."
-        case "USERNAME_TAKEN":
-            return "That username is already taken. Try another."
-        case "NOT_FRIENDS":
-            return "You're not connected with that person."
-        case "INVALID_MESSAGE", "INVALID_PAYLOAD":
-            return "The server rejected that request."
-        case "RATE_LIMITED":
-            return "Too many requests. Wait a moment and try again."
-        default:
-            return payload
-        }
-    }
-
-    private static func friendlyConnectError(_ error: Error) -> String {
-        // Match `URLError.Code`, not localized text.
-        if let urlError = error as? URLError {
-            switch urlError.code {
-            case .notConnectedToInternet:
-                return "No internet connection.\n\nCheck Wi-Fi or cellular and try again."
-            case .networkConnectionLost:
-                return "The connection was lost.\n\nRetrying automatically."
-            case .timedOut:
-                return "The server took too long to respond.\n\nIt may be overloaded or unreachable."
-            case .cannotConnectToHost, .cannotFindHost:
-                return "Cannot reach the server.\n\nPlease check the server address and try again."
-            case .secureConnectionFailed, .serverCertificateUntrusted,
-                 .serverCertificateHasBadDate, .serverCertificateNotYetValid,
-                 .serverCertificateHasUnknownRoot:
-                return "The server's security certificate was rejected.\n\nThe connection was refused to protect your messages."
-            default:
-                break
-            }
-        }
-
-        let description = error.localizedDescription
-        if description.contains("Socket is not connected") {
-            return "Cannot connect to the server.\n\nPlease ensure the server is running and accessible."
-        }
-        return "Connection failed. The server may be offline or unreachable.\n\nError: \(description)"
-    }
-    
-    /// Reconnects right away on returning to the foreground.
-    func reconnectIfNeeded() async {
-        guard hasActiveProfile else { return }
-        // Ask the socket, not the flag: a socket can die while suspended.
-        if isAuthenticated, session.isConnected { return }
-        isAuthenticated = false
-        // An attempt is already running (cold launch): do not start a second.
-        guard !isConnecting else { return }
-        guard reachability.isOnline else {
-            connectionStatus = .offline
-            return
-        }
-        // A running reconnect loop retries now.
-        if reconnectTask != nil {
-            reconnectAttempt = 0
-            scheduleReconnect()
-            return
-        }
-        await connectToServer(force: true)
-    }
-
-    func authenticate() async {
-        if userService == nil {
-            await initialize()
-        } else {
-            await connectToServer()
-        }
-    }
-    
-    func getSession() -> ChatSession {
-        return session
-    }
-
     func disconnectSession() async {
-        await session.disconnect()
+        await chat?.stop()
     }
 
     // MARK: - Account
@@ -523,10 +327,20 @@ class AppState: ObservableObject {
     func deleteAccount() async throws {
         let profile = profileManager?.currentProfile
         if isAuthenticated {
-            try? await userService?.deleteAccount()
+            try? await chat?.deleteAccount()
         }
-        await resetConnectionState()
+        await closeChat()
         if let profile { try profileManager?.deleteProfile(profile) }
+        profileManager?.loadProfiles()
+        hasActiveProfile = false
+    }
+
+    /// The server deleted the account (from this device or another): the
+    /// core already wiped its store; the profile goes too.
+    private func forgetDeletedAccount() async {
+        guard let profile = profileManager?.currentProfile else { return }
+        await closeChat()
+        try? profileManager?.deleteProfile(profile)
         profileManager?.loadProfiles()
         hasActiveProfile = false
     }

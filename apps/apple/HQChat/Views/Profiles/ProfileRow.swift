@@ -43,7 +43,7 @@ struct ProfileRow: View {
                     .font(HQFont.mono(11))
                     .foregroundColor(HQColor.textDim)
 
-                Text("pk \(profile.publicKeyHex.prefix(5))…")
+                Text("id \(profile.peerID.prefix(5))…")
                     .font(HQFont.mono(11))
                     .foregroundColor(HQColor.textFaint)
             }

@@ -16,22 +16,23 @@ struct ContentView: View {
                         .onChange(of: profileManager.currentProfile) { _, newProfile in
                             guard newProfile != nil else { return }
                             appState.hasActiveProfile = true
-                            Task {
-                                await appState.disconnectSession()
-                                await appState.initialize()
-                            }
+                            Task { await appState.initialize() }
                         }
                 } else {
                     LoadingView(message: "Initializing profiles...")
                 }
-            } else if let userService = appState.userService {
+            } else if case .running = appState.migration {
+                // Once, on the first launch after the update.
+                LoadingView(message: "updating your data…")
+            } else if case let .failed(reason) = appState.migration {
+                MigrationFailedView(reason: reason)
+            } else if let chat = appState.chat {
                 // The app shows while signing in; banners carry the connection state.
-                MainAppView(session: appState.getSession(),
-                            userService: userService,
-                            profileManager: appState.profileManager)
+                MainAppView(profileManager: appState.profileManager)
+                    .environmentObject(chat)
             } else {
                 LoadingView(message: "Initializing...")
-                    .onAppear { Task { await appState.authenticate() } }
+                    .onAppear { Task { await appState.initialize() } }
             }
         }
         // Errors that arrive with no owning screen.
@@ -44,8 +45,33 @@ struct ContentView: View {
     }
 }
 
+/// The move to the core did not finish. Nothing was lost: the old data stays
+/// until a move succeeds, and this offers to try again.
+private struct MigrationFailedView: View {
+    @EnvironmentObject var appState: AppState
+    let reason: String
+
+    var body: some View {
+        VStack(spacing: 18) {
+            HQLogoMark(size: 48)
+            Text("your data could not be updated")
+                .font(HQFont.ui(16, weight: .semibold))
+                .foregroundColor(HQColor.textPrimary)
+            Text(reason)
+                .font(HQFont.ui(13))
+                .foregroundColor(HQColor.textSecond)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+            Button("try again") { Task { await appState.retryMigration() } }
+                .buttonStyle(HQPrimaryButtonStyle(height: 46))
+                .frame(maxWidth: 240)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .hqScreenBackground()
+    }
+}
+
 #Preview {
     ContentView()
         .environmentObject(AppState())
-        .modelContainer(for: [Friend.self, Message.self, PendingFrame.self])
 }

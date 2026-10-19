@@ -124,8 +124,18 @@ struct HQAvatar: View {
     }
 }
 
-/// Short display fingerprint of a public key (e.g. "7f3a 9c21 ee04 b8d3").
+/// Short display fingerprint of an identity (e.g. "7f3a 9c21 ee04 b8d3").
 enum HQFingerprint {
+    /// The first 64 bits of a client id, which is itself SHA-256 of the key.
+    static func short(clientID: String) -> String {
+        let hex = String(clientID.lowercased().prefix(16))
+        return stride(from: 0, to: hex.count, by: 4).map {
+            let start = hex.index(hex.startIndex, offsetBy: $0)
+            let end = hex.index(start, offsetBy: min(4, hex.count - $0))
+            return String(hex[start..<end])
+        }.joined(separator: " ")
+    }
+
     static func short(_ publicKey: Data) -> String {
         let hash = Array(SHA256.hash(data: publicKey)).prefix(8)
         let hex = hash.map { String(format: "%02x", $0) }.joined()

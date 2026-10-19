@@ -26,6 +26,11 @@ struct LegacySnapshot {
         var session: RatchetSessionState?
         var blockedAt: Date?
         var vanishedAt: Date?
+        var verified = false
+        /// A friend; otherwise a request either way.
+        var accepted = true
+        /// A request this user sent and nobody answered yet.
+        var inviteSent = false
     }
 
     struct Message {
@@ -67,11 +72,16 @@ enum CoreImport {
             identityPublicKey: s.identityPublicKey,
             identitySecretKey: s.identitySecretKey,
             prekeys: try s.prekeys.map(prekeys),
-            peers: try s.friends.filter { !$0.peerID.isEmpty }.map(peer),
+            peers: try s.friends.filter { $0.accepted && !$0.peerID.isEmpty }.map(peer),
             messages: s.messages.map(message),
             pending: s.pending.map {
                 ImportPendingData(topic: $0.topic, payload: $0.raw, at: milliseconds($0.receivedAt))
-            }
+            },
+            // Requests received are listed by the server again; sent ones are
+            // only remembered here.
+            sent: s.friends.filter(\.inviteSent).map {
+                ImportSentData(to: $0.peerID.isEmpty ? $0.username ?? "" : $0.peerID, at: 0)
+            }.filter { !$0.to.isEmpty }
         )
     }
 
@@ -111,7 +121,8 @@ enum CoreImport {
             pinnedPublicKey: f.publicKey.count == HQCPublicKeySize ? f.publicKey : nil,
             session: try f.session.map(session),
             blockedAt: f.blockedAt.map(milliseconds),
-            vanishedAt: f.vanishedAt.map(milliseconds)
+            vanishedAt: f.vanishedAt.map(milliseconds),
+            verified: f.verified
         )
     }
 
@@ -182,10 +193,10 @@ extension LegacySnapshot {
     /// for good (already shown as unreadable) are left out and counted.
     @MainActor
     static func read(profile: Profile, secretKey: Data, context: ModelContext) throws -> (LegacySnapshot, unreadable: Int) {
-        guard AESKeyStore.isUnlocked(), MessageKeyStore.canRead else { throw ReadError.locked }
+        guard AESKeyStore.isUnlocked() else { throw ReadError.locked }
 
         let prekeys: PrekeyStore?
-        switch AESKeyStore.read(PrekeyService.account(for: profile.id)) {
+        switch AESKeyStore.read(PrekeyStore.account(for: profile.id)) {
         case let .value(data):
             guard let store = try? JSONDecoder().decode(PrekeyStore.self, from: data) else {
                 throw ReadError.unreadablePrekeys
@@ -202,7 +213,9 @@ extension LegacySnapshot {
         let friends = friendRows.map { f in
             Friend(peerID: f.peerID, username: f.username, publicKey: f.publicKey,
                    convoTopicID: f.convoTopicID, handshakeTopicID: f.handshakeTopicID,
-                   session: f.ratchetSession, blockedAt: f.blockedAt, vanishedAt: f.vanishedAt)
+                   session: f.isAccepted ? f.ratchetSession : nil, blockedAt: f.blockedAt,
+                   vanishedAt: f.vanishedAt, verified: f.keyVerified == true,
+                   accepted: f.isAccepted, inviteSent: f.isInviteSent)
         }
 
         let id = profile.id

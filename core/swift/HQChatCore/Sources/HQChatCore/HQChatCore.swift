@@ -3651,7 +3651,11 @@ public struct ReportInput: Equatable, Hashable {
      */
     public var msgIds: [String]
     /**
-     * Block them too.
+     * What the user added.
+     */
+    public var note: String?
+    /**
+     * Block them too, once the report is filed.
      */
     public var block: Bool
 
@@ -3668,11 +3672,15 @@ public struct ReportInput: Equatable, Hashable {
          * Messages whose text is the excerpt.
          */msgIds: [String], 
         /**
-         * Block them too.
+         * What the user added.
+         */note: String?, 
+        /**
+         * Block them too, once the report is filed.
          */block: Bool) {
         self.peer = peer
         self.reason = reason
         self.msgIds = msgIds
+        self.note = note
         self.block = block
     }
 
@@ -3695,6 +3703,7 @@ public struct FfiConverterTypeReportInput: FfiConverterRustBuffer {
                 peer: FfiConverterString.read(from: &buf), 
                 reason: FfiConverterString.read(from: &buf), 
                 msgIds: FfiConverterSequenceString.read(from: &buf), 
+                note: FfiConverterOptionString.read(from: &buf), 
                 block: FfiConverterBool.read(from: &buf)
         )
     }
@@ -3703,6 +3712,7 @@ public struct FfiConverterTypeReportInput: FfiConverterRustBuffer {
         FfiConverterString.write(value.peer, into: &buf)
         FfiConverterString.write(value.reason, into: &buf)
         FfiConverterSequenceString.write(value.msgIds, into: &buf)
+        FfiConverterOptionString.write(value.note, into: &buf)
         FfiConverterBool.write(value.block, into: &buf)
     }
 }

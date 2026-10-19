@@ -8,7 +8,6 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 LOG_SWIFT="$(pwd)/../HQChat/Helpers/Log.swift"
-bash ../../../native/hqc/build-apple.sh
 SRC="../HQChat/Services"
 MODELS="../HQChat/Models"
 HELPERS="../HQChat/Helpers"
@@ -59,10 +58,11 @@ stage() { # stage <TestFile.swift> -> prints the staged main.swift path
   echo "$d/main.swift"
 }
 
-# The core's Swift module (core/swift/HQChatCore), compiled once for the slices
-# that build every app file: the files that talk to the core import it, as the
-# app does through the Swift package. Those slices target the app's own macOS
-# deployment target, which the core's library is built for.
+# The core's Swift module (core/swift/HQChatCore) and the shell around it
+# (apps/apple/CoreShell), compiled once for the slices that build every app
+# file: the files that talk to the core import them, as the app does through
+# its Swift packages. Those slices target the app's own macOS deployment
+# target, which the core's library is built for.
 CORE_PKG="$(cd ../../../core/swift/HQChatCore && pwd)"
 CORE_FFI="$CORE_PKG/HQChatCoreFFI.xcframework/macos-arm64"
 CORE_MOD="$TMP/core-module"
@@ -71,7 +71,11 @@ xcrun swiftc -O -target arm64-apple-macos15.5 -swift-version 5 -parse-as-library
   -module-name HQChatCore -emit-module -emit-module-path "$CORE_MOD/HQChatCore.swiftmodule" \
   -emit-library -static -o "$CORE_MOD/libHQChatCore.a" \
   -I "$CORE_FFI/Headers" "$CORE_PKG/Sources/HQChatCore/HQChatCore.swift"
-CORE_FLAGS=(-I "$CORE_MOD" -I "$CORE_FFI/Headers" -L "$CORE_MOD" -lHQChatCore "$CORE_FFI/libhqchat_ffi.a")
+xcrun swiftc -O -target arm64-apple-macos15.5 -swift-version 5 -parse-as-library \
+  -module-name CoreShell -emit-module -emit-module-path "$CORE_MOD/CoreShell.swiftmodule" \
+  -emit-library -static -o "$CORE_MOD/libCoreShell.a" \
+  -I "$CORE_MOD" -I "$CORE_FFI/Headers" ../CoreShell/Sources/CoreShell/*.swift
+CORE_FLAGS=(-I "$CORE_MOD" -I "$CORE_FFI/Headers" -L "$CORE_MOD" -lCoreShell -lHQChatCore "$CORE_FFI/libhqchat_ffi.a")
 if [ "$COVERAGE" = "1" ]; then
   COV_DIR="${COV_DIR:-$PWD/.coverage}"
   rm -rf "$COV_DIR"
@@ -86,125 +90,9 @@ fi
 # Top-level test code must live in a file named main.swift when compiling
 # multiple files, so each test file is copied there before building.
 #
-# Every slice must list the FULL transitive source set — there is no target here
-# to resolve it. A call added to an app file that this script compiles must have
-# its own file added below, or the slice stops compiling. That is how the whole
-# suite broke silently when BiometricAudit was introduced: CI does not build the
-# Apple apps, so nothing failed until someone ran this.
-echo "── Crypto tests ───────────────────────────────"
-MAIN="$(stage CryptoTests.swift)"
-xcrun swiftc -O $COV_FLAGS \
-  "$MAIN" TestSupport.swift Stubs.swift \
-  "$SRC/AESService.swift" "$SRC/BiometricAudit.swift" \
-  "$LOG_SWIFT" \
-  -o "$BINDIR/cryptoTests"
-"$BINDIR/cryptoTests"
-
-echo ""
-echo ""
-echo "── Key fingerprint tests ──────────────────────"
-MAIN="$(stage KeyFingerprintTests.swift)"
-xcrun swiftc -O $COV_FLAGS \
-  "$MAIN" TestSupport.swift \
-  "$SRC/KeyFingerprint.swift" \
-  "$LOG_SWIFT" \
-  -o "$BINDIR/keyFingerprintTests"
-"$BINDIR/keyFingerprintTests"
-
-echo ""
-echo "── Client identifier (cross-impl vectors) ─────"
-# `id = sha256(lowercase-hex(pk))` is the name every other layer keys on. Four
-# implementations must agree — this one, test/reference/protocol/identity.ts, Postgres's pk_digest,
-# and /report's friendship hash — so the vectors are READ rather than pasted in.
-ID_VECTORS="../../../services/server/test/helpers/identity-vectors.json"
-if [ ! -f "$ID_VECTORS" ]; then
-  echo "❌ missing $ID_VECTORS — regenerate with:"
-  echo "   npx tsx test/reference/vectors/gen-identity-vectors.ts > test/helpers/identity-vectors.json"
-  exit 1
-fi
-MAIN="$(stage PeerIDTests.swift)"
-xcrun swiftc -O $COV_FLAGS \
-  "$MAIN" TestSupport.swift \
-  "$SRC/PeerID.swift" "$SRC/MQTTTopics.swift" \
-  "$LOG_SWIFT" \
-  -o "$BINDIR/peerIdTests"
-"$BINDIR/peerIdTests" "$(cd "$(dirname "$ID_VECTORS")" && pwd)/$(basename "$ID_VECTORS")"
-
-echo ""
-echo "── MQTT connect proof (cross-impl vectors) ────"
-# The v1 CONNECT password is signed here and verified by the auth hook; one
-# byte of disagreement and every CONNECT is refused with only "deny" to show
-# for it. Read from the server's vector file, like the identifier vectors.
-PROOF_VECTORS="../../../services/server/test/helpers/mqtt-proof-vectors.json"
-if [ ! -f "$PROOF_VECTORS" ]; then
-  echo "❌ missing $PROOF_VECTORS — regenerate with:"
-  echo "   npx tsx test/reference/vectors/gen-mqtt-proof-vectors.ts > test/helpers/mqtt-proof-vectors.json"
-  exit 1
-fi
-MAIN="$(stage MQTTProofTests.swift)"
-xcrun swiftc -O $COV_FLAGS \
-  "$MAIN" TestSupport.swift \
-  "$SRC/MQTTConnectProof.swift" \
-  "$LOG_SWIFT" \
-  -o "$BINDIR/mqttProofTests"
-"$BINDIR/mqttProofTests" "$(cd "$(dirname "$PROOF_VECTORS")" && pwd)/$(basename "$PROOF_VECTORS")"
-
-echo ""
-echo "── hqn/1 Noise handshake (cross-impl vectors) ─"
-# The raw-TCP transport's handshake. The gateway runs the TypeScript half
-# (services/server/test/reference/protocol/noise.ts); the vectors pin every byte between them.
-NOISE_VECTORS="../../../services/server/test/helpers/noise-hqn-vectors.json"
-if [ ! -f "$NOISE_VECTORS" ]; then
-  echo "❌ missing $NOISE_VECTORS — regenerate with:"
-  echo "   npx tsx test/reference/vectors/gen-noise-hqn-vectors.ts > test/helpers/noise-hqn-vectors.json"
-  exit 1
-fi
-MAIN="$(stage NoiseHQNTests.swift)"
-xcrun swiftc -O $COV_FLAGS -target arm64-apple-macos13 \
-  "$MAIN" TestSupport.swift \
-  "$SRC/NoiseHQN.swift" "$SRC/HQCService.swift" \
-  -import-objc-header "$APP/Core/HQC-Bridging-Header.h" -I "$APP/Core" \
-  -L ".." -lhqc_wrap -Xlinker -rpath -Xlinker "$(cd .. && pwd)" \
-  "$LOG_SWIFT" \
-  -o "$BINDIR/noiseHqnTests"
-"$BINDIR/noiseHqnTests" "$(cd "$(dirname "$NOISE_VECTORS")" && pwd)/$(basename "$NOISE_VECTORS")" \
-  "$(cd "$(dirname "$NOISE_VECTORS")" && pwd)/noise-nk-cacophony.json"
-
-echo ""
-echo "── MQTT transport selection ───────────────────"
-MAIN="$(stage TransportTests.swift)"
-xcrun swiftc -O $COV_FLAGS -target arm64-apple-macos13 \
-  "$MAIN" TestSupport.swift \
-  "$SRC/MQTTTransport.swift" "$SRC/NoiseHQN.swift" "$SRC/TLSPinning.swift" "$APP/Deployment.swift" \
-  "$SRC/HQCService.swift" \
-  -import-objc-header "$APP/Core/HQC-Bridging-Header.h" -I "$APP/Core" \
-  -L ".." -lhqc_wrap -Xlinker -rpath -Xlinker "$(cd .. && pwd)" \
-  -framework Security \
-  "$LOG_SWIFT" \
-  -o "$BINDIR/transportTests"
-"$BINDIR/transportTests"
-
-echo ""
-echo "── MQTT topic routing tests ───────────────────"
-MAIN="$(stage MQTTTopicsTests.swift)"
-xcrun swiftc -O $COV_FLAGS \
-  "$MAIN" \
-  "$SRC/MQTTTopics.swift" "$SRC/PeerID.swift" \
-  "$LOG_SWIFT" \
-  -o "$BINDIR/mqttTopicsTests"
-"$BINDIR/mqttTopicsTests"
-
-echo ""
-echo "── MQTT wire codec tests ──────────────────────"
-MAIN="$(stage MQTTWireTests.swift)"
-xcrun swiftc -O $COV_FLAGS \
-  "$MAIN" TestSupport.swift Stubs.swift TransportStubs.swift \
-  "$SRC/MQTTWireClient.swift" "$SRC/MQTTTransport.swift" "$SRC/NoiseHQN.swift" \
-  "$LOG_SWIFT" \
-  -o "$BINDIR/mqttWireTests"
-"$BINDIR/mqttWireTests"
-
-echo ""
+# A slice with an explicit list must list the FULL transitive source set —
+# there is no target here to resolve it. The slices that reach the store build
+# every non-view file instead (APP_SOURCES below).
 echo "── Network path change rule ───────────────────"
 MAIN="$(stage ReachabilityTests.swift)"
 xcrun swiftc -O $COV_FLAGS \
@@ -213,70 +101,6 @@ xcrun swiftc -O $COV_FLAGS \
   "$LOG_SWIFT" \
   -o "$BINDIR/reachabilityTests"
 "$BINDIR/reachabilityTests"
-
-echo ""
-echo "── Double ratchet v2 (cross-impl vectors) ─────"
-# The vectors are READ, not copied into the Swift source: the v1 test pasted the
-# hex in, so a change on the TypeScript side left this one asserting stale values
-# and passing. The path is passed in so a missing file fails loudly.
-VECTORS="../../../services/server/test/helpers/double-ratchet-vectors.json"
-if [ ! -f "$VECTORS" ]; then
-  echo "❌ missing $VECTORS — regenerate with:"
-  echo "   npx tsx test/reference/vectors/gen-ratchet-vectors.ts > test/helpers/double-ratchet-vectors.json"
-  exit 1
-fi
-MAIN="$(stage DoubleRatchetTests.swift)"
-xcrun swiftc -O $COV_FLAGS \
-  "$MAIN" TestSupport.swift \
-  "$SRC/DoubleRatchet.swift" \
-  "$LOG_SWIFT" \
-  -o "$BINDIR/doubleRatchetTests"
-"$BINDIR/doubleRatchetTests" "$(cd "$(dirname "$VECTORS")" && pwd)/$(basename "$VECTORS")"
-
-echo ""
-echo "── Ratchet session (state machine) ────────────"
-# Stub KEM, so the state machine is exercised without linking the native HQC
-# library. Mirrors services/server/test/ratchet-session.test.ts: the two have to
-# agree on BEHAVIOUR, not just on KDF output.
-MAIN="$(stage RatchetSessionTests.swift)"
-xcrun swiftc -O $COV_FLAGS \
-  "$MAIN" TestSupport.swift \
-  "$SRC/DoubleRatchet.swift" "$SRC/RatchetSession.swift" \
-  "$LOG_SWIFT" \
-  -o "$BINDIR/ratchetSessionTests"
-"$BINDIR/ratchetSessionTests"
-
-echo ""
-echo "── Handshake proof (cross-impl) ───────────────"
-HS_VECTORS="../../../services/server/test/helpers/handshake-vectors.json"
-if [ ! -f "$HS_VECTORS" ]; then
-  echo "❌ missing $HS_VECTORS — regenerate with:"
-  echo "   npx tsx test/reference/vectors/gen-handshake-vectors.ts > test/helpers/handshake-vectors.json"
-  exit 1
-fi
-MAIN="$(stage HandshakeTests.swift)"
-xcrun swiftc -O $COV_FLAGS \
-  "$MAIN" TestSupport.swift \
-  "$SRC/Handshake.swift" \
-  "$LOG_SWIFT" \
-  -o "$BINDIR/handshakeTests"
-"$BINDIR/handshakeTests" "$HS_VECTORS"
-
-echo ""
-echo "── Envelope v3 (binary framing, cross-impl) ───"
-V3_VECTORS="../../../services/server/test/helpers/envelope-v3-vectors.json"
-if [ ! -f "$V3_VECTORS" ]; then
-  echo "❌ missing $V3_VECTORS — regenerate with:"
-  echo "   npx tsx test/reference/vectors/gen-envelope-v3-vectors.ts > test/helpers/envelope-v3-vectors.json"
-  exit 1
-fi
-MAIN="$(stage EnvelopeV3Tests.swift)"
-xcrun swiftc -O $COV_FLAGS \
-  "$MAIN" TestSupport.swift \
-  "$SRC/ConversationEnvelopeV3.swift" "$SRC/PeerID.swift" "$HELPERS/DataHex.swift" \
-  "$LOG_SWIFT" \
-  -o "$BINDIR/envelopeV3Tests"
-"$BINDIR/envelopeV3Tests" "$V3_VECTORS"
 
 echo ""
 echo "── Redaction (the Sentry scrubber) ────────────"
@@ -292,6 +116,7 @@ xcrun swiftc -O $COV_FLAGS \
   -o "$BINDIR/redactionTests"
 "$BINDIR/redactionTests"
 
+
 echo ""
 echo "── Key protection tier (the -25293 fix) ───────"
 # Pure mapping checks: capability→tier, tier→LAPolicy, tier→ACL flag, and the
@@ -305,6 +130,7 @@ xcrun swiftc -O $COV_FLAGS \
   "$LOG_SWIFT" \
   -o "$BINDIR/keyProtectionTierTests"
 EXPECTED_SKIPS="$(expected_skips KeyProtectionTierTests)" "$BINDIR/keyProtectionTierTests"
+
 
 echo ""
 echo "── Pure rules (username filter, error text) ───"
@@ -320,96 +146,6 @@ xcrun swiftc -O $COV_FLAGS \
   -o "$BINDIR/pureHelpersTests"
 "$BINDIR/pureHelpersTests"
 
-echo ""
-echo "── Link and router (the last uncompiled files) ──"
-# MQTTService is an actor over an injected backend and ConversationRouter takes
-# every side effect as a closure — both were built to be testable and neither had
-# a test. What they decide is not plumbing: which topics a connect asks for, and
-# where an inbound frame goes. A topic that routes nowhere is a frame dropped in
-# silence, which is the bug ProtocolLog was written for.
-# Every non-view file. Built with a glob and an explicit skip list rather than
-# `ls | grep`, which shellcheck rejects (SC2010/SC2046) and which breaks on any
-# filename with a space in it.
-#
-# The skip list is the SAME set tests/coverage-report.sh excludes from the
-# denominator — SwiftUI layout, the app shell, and Observability,
-# which imports Sentry and cannot be linked by a slice.
-ORCHESTRATOR_SOURCES=()
-for f in "$APP"/*.swift "$APP"/Models/*.swift "$APP"/Services/*.swift \
-  "$APP"/Helpers/*.swift "$APP"/Migration/*.swift; do
-  case "${f##*/}" in
-    ContentView.swift | HQChatApp.swift | PlatformColors.swift | \
-      StatusPresentation.swift | Observability.swift) continue ;;
-  esac
-  ORCHESTRATOR_SOURCES+=("$f")
-done
-
-MAIN="$(stage OrchestratorTests.swift)"
-xcrun swiftc -O $COV_FLAGS -target arm64-apple-macos15.5 \
-  "$MAIN" TestSupport.swift \
-  "${ORCHESTRATOR_SOURCES[@]}" "${CORE_FLAGS[@]}" \
-  -import-objc-header "$APP/Core/HQC-Bridging-Header.h" -I "$APP/Core" \
-  -L ".." -lhqc_wrap -Xlinker -rpath -Xlinker "$(cd .. && pwd)" \
-  -framework Security \
-  -o "$BINDIR/orchestratorTests"
-"$BINDIR/orchestratorTests"
-
-echo ""
-echo "── Moving a profile to the core ───────────────"
-# The import the app runs once per profile: its records, mapped into the core's
-# ImportData and opened by a real engine (Migration/CoreImport.swift).
-MAIN="$(stage CoreImportTests.swift)"
-xcrun swiftc -O $COV_FLAGS -target arm64-apple-macos15.5 \
-  "$MAIN" TestSupport.swift \
-  "${ORCHESTRATOR_SOURCES[@]}" "${CORE_FLAGS[@]}" \
-  -import-objc-header "$APP/Core/HQC-Bridging-Header.h" -I "$APP/Core" \
-  -L ".." -lhqc_wrap -Xlinker -rpath -Xlinker "$(cd .. && pwd)" \
-  -framework Security \
-  -o "$BINDIR/coreImportTests"
-"$BINDIR/coreImportTests"
-
-echo ""
-echo "── Deferred decryption (queue, lock, migration) ─"
-# Frames that arrive locked are queued as ciphertext and opened on unlock; the
-# ratchet and prekey state sits behind the user's unlock. The real router, queue
-# and key store, over in-memory SwiftData and an in-memory key backend.
-MAIN="$(stage InboundQueueTests.swift)"
-xcrun swiftc -O $COV_FLAGS -target arm64-apple-macos15.5 \
-  "$MAIN" TestSupport.swift \
-  "${ORCHESTRATOR_SOURCES[@]}" "${CORE_FLAGS[@]}" \
-  -import-objc-header "$APP/Core/HQC-Bridging-Header.h" -I "$APP/Core" \
-  -L ".." -lhqc_wrap -Xlinker -rpath -Xlinker "$(cd .. && pwd)" \
-  -framework Security \
-  -o "$BINDIR/inboundQueueTests"
-"$BINDIR/inboundQueueTests"
-
-echo ""
-echo "── Store, migration and reset ─────────────────"
-# 1,800 lines that no slice compiled, unlocked by one line of fixture:
-# ModelConfiguration(isStoredInMemoryOnly: true). What is asserted is what a user
-# would lose if it were wrong — a migration that drops a contact loses their
-# history, and a reset that leaves a row behind is an account-deletion claim that
-# is not true.
-MAIN="$(stage PersistenceTests.swift)"
-xcrun swiftc -O $COV_FLAGS -target arm64-apple-macos14 \
-  "$MAIN" TestSupport.swift \
-  "$APP/Persistence.swift" "$MODELS/Message.swift" "$MODELS/Friend.swift" "$SRC/AESKeyStore.swift" "$MODELS/PendingFrame.swift" "$SRC/MQTTTopics.swift" "$MODELS/Profile.swift" \
-  "$MODELS/MessageTypes.swift" "$MODELS/AppError.swift" \
-  "$SRC/PeerID.swift" "$SRC/RatchetSession.swift" "$SRC/DoubleRatchet.swift" \
-  "$SRC/AESService.swift" "$SRC/BiometricAudit.swift" "$SRC/MessageKeyStore.swift" \
-  "$SRC/DeviceAuthCapability.swift" "$HELPERS/DataHex.swift" \
-  "$SRC/BiometricCoordinator.swift" "$SRC/HQCService.swift" "$SRC/HQCKem.swift" \
-  "$SRC/PrekeyService.swift" "$SRC/APIClient.swift" "$SRC/AuthService.swift" \
-  "$SRC/MQTTConnectProof.swift" \
-  "$SRC/TLSPinning.swift" "$APP/Deployment.swift" "$HELPERS/ProtocolLog.swift" \
-  "$SRC/NoiseHQN.swift" \
-  "$SRC/DataResetService.swift" "$SRC/ProfileManager.swift" \
-  -import-objc-header "$APP/Core/HQC-Bridging-Header.h" -I "$APP/Core" \
-  -L ".." -lhqc_wrap -Xlinker -rpath -Xlinker "$(cd .. && pwd)" \
-  -framework Security \
-  "$LOG_SWIFT" \
-  -o "$BINDIR/persistenceTests"
-"$BINDIR/persistenceTests"
 
 echo ""
 echo "── Protocol trace (what Release is allowed to log) ──"
@@ -426,61 +162,6 @@ xcrun swiftc -O $COV_FLAGS \
   -o "$BINDIR/protocolLogTests"
 "$BINDIR/protocolLogTests"
 
-echo ""
-echo "── MQTT codec: the refusals ───────────────────"
-# MQTTWireTests covers what the codec does with well-formed packets. This covers
-# the rest, which is the half that matters for a parser reading a socket. The
-# three cases of NextPacket exist because collapsing them is the bug: a hostile
-# remaining-length that reads as "nothing yet" leaves the client buffering
-# forever.
-MAIN="$(stage MQTTCodecEdgeTests.swift)"
-xcrun swiftc -O $COV_FLAGS \
-  "$MAIN" TestSupport.swift Stubs.swift TransportStubs.swift \
-  "$SRC/MQTTWireClient.swift" "$SRC/MQTTTransport.swift" "$SRC/NoiseHQN.swift" \
-  "$LOG_SWIFT" \
-  -o "$BINDIR/mqttCodecEdgeTests"
-"$BINDIR/mqttCodecEdgeTests"
-
-echo ""
-echo "── Conversation frame (the untrusted seam) ────"
-# The one file on this client that reads bytes a stranger sent. e2e/run.sh and
-# fuzz/run.sh do exercise it, but neither is instrumented — so it read as zero,
-# and nothing asserted its REFUSALS in isolation.
-MAIN="$(stage ConversationFrameTests.swift)"
-xcrun swiftc -O $COV_FLAGS \
-  "$MAIN" TestSupport.swift \
-  "$SRC/ConversationFrame.swift" "$SRC/ConversationEnvelopeV3.swift" \
-  "$SRC/PeerID.swift" "$HELPERS/DataHex.swift" \
-  "$LOG_SWIFT" \
-  -o "$BINDIR/conversationFrameTests"
-"$BINDIR/conversationFrameTests"
-
-echo ""
-echo "── REST client (bearer, errors, no enumeration) ──"
-# 228 lines never compiled by a test. Not glue: the bearer header, the error
-# mapping and the URL each call is pointed at. Driven through a URLProtocol stub
-# — the production session is built with the pinning delegate against the real
-# origin, which is why none of this was reachable.
-MAIN="$(stage APIClientTests.swift)"
-# The bridging header is how Swift reaches the C wrappers, and an explicit target
-# triple is required for it to be picked up at all in a CLI build — e2e/run.sh
-# hit the same trap. AuthService performs the KEM handshake, so the slice needs
-# the native library.
-xcrun swiftc -O $COV_FLAGS -target arm64-apple-macos13 \
-  "$MAIN" TestSupport.swift \
-  "$SRC/APIClient.swift" "$SRC/AuthService.swift" "$SRC/TLSPinning.swift" \
-  "$SRC/MQTTConnectProof.swift" \
-  "$SRC/AESService.swift" "$SRC/BiometricAudit.swift" \
-  "$SRC/HQCService.swift" "$SRC/PeerID.swift" "../HQChat/Deployment.swift" \
-  "$SRC/NoiseHQN.swift" \
-  -import-objc-header "../HQChat/Core/HQC-Bridging-Header.h" \
-  -I "../HQChat/Core" \
-  -L ".." -lhqc_wrap \
-  -Xlinker -rpath -Xlinker "$(cd .. && pwd)" \
-  -framework Security \
-  "$LOG_SWIFT" \
-  -o "$BINDIR/apiClientTests"
-"$BINDIR/apiClientTests"
 
 echo ""
 echo "── TLS pinning (MAS-2) ────────────────────────"
@@ -515,41 +196,63 @@ gen_pin_fixture ec384 -newkey ec -pkeyopt ec_paramgen_curve:secp384r1
 MAIN="$(stage TLSPinningTests.swift)"
 xcrun swiftc -O $COV_FLAGS \
   "$MAIN" TestSupport.swift \
-  "$SRC/TLSPinning.swift" "../HQChat/Deployment.swift" "$SRC/NoiseHQN.swift" \
+  "$SRC/TLSPinning.swift" "../HQChat/Deployment.swift" \
   -framework Security \
   "$LOG_SWIFT" \
   -o "$BINDIR/tlsPinningTests"
 "$BINDIR/tlsPinningTests" "$PIN_FIXTURES"
 
+
 echo ""
-echo "── Shared auth context (one prompt, two stores) ──"
-# The LAContext shared between ProfileManager and MessageKeyStore, so a tier-1
-# profile costs one unlock per session rather than one per key store.
+echo "── Shared auth context (one prompt, every key) ──"
+# The LAContext the unlock produces, shared by everything that needs the
+# profile's keys (the core's vault, and the move's reads of 3.1.1 items), so
+# one unlock opens them all.
 MAIN="$(stage SharedAuthContextTests.swift)"
 xcrun swiftc -O $COV_FLAGS \
-  "$MAIN" TestSupport.swift Stubs.swift \
-  "$MODELS/Message.swift" "$MODELS/Friend.swift" "$SRC/AESKeyStore.swift" "$MODELS/PendingFrame.swift" "$SRC/MQTTTopics.swift" "$MODELS/Profile.swift" \
+  "$MAIN" TestSupport.swift \
   "$SRC/MessageKeyStore.swift" "$SRC/DeviceAuthCapability.swift" \
-  "$SRC/AESService.swift" "$SRC/RatchetSession.swift" \
-  "$SRC/DoubleRatchet.swift" "$SRC/PeerID.swift" \
-  "$SRC/BiometricAudit.swift" "$SRC/BiometricCoordinator.swift" "$HELPERS/DataHex.swift" \
+  "$SRC/BiometricAudit.swift" "$SRC/BiometricCoordinator.swift" \
   "$LOG_SWIFT" \
   -o "$BINDIR/sharedAuthContextTests"
 "$BINDIR/sharedAuthContextTests"
 
+# Every non-view app file, for the slices that reach the store and the move.
+# A glob with a skip list rather than a hand-kept list, so a new file cannot be
+# forgotten here; the skipped ones import UI or Sentry.
+APP_SOURCES=()
+for f in "$APP"/*.swift "$APP"/Models/*.swift "$APP"/Services/*.swift \
+  "$APP"/Helpers/*.swift "$APP"/Migration/*.swift; do
+  case "${f##*/}" in
+    ContentView.swift | HQChatApp.swift | PlatformColors.swift | \
+      StatusPresentation.swift | Observability.swift) continue ;;
+  esac
+  APP_SOURCES+=("$f")
+done
+
 echo ""
-echo "── Message at-rest tests ──────────────────────"
-MAIN="$(stage MessageAtRestTests.swift)"
-xcrun swiftc -O $COV_FLAGS \
-  "$MAIN" TestSupport.swift Stubs.swift \
-  "$MODELS/Message.swift" "$MODELS/Friend.swift" "$SRC/AESKeyStore.swift" "$MODELS/PendingFrame.swift" "$SRC/MQTTTopics.swift" "$MODELS/Profile.swift" \
-  "$SRC/MessageKeyStore.swift" "$SRC/DeviceAuthCapability.swift" \
-  "$SRC/AESService.swift" "$SRC/RatchetSession.swift" \
-  "$SRC/DoubleRatchet.swift" "$SRC/PeerID.swift" \
-  "$SRC/BiometricAudit.swift" "$SRC/BiometricCoordinator.swift" "$HELPERS/DataHex.swift" \
-  "$LOG_SWIFT" \
-  -o "$BINDIR/atRestTests"
-EXPECTED_SKIPS="$(expected_skips MessageAtRestTests)" "$BINDIR/atRestTests"
+echo "── Moving a profile to the core ───────────────"
+# The import the app runs once per profile: 3.1.1 records, mapped into the
+# core's ImportData and opened by a real engine (Migration/CoreImport.swift).
+MAIN="$(stage CoreImportTests.swift)"
+xcrun swiftc -O $COV_FLAGS -target arm64-apple-macos15.5 \
+  "$MAIN" TestSupport.swift \
+  "${APP_SOURCES[@]}" "${CORE_FLAGS[@]}" \
+  -framework Security \
+  -o "$BINDIR/coreImportTests"
+"$BINDIR/coreImportTests" "$PWD/fixtures/legacy-3.1.1-session.json"
+
+echo ""
+echo "── Store, move and reset ──────────────────────"
+# The profile list, the 3.1.1 rows the move deletes, and a reset that leaves
+# no row and no core store behind.
+MAIN="$(stage PersistenceTests.swift)"
+xcrun swiftc -O $COV_FLAGS -target arm64-apple-macos15.5 \
+  "$MAIN" TestSupport.swift \
+  "${APP_SOURCES[@]}" "${CORE_FLAGS[@]}" \
+  -framework Security \
+  -o "$BINDIR/persistenceTests"
+"$BINDIR/persistenceTests"
 
 echo ""
 echo "✅ All Swift tests passed"

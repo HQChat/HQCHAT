@@ -3,7 +3,7 @@ import SwiftUI
 /// The message field and send button, or a read-only notice for a vanished or
 /// blocked contact. Always shown otherwise: sending is what opens a session.
 struct ChatComposer: View {
-    let friend: Friend
+    let friend: Contact
     @Binding var text: String
     let isSending: Bool
     var focused: FocusState<Bool>.Binding
