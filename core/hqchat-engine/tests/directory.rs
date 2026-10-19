@@ -105,10 +105,149 @@ fn a_report_names_the_conversation_and_can_block() {
     assert_eq!(report["conversation"].as_str().unwrap().len(), 64);
     assert!(s.users[&a.id()].blocked.contains(&b.id()));
     drop(s);
+    let friends = a.engine.friends();
+    assert_eq!(friends.len(), 1, "the conversation is kept");
+    assert_eq!(friends[0].blocked_at, Some(support::NOW));
+}
+
+#[test]
+fn a_blocked_friend_is_kept_read_only_until_unblocked() {
+    let server = FakeServer::shared();
+    let mut a = Client::signed_in(&server, "a");
+    let mut b = Client::signed_in(&server, "b");
+    Client::befriend(&mut a, &mut b);
+    let e = a.engine.send_text(b.id(), "before".into(), a.now).unwrap();
+    a.pump(e);
+    support::settle(&mut [&mut a, &mut b]);
+
+    let e = a.engine.block(b.id());
+    a.pump(e);
+    let friends = a.engine.friends();
+    assert_eq!(friends.len(), 1);
+    assert!(friends[0].blocked_at.is_some());
     assert!(
-        a.engine.friends().is_empty(),
-        "blocking ends the friendship"
+        !friends[0].has_session,
+        "the session ends with the friendship"
     );
+    assert_eq!(
+        a.engine.history(b.id(), None, 10).unwrap().len(),
+        1,
+        "the history stays"
+    );
+    assert!(
+        a.engine.send_text(b.id(), "after".into(), a.now).is_err(),
+        "nothing is sent to a blocked friend"
+    );
+
+    // A sync later (the next poll, another device) keeps them.
+    a.start(a.now);
+    assert!(a.engine.friends()[0].blocked_at.is_some());
+
+    // Unblocking does not restore the friendship: the row is ordinary again,
+    // absent from /friends, and goes with its history.
+    let e = a.engine.unblock(b.id());
+    a.pump(e);
+    assert!(a.engine.friends().is_empty());
+    assert!(a.engine.history(b.id(), None, 10).unwrap().is_empty());
+}
+
+#[test]
+fn a_block_from_another_device_arrives_and_is_lifted_the_same_way() {
+    let server = FakeServer::shared();
+    let mut a = Client::signed_in(&server, "a");
+    let mut b = Client::signed_in(&server, "b");
+    Client::befriend(&mut a, &mut b);
+    {
+        let mut s = server.borrow_mut();
+        let pair = FakeServer::pair_of(&a.id(), &b.id());
+        s.friendships.remove(&pair);
+        s.users.get_mut(&a.id()).unwrap().blocked.push(b.id());
+    }
+    a.start(a.now);
+    assert!(a.engine.friends()[0].blocked_at.is_some(), "kept, blocked");
+    server
+        .borrow_mut()
+        .users
+        .get_mut(&a.id())
+        .unwrap()
+        .blocked
+        .clear();
+    a.start(a.now);
+    assert!(a.engine.friends().is_empty());
+}
+
+#[test]
+fn without_the_block_list_nobody_is_removed() {
+    let server = FakeServer::shared();
+    let mut a = Client::signed_in(&server, "a");
+    let mut b = Client::signed_in(&server, "b");
+    Client::befriend(&mut a, &mut b);
+    let pair = FakeServer::pair_of(&a.id(), &b.id());
+    server.borrow_mut().friendships.remove(&pair);
+    server.borrow_mut().fail_blocked = true;
+    a.start(a.now);
+    assert_eq!(
+        a.engine.friends().len(),
+        1,
+        "a blocked friend could not be told apart"
+    );
+    server.borrow_mut().fail_blocked = false;
+    a.start(a.now);
+    assert!(a.engine.friends().is_empty());
+}
+
+#[test]
+fn a_username_under_a_new_id_leaves_the_old_identity_vanished() {
+    let server = FakeServer::shared();
+    let mut a = Client::signed_in(&server, "a");
+    let mut b = Client::signed_in(&server, "b");
+    let e = b.engine.set_username("bob".into());
+    b.pump(e);
+    Client::befriend(&mut a, &mut b);
+    let e = a.engine.send_text(b.id(), "hello".into(), a.now).unwrap();
+    a.pump(e);
+
+    // Bob resets: the old identity is gone, a new one holds the name.
+    {
+        let mut s = server.borrow_mut();
+        let pair = FakeServer::pair_of(&a.id(), &b.id());
+        s.friendships.remove(&pair);
+        s.users.get_mut(&b.id()).unwrap().username = None;
+    }
+    let mut c = Client::signed_in(&server, "c");
+    let e = c.engine.set_username("bob".into());
+    c.pump(e);
+    let e = c.engine.invite(a.id());
+    c.pump(e);
+    a.start(a.now);
+    assert_eq!(
+        a.engine.friends().len(),
+        1,
+        "the invite is not a friend yet"
+    );
+    assert!(a.engine.friends()[0].vanished_at.is_some());
+    let e = a.engine.accept(c.id());
+    a.pump(e);
+    c.start(c.now);
+    support::settle(&mut [&mut a, &mut c]);
+
+    let friends = a.engine.friends();
+    assert_eq!(friends.len(), 2);
+    let old = friends.iter().find(|f| f.id == b.id()).unwrap();
+    let new = friends.iter().find(|f| f.id == c.id()).unwrap();
+    assert!(old.vanished_at.is_some() && !old.has_session);
+    assert!(new.vanished_at.is_none());
+    assert!(a.engine.send_text(b.id(), "again".into(), a.now).is_err());
+    assert_eq!(a.engine.history(b.id(), None, 10).unwrap().len(), 1);
+
+    assert!(
+        a.engine.forget(c.id()).is_err(),
+        "only a vanished identity is forgotten"
+    );
+    let e = a.engine.forget(b.id()).unwrap();
+    a.pump(e);
+    assert_eq!(a.engine.friends().len(), 1);
+    assert!(a.engine.history(b.id(), None, 10).unwrap().is_empty());
 }
 
 #[test]

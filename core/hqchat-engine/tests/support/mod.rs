@@ -66,6 +66,8 @@ pub struct FakeServer {
     /// Friendships by the sorted pair of ids.
     pub friendships: HashMap<(String, String), Friendship>,
     pub reports: Vec<Value>,
+    /// Answer `/friends/blocked` with an error.
+    pub fail_blocked: bool,
     pub broker: broker::Broker,
 }
 
@@ -260,6 +262,27 @@ impl FakeServer {
                     })
                     .collect();
                 (200, json!({ "friends": friends }))
+            }
+            (Method::Get, "/friends/blocked") => {
+                let Some(id) = self.session(authorization) else {
+                    return err(401, "");
+                };
+                if self.fail_blocked {
+                    return err(503, "");
+                }
+                (200, json!({ "blocked": self.users[&id].blocked }))
+            }
+            (Method::Post, "/friends/unblock") => {
+                let Some(id) = self.session(authorization) else {
+                    return err(401, "");
+                };
+                let peer = body["peer"].as_str().unwrap_or("").to_owned();
+                self.users
+                    .get_mut(&id)
+                    .unwrap()
+                    .blocked
+                    .retain(|b| *b != peer);
+                (200, json!({ "ok": true }))
             }
             (Method::Get, "/friends/invites") => {
                 let Some(id) = self.session(authorization) else {

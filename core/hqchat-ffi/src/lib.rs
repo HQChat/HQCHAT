@@ -176,6 +176,18 @@ impl Engine {
     pub fn block(&self, peer: String) -> Vec<Effect> {
         effects(self.inner.block(peer))
     }
+    /// Lifts a block; the friendship is not restored.
+    pub fn unblock(&self, peer: String) -> Vec<Effect> {
+        effects(self.inner.unblock(peer))
+    }
+    /// Forgets a vanished identity and its conversation, on this device.
+    pub fn forget(&self, peer: String) -> Result<Vec<Effect>, CoreError> {
+        Ok(effects(self.inner.forget(peer)?))
+    }
+    /// Marks the conversation with `peer` read.
+    pub fn mark_read(&self, peer: String) -> Result<Vec<Effect>, CoreError> {
+        Ok(effects(self.inner.mark_read(peer)?))
+    }
     /// Reports a friend's messages.
     pub fn report(&self, report: ReportInput) -> Vec<Effect> {
         effects(self.inner.report(report.into()))

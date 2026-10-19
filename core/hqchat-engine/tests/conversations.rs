@@ -38,6 +38,32 @@ fn texts(c: &Client, from: &Client) -> Vec<String> {
         .collect()
 }
 
+fn unread(c: &Client) -> u32 {
+    c.engine.friends()[0].unread
+}
+
+#[test]
+fn received_messages_are_unread_until_marked_read_and_it_survives_a_restart() {
+    let (_server, mut a, mut b) = pair();
+    send(&mut a, &b, "one");
+    send(&mut a, &b, "two");
+    settle(&mut [&mut a, &mut b]);
+    assert_eq!(unread(&b), 2);
+    assert_eq!(unread(&a), 0, "what one sends is not unread");
+
+    let e = b.engine.mark_read(a.id()).unwrap();
+    b.pump(e);
+    assert_eq!(unread(&b), 0);
+    send(&mut a, &b, "three");
+    settle(&mut [&mut a, &mut b]);
+    assert_eq!(unread(&b), 1);
+
+    let restarted =
+        hqchat_engine::Engine::new(support::config("b"), b.vault.clone(), b.store.clone()).unwrap();
+    restarted.unlock(NOW).unwrap();
+    assert_eq!(restarted.friends()[0].unread, 1);
+}
+
 fn status(c: &Client, peer: &Client, msg_id: &str) -> Option<Delivery> {
     c.engine
         .history(peer.id(), None, 100)
@@ -140,7 +166,11 @@ fn frames_that_arrive_locked_wait_for_the_unlock_with_a_notification_meanwhile()
     let id = send(&mut a, &b, "while you were locked");
     settle(&mut [&mut a, &mut b]);
     assert!(b.seen.contains(&Effect::Notify { peer: a.id() }));
-    assert_eq!(b.engine.friends()[0].unread, 1);
+    assert_eq!(
+        b.engine.friends()[0].unread,
+        2,
+        "the message opened before, and the frame waiting"
+    );
     assert!(b.store.snapshot().keys().any(|k| k.starts_with("pending/")));
     assert_eq!(
         status(&a, &b, &id),
@@ -153,7 +183,7 @@ fn frames_that_arrive_locked_wait_for_the_unlock_with_a_notification_meanwhile()
     b.pump(e);
     settle(&mut [&mut a, &mut b]);
     assert_eq!(texts(&b, &a), ["opening", "while you were locked"]);
-    assert_eq!(b.engine.friends()[0].unread, 0);
+    assert_eq!(b.engine.friends()[0].unread, 2, "opened, still unread");
     assert!(!b.store.snapshot().keys().any(|k| k.starts_with("pending/")));
     assert_eq!(status(&a, &b, &id), Some(Delivery::Delivered));
 }

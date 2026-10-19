@@ -89,6 +89,13 @@ pub struct FriendView {
     pub has_session: bool,
     /// Unread messages, including those waiting for an unlock.
     pub unread: u32,
+    /// When this user blocked them (Unix milliseconds): read-only until
+    /// `Engine::unblock`.
+    pub blocked_at: Option<i64>,
+    /// When their identity was replaced by a new one under the same
+    /// username: read-only until `Engine::forget`. Also what an
+    /// impersonation looks like.
+    pub vanished_at: Option<i64>,
 }
 
 /// A friend request waiting for this user's answer.

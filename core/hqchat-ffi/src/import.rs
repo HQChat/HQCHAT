@@ -67,6 +67,10 @@ pub struct ImportPeerData {
     pub pinned_public_key: Option<Vec<u8>>,
     /// The ratchet session with them.
     pub session: Option<ImportSessionData>,
+    /// When this user blocked them, in milliseconds.
+    pub blocked_at: Option<i64>,
+    /// When their identity was found replaced, in milliseconds.
+    pub vanished_at: Option<i64>,
 }
 
 /// A ratchet session, field for field (`RatchetSessionState` in Swift).
@@ -150,6 +154,8 @@ pub struct ImportMessageData {
     pub at: i64,
     /// Where an outgoing message had got to.
     pub delivery: Option<Delivery>,
+    /// A received message the user has seen.
+    pub read: bool,
 }
 
 /// A frame still waiting for an unlock.
@@ -282,6 +288,8 @@ impl TryFrom<ImportData> for core::Import {
                     handshake_id: p.handshake_id,
                     pinned_pk: p.pinned_public_key,
                     session: p.session.map(session).transpose()?,
+                    blocked_at: p.blocked_at,
+                    vanished_at: p.vanished_at,
                 })
             })
             .collect::<Result<Vec<_>, CoreError>>()?;
@@ -302,6 +310,7 @@ impl TryFrom<ImportData> for core::Import {
                     text: m.text,
                     at: m.at,
                     delivery: m.delivery.map(Into::into),
+                    read: m.read,
                 })
                 .collect(),
             pending: d

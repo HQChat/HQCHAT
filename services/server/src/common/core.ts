@@ -147,6 +147,10 @@ export interface CoreFriend {
   online: boolean;
   hasSession: boolean;
   unread: number;
+  /** Unix ms; a blocked friend is kept, read-only. */
+  blockedAt?: number;
+  /** Unix ms; their username now belongs to another identity. */
+  vanishedAt?: number;
 }
 
 export interface CoreInvite {
@@ -170,6 +174,9 @@ export interface Engine {
   accept(peer: string): CoreEffect[];
   remove(peer: string): CoreEffect[];
   block(peer: string): CoreEffect[];
+  unblock(peer: string): CoreEffect[];
+  forget(peer: string): CoreEffect[];
+  markRead(peer: string): CoreEffect[];
   report(peer: string, reason: string, msgIds: string[], block: boolean): CoreEffect[];
   setUsername(username: string): CoreEffect[];
   deleteAccount(): CoreEffect[];

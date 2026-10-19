@@ -140,11 +140,10 @@ impl Core {
 
     pub fn send_text(&mut self, peer: &PeerId, text: &str, now: i64) -> Result<(), CoreError> {
         self.unlocked()?;
-        if self
+        if !self
             .peers
             .get(peer)
-            .and_then(|p| p.convo.as_ref())
-            .is_none()
+            .is_some_and(|p| p.convo.is_some() && !p.is_read_only())
         {
             return Err(CoreError::NotAFriend);
         }
@@ -509,7 +508,12 @@ impl Core {
         if sender == me {
             return self.drop_frame("own frame");
         }
-        let Some(peer) = self.peers.get(&sender).cloned() else {
+        let Some(peer) = self
+            .peers
+            .get(&sender)
+            .filter(|p| !p.is_read_only())
+            .cloned()
+        else {
             return self.drop_frame(format!("frame from {sender}, not a friend"));
         };
         if frame.header.to != me {
@@ -547,8 +551,9 @@ impl Core {
         }
         if let Some(sender) = notify
             && let Some(p) = self.peers.get_mut(&sender)
+            && !p.is_read_only()
         {
-            p.unread = p.unread.saturating_add(1);
+            p.pending = p.pending.saturating_add(1);
             self.emit(Effect::Notify {
                 peer: sender.to_string(),
             });
@@ -596,10 +601,11 @@ impl Core {
                 Err(_) => self.store.delete(slot),
             }
         }
+        // What was opened is now counted as unread messages.
         let mut changed = false;
         for p in self.peers.values_mut() {
-            changed |= p.unread != 0;
-            p.unread = 0;
+            changed |= p.pending != 0;
+            p.pending = 0;
         }
         if changed {
             self.emit(Effect::FriendsChanged);
@@ -887,6 +893,10 @@ impl Core {
             if self.put_message(sender, &record).is_err() {
                 return;
             }
+            if let Some(p) = self.peers.get_mut(sender) {
+                p.unread = p.unread.saturating_add(1);
+            }
+            self.persist_state();
             self.emit(Effect::MessageAdded(Message {
                 msg_id: msg_id.to_owned(),
                 peer: sender.to_string(),

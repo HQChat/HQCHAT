@@ -206,6 +206,10 @@ pub(crate) struct StoredPeer {
     pub convo_id: Option<String>,
     pub handshake_id: Option<String>,
     pub pinned_pk: Option<Vec<u8>>,
+    pub unread: u32,
+    pub read_until: i64,
+    pub blocked_at: Option<i64>,
+    pub vanished_at: Option<i64>,
 }
 
 /// A message, as the UI shows it.

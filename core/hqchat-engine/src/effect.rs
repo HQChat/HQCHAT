@@ -56,6 +56,8 @@ pub enum Action {
     Remove,
     /// Blocking a user.
     Block,
+    /// Lifting a block.
+    Unblock,
     /// Filing a report.
     Report,
     /// Deleting the account.

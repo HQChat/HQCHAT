@@ -63,6 +63,8 @@ pub fn import_of(seed: [u8; 32], json: Option<&str>) -> Result<(Import, Vec<Stri
                     None => None,
                 },
                 session,
+                blocked_at: None,
+                vanished_at: None,
             });
         }
     }

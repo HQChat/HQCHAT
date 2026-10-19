@@ -263,8 +263,12 @@ pub struct JsFriend {
     pub online: bool,
     /// A session is open.
     pub has_session: bool,
-    /// Unread while locked.
+    /// Unread, including those waiting for an unlock.
     pub unread: u32,
+    /// When this user blocked them (Unix milliseconds).
+    pub blocked_at: Option<i64>,
+    /// When their identity was replaced under the same username.
+    pub vanished_at: Option<i64>,
 }
 
 /// A friend request waiting for an answer.
@@ -404,6 +408,21 @@ impl JsEngine {
     }
 
     #[napi]
+    pub fn unblock(&self, peer: String) -> Vec<JsEffect> {
+        all(self.engine.unblock(peer))
+    }
+
+    #[napi]
+    pub fn forget(&self, peer: String) -> napi::Result<Vec<JsEffect>> {
+        self.engine.forget(peer).map(all).map_err(err)
+    }
+
+    #[napi]
+    pub fn mark_read(&self, peer: String) -> napi::Result<Vec<JsEffect>> {
+        self.engine.mark_read(peer).map(all).map_err(err)
+    }
+
+    #[napi]
     pub fn report(
         &self,
         peer: String,
@@ -464,6 +483,8 @@ impl JsEngine {
                 online: f.online,
                 has_session: f.has_session,
                 unread: f.unread,
+                blocked_at: f.blocked_at,
+                vanished_at: f.vanished_at,
             })
             .collect()
     }

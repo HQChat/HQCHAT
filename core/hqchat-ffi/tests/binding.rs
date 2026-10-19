@@ -148,6 +148,8 @@ fn import_data() -> (ImportData, String) {
             handshake_id: Some("d".repeat(64)),
             pinned_public_key: Some(friend.public.as_bytes().to_vec()),
             session: Some(session),
+            blocked_at: None,
+            vanished_at: None,
         }],
         messages: vec![ImportMessageData {
             peer: friend_id.clone(),
@@ -156,6 +158,7 @@ fn import_data() -> (ImportData, String) {
             text: "before the move".into(),
             at: 1_000,
             delivery: Some(Delivery::Delivered),
+            read: true,
         }],
         pending: vec![],
     };

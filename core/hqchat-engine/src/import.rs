@@ -60,6 +60,10 @@ pub struct ImportPeer {
     pub pinned_pk: Option<Vec<u8>>,
     /// The ratchet session with them, if one was open.
     pub session: Option<SessionState>,
+    /// When this user blocked them, in milliseconds.
+    pub blocked_at: Option<i64>,
+    /// When their identity was found replaced, in milliseconds.
+    pub vanished_at: Option<i64>,
 }
 
 /// One message of the history, as the UI showed it.
@@ -76,6 +80,9 @@ pub struct ImportMessage {
     pub at: i64,
     /// Where an outgoing message had got to.
     pub delivery: Option<Delivery>,
+    /// A received message the user has seen. The conversation is read up to
+    /// the newest of these; any unseen one after it counts as unread.
+    pub read: bool,
 }
 
 /// A frame that arrived while the old implementation was locked and was
@@ -157,18 +164,39 @@ fn peer_of(p: ImportPeer) -> Result<(Peer, Option<SessionState>), CoreError> {
         None => None,
     };
     let peer = Peer {
-        id,
         username: p.username,
         convo: topic(p.convo_id, "a conversation topic")?,
         handshake: topic(p.handshake_id, "a handshake topic")?,
         pinned,
-        online: false,
-        unread: 0,
+        blocked_at: p.blocked_at,
+        vanished_at: p.vanished_at,
+        ..Peer::new(id)
     };
     Ok((peer, p.session))
 }
 
-fn message_of(m: ImportMessage) -> Result<(PeerId, StoredMessage), CoreError> {
+/// Read state from the per-message flags: read up to the newest received
+/// message seen, unread for every received one after it.
+fn read_state(peers: &mut BTreeMap<PeerId, Peer>, messages: &[(PeerId, StoredMessage, bool)]) {
+    for (peer, m, read) in messages {
+        if let Some(p) = peers.get_mut(peer)
+            && !m.outgoing
+            && *read
+        {
+            p.read_until = p.read_until.max(m.at);
+        }
+    }
+    for (peer, m, _) in messages {
+        if let Some(p) = peers.get_mut(peer)
+            && !m.outgoing
+            && m.at > p.read_until
+        {
+            p.unread = p.unread.saturating_add(1);
+        }
+    }
+}
+
+fn message_of(m: ImportMessage) -> Result<(PeerId, StoredMessage, bool), CoreError> {
     let peer = PeerId::parse(&m.peer).map_err(|_| invalid("a message's peer id"))?;
     if m.msg_id.is_empty() {
         return Err(invalid("a message without an id"));
@@ -183,6 +211,7 @@ fn message_of(m: ImportMessage) -> Result<(PeerId, StoredMessage), CoreError> {
             at: m.at,
             delivery: m.delivery.map(persist::delivery_byte),
         },
+        m.read,
     ))
 }
 
@@ -214,6 +243,8 @@ impl Core {
             .into_iter()
             .map(message_of)
             .collect::<Result<Vec<_>, _>>()?;
+        read_state(&mut peers, &messages);
+        let messages = messages.into_iter().map(|(p, m, _)| (p, m)).collect();
         let pending = import.pending;
 
         let result = self.write_import(identity, prekeys, peers, sessions, messages, &pending);

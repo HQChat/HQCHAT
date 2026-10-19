@@ -20,8 +20,17 @@ pub(crate) enum Pending {
     Action(Action),
     /// A friendship action: on success, re-read the directory.
     ThenSync(Action),
-    Friends,
-    Invites,
+    /// The directory, read in this order: the block list, invites, then
+    /// friends. Removals are applied only when the first two were read: a
+    /// blocked friend is absent from `/friends` by construction, and a new
+    /// identity under an old username often arrives as an invite.
+    Blocked,
+    Invites {
+        can_remove: bool,
+    },
+    Friends {
+        can_remove: bool,
+    },
     PrekeyCount,
     Transport,
     PeerKey(hqchat_protocol::PeerId),
@@ -102,8 +111,9 @@ impl Core {
             }
             Pending::DeleteAccount => self.on_account_deleted(answer),
             Pending::ThenSync(action) => self.on_then_sync(action, answer),
-            Pending::Friends => self.on_friends(answer),
-            Pending::Invites => self.on_invites(answer),
+            Pending::Blocked => self.on_blocked(answer, now),
+            Pending::Invites { can_remove } => self.on_invites(answer, can_remove),
+            Pending::Friends { can_remove } => self.on_friends(answer, can_remove, now),
             Pending::PrekeyCount => self.on_prekey_count(answer, now),
             Pending::Transport => self.on_transport(answer, now),
             Pending::PeerKey(peer) => self.on_peer_key(peer, answer, now),

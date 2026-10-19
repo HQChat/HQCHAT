@@ -71,6 +71,8 @@ fn a_key_that_does_not_hash_to_its_peer_is_refused_and_nothing_is_kept() {
         handshake_id: None,
         pinned_pk: Some(identity(2).public.as_bytes().to_vec()),
         session: None,
+        blocked_at: None,
+        vanished_at: None,
     });
     assert!(matches!(engine.import(import, 0), Err(CoreError::State(_))));
     assert!(store.snapshot().is_empty(), "nothing was written");
@@ -146,6 +148,8 @@ fn imported_sessions_keep_the_conversation_going_both_ways() {
         handshake_id: Some(handshake.clone()),
         pinned_pk: Some(key.public.as_bytes().to_vec()),
         session: Some(session),
+        blocked_at: None,
+        vanished_at: None,
     };
     let start = |profile: &str, fill: u8, peers: Vec<ImportPeer>| {
         let mut c = Client::new(&server, profile);
@@ -253,6 +257,7 @@ fn history_imports_in_order_and_new_messages_sort_after_it() {
         text: format!("text {id}"),
         at,
         delivery: outgoing.then_some(Delivery::Delivered),
+        read: true,
     };
     let mut import = only_seed(9);
     import.messages = vec![message("b", false, NOW + 5), message("a", true, NOW)];
@@ -281,5 +286,57 @@ fn history_imports_in_order_and_new_messages_sort_after_it() {
     assert!(
         other.import(bad, NOW).is_err(),
         "a message for no valid peer refuses the import"
+    );
+}
+
+#[test]
+fn read_flags_and_friend_states_come_across() {
+    let engine = Engine::new(
+        support::config("p"),
+        Arc::new(SoftwareVault::default()),
+        Arc::new(MemoryStore::default()),
+    )
+    .unwrap();
+    let id = |fill| PeerId::of(&identity(fill).public).to_string();
+    let friend = |fill, blocked_at, vanished_at| ImportPeer {
+        id: id(fill),
+        username: None,
+        convo_id: Some("c".repeat(64)),
+        handshake_id: Some("d".repeat(64)),
+        pinned_pk: None,
+        session: None,
+        blocked_at,
+        vanished_at,
+    };
+    let message = |msg_id: &str, outgoing, at, read| ImportMessage {
+        peer: id(1),
+        msg_id: msg_id.into(),
+        outgoing,
+        text: msg_id.into(),
+        at,
+        delivery: None,
+        read,
+    };
+    let mut import = only_seed(9);
+    import.messages = vec![
+        message("seen", false, NOW, true),
+        message("mine", true, NOW + 1, false),
+        message("new 1", false, NOW + 2, false),
+        message("new 2", false, NOW + 3, false),
+    ];
+    import.peers = vec![
+        friend(1, None, None),
+        friend(2, Some(NOW), None),
+        friend(3, None, Some(NOW)),
+    ];
+    engine.import(import, NOW).unwrap();
+    let friends = engine.friends();
+    let by = |fill| friends.iter().find(|f| f.id == id(fill)).unwrap();
+    assert_eq!(by(1).unread, 2, "unread after the newest message seen");
+    assert_eq!(by(2).blocked_at, Some(NOW));
+    assert_eq!(by(3).vanished_at, Some(NOW));
+    assert!(
+        engine.send_text(id(2), "hi".into(), NOW).is_err(),
+        "a blocked friend stays read-only"
     );
 }

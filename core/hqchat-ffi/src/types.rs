@@ -313,6 +313,8 @@ pub enum Action {
     Remove,
     /// Blocking.
     Block,
+    /// Lifting a block.
+    Unblock,
     /// A report.
     Report,
     /// Deleting the account.
@@ -353,6 +355,10 @@ pub struct FriendView {
     pub has_session: bool,
     /// Unread, including those waiting for an unlock.
     pub unread: u32,
+    /// When this user blocked them (Unix milliseconds): read-only.
+    pub blocked_at: Option<i64>,
+    /// When their identity was replaced under the same username: read-only.
+    pub vanished_at: Option<i64>,
 }
 
 /// A friend request waiting for an answer.
@@ -569,6 +575,8 @@ impl From<core::FriendView> for FriendView {
             online: f.online,
             has_session: f.has_session,
             unread: f.unread,
+            blocked_at: f.blocked_at,
+            vanished_at: f.vanished_at,
         }
     }
 }
@@ -650,6 +658,7 @@ impl From<core::Effect> for Effect {
                     core::Action::Accept => Action::Accept,
                     core::Action::Remove => Action::Remove,
                     core::Action::Block => Action::Block,
+                    core::Action::Unblock => Action::Unblock,
                     core::Action::Report => Action::Report,
                     core::Action::DeleteAccount => Action::DeleteAccount,
                     core::Action::RegisterPush => Action::RegisterPush,

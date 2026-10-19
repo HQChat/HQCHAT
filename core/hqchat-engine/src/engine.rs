@@ -179,6 +179,33 @@ impl Engine {
         .unwrap_or_default()
     }
 
+    /// Lifts a block. The friendship is not restored on either side: the
+    /// two invite each other again, and the kept conversation is removed
+    /// with the next directory sync, as after any unfriend.
+    pub fn unblock(&self, peer: String) -> Vec<Effect> {
+        self.run(|c| {
+            c.friendship(
+                crate::Action::Unblock,
+                "/friends/unblock",
+                serde_json::json!({ "peer": peer }),
+            );
+            Ok(())
+        })
+        .unwrap_or_default()
+    }
+
+    /// Forgets a vanished identity and its conversation, on this device.
+    pub fn forget(&self, peer: String) -> Result<Vec<Effect>, CoreError> {
+        let peer = hqchat_protocol::PeerId::parse(&peer)?;
+        self.run(|c| c.forget_vanished(&peer))
+    }
+
+    /// Marks the conversation with `peer` read.
+    pub fn mark_read(&self, peer: String) -> Result<Vec<Effect>, CoreError> {
+        let peer = hqchat_protocol::PeerId::parse(&peer)?;
+        self.run(|c| c.mark_read(&peer))
+    }
+
     /// Reports a friend's messages.
     pub fn report(&self, report: ReportInput) -> Vec<Effect> {
         self.run(|c| c.report(&report)).unwrap_or_default()
