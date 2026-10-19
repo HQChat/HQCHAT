@@ -2,7 +2,8 @@
 
 **Status: the core (phases 1 and 1b) is built in `core/`, and the server,
 the hqn/1 gateway and the helper bot run on it (phase 2, built; deployment to
-staging and production pending). The apps do not use it yet (phase 3 next).** How HQChat goes from two Apple targets to
+staging and production pending), and so do the Apple apps (phase 3, built;
+it ships as the release after 3.1.1).** How HQChat goes from two Apple targets to
 iOS, macOS, Android, Linux and Windows without a second or third copy of the
 protocol. Moving an account between devices is a separate plan, built on top
 of this one. The flow of one message through the core, function by function,
@@ -178,9 +179,10 @@ desktop. Each artifact has one entry point (`nix build .#core-aar`,
    on GitHub's Windows ARM runner.
 3. A binding conformance suite replays the same JSON through Swift, Kotlin and
    Node, which catches marshalling bugs the Rust tests cannot see.
-4. The existing differential fuzzers (`services/server/test/fuzz/`,
-   `apps/apple/fuzz/`) run Rust against TS and Swift until those copies are
-   deleted; then cargo-fuzz keeps the targets.
+4. The differential fuzzers (`services/server/test/fuzz/`) run Rust against
+   the TS reference; Swift's copy is deleted. cargo-fuzz targets for the
+   decoders the Swift fuzzers covered alone (MQTT, topic routing, ratchet
+   state) are still to write.
 
 ## Hardware keys on every platform
 
@@ -266,7 +268,7 @@ Each phase ships on its own and leaves every existing client working.
 | 1 | **Protocol (built).** `hqc-sys`, `hqc`, the API surface, `hqchat-protocol` with the MQTT codec; the shared vectors read in place; hostile input to every decoder | `lib/hqc-sys` … `lib/protocol-mqtt-codec`, `lib/hostile-input` | every vector passes: on macOS arm64 and in CI (Linux x86_64); the other targets with their phases |
 | 1b | **Engine and bindings (built).** `hqchat-engine`, `hqchat-node`, `hqchat-ffi`; `scripts/check.sh core` in CI | `lib/engine-*`, `lib/*-binding`, `lib/ci-core` | two engines converse through a fake server and broker; Node and Swift run the bindings; the bot on staging comes with phase 2 |
 | 2 | **Server on the core (built; deployment pending).** The napi binding replaces `src/protocol` and koffi in the server, gateway and bot; the bot imports its TS state into the core on its first start, keeping its seed-derived id and its sessions | `server/*` (done list above) | unit, integration and scenario layers green (done, locally and with the Swift live check); deployed to staging, then production |
-| 3 | **Apple on the core.** No flag: 3.1.1 is the last Swift build and 3.2.0 runs on the core, with the Swift protocol, MQTT and session files deleted. On first launch the importer moves identity, prekeys, sessions, history (with read state) and blocked or vanished friends; it lives in `Migration/` and goes a few weeks later ([core-wiring.md](core-wiring.md#the-switch-phase-3)) | `apple/*` | an App Store update with no visible change |
+| 3 | **Apple on the core (built; release pending).** No flag: 3.1.1 is the last Swift build and 3.2.0 runs on the core, with the Swift protocol, MQTT and session files deleted. On first launch the importer moves identity, prekeys, sessions, history (with read state) and blocked or vanished friends; it lives in `Migration/` and goes a few weeks later ([core-wiring.md](core-wiring.md#the-switch-phase-3)) | `apple/*` | an App Store update with no visible change |
 | 4 | **Server for new platforms.** Push bridge gains FCM and UnifiedPush; push tokens carry a platform | `server/push-fcm-unifiedpush` | scenarios cover each provider with a fake |
 | 5 | **Android.** Kotlin shell, Android target; Keystore vault; FCM + UnifiedPush + foreground-service fallback; `allowBackup=false`, `FLAG_SECURE` | `android/*` | Play internal testing; interop with iOS and the bot |
 | 6 | **Linux and Windows.** Desktop target of the same shell; `hqchat-vault-desktop` with TPM and fallback tiers | `lib/vault-desktop`, `desktop/*` | Flathub + Nix + AppImage; signed MSIX + winget |
@@ -311,9 +313,8 @@ Windows gets runner jobs for the vault and the MSIX; Apple stays on
 - The Kotlin bindings generate but are first compiled in phase 5; the Swift
   ones are compiled and run by `core/hqchat-ffi/swift/run.sh`.
 - The at-rest format is the core's own: opening what the Apple app sealed
-  (its Secure Enclave ECIES rows) is the importer's job in phase 3. The
-  engine's side of it exists: `Engine::import` takes an identity (seed or key
-  pair), prekey secrets, and each friend's pinned key, topics and ratchet
-  session, and the bot already moves through it.
+  (its Secure Enclave ECIES rows) is the importer's job
+  (`apps/apple/HQChat/Migration/`), run once per profile on the first unlock
+  after the update, then deleted a few weeks after that release.
 - The server accepts APNs tokens only; FCM and UnifiedPush registrations fail
   until phase 4.

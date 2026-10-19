@@ -83,7 +83,7 @@ setting, no rebuild. No secret is committed.
 | If you are… | Start with |
 |---|---|
 | a **backend** engineer | [message flow](docs/architecture/message-flow.md) · [protocol](docs/architecture/e2ee-protocol.md) · [`services/server/README.md`](services/server/README.md) |
-| an **Apple** engineer | [user journey](docs/product/user-journey.md) · `apps/apple/HQChat/Services/ChatSession.swift` |
+| an **Apple** engineer | [user journey](docs/product/user-journey.md) · `apps/apple/HQChat/Services/ChatStore.swift` |
 | a **designer** | [design system](docs/product/design-system.md) · [user journey](docs/product/user-journey.md) |
 | **operations** | [deploy](docs/runbooks/deploy.md) · [debugging](docs/runbooks/debugging.md) · [moderation](docs/runbooks/moderation.md) |
 | **security** | [security policy](SECURITY.md) · [pentest scope](docs/pentest-scope.md) · [protocol](docs/architecture/e2ee-protocol.md) |

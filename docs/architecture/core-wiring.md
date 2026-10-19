@@ -1,9 +1,9 @@
 # Core wiring: from the UI to the server and back
 
-**Status: the core is built (`core/`), and the server, the gateway and the
-bot run on it (phase 2, deployment pending); the apps do not use it yet.**
-Where a step below says "Today" for the server, it is what the server did
-before phase 2. This document follows one message from the sender's UI, through the
+**Status: the core is built (`core/`); the server, the gateway and the bot
+run on it (phase 2, deployment pending), and so do the Apple apps (phase 3,
+shipping as the release after 3.1.1).** Where a step below says "Today", it is
+what the server did before phase 2 and the Apple app before phase 3. This document follows one message from the sender's UI, through the
 server, to the recipient's UI and back as a delivery receipt. Each step names
 the function that does it today, in the Apple app, the TS reference client
 or the server, and the Rust function that replaces it. The design and the
@@ -193,8 +193,12 @@ it is deleted a few weeks after 3.2.0 ships.
 
 ### A few weeks later
 
-`Migration/` goes, with the old models from the SwiftData schema; the old
-store file and Keychain items are removed by the same release. A profile
+`Migration/` goes, and with it everything that only reads 3.1.1 data: the
+old models leave the SwiftData schema (`Persistence.swift`, and
+`Profile.friends`), `MessageKeyStore.unwrap` and its ECIES algorithm go,
+`Profile.publicKeyHex` stops being read, and `DataResetService` stops naming
+the 3.1.1 Keychain services. The same release deletes what is left of that
+data on a device: the old store's rows and those Keychain items. A profile
 still holding only 3.1.1 data then has no core state and is set up as new:
 a new identity, which its friends see as vanished. That is the price of
 keeping the transition short, so the window has to be long enough for
@@ -237,10 +241,10 @@ active users to open the app once.
 
 | Where | Deleted once the core is wired in | Kept |
 |---|---|---|
-| `apps/apple/HQChat/Services/` | `ChatSession` internals, `ConversationRouter`, `RatchetSession`, `DoubleRatchet`, `Handshake`, `ConversationEnvelopeV3`, `ConversationFrame`, `NoiseHQN`, `MQTTWireClient`, `MQTTService`, `MQTTConnectProof`, `MQTTTopics`, `PrekeyService`, `InboundQueue`, `AESService`, `HQCKem`, `HQCService`, `AuthService`, `DirectorySync`, `FriendService` logic, `KeyFingerprint` | an effect loop (`CoreShell`), `TLSPinning`, `PushManager`, `NotificationService`, `Reachability`, a `KeyVault` on the Secure Enclave (from `MessageKeyStore`), a `Store`, the views; the importer under `Migration/` until it is removed |
+| `apps/apple/HQChat/Services/` | done: `ChatSession`, `ConversationRouter`, `RatchetSession`, `DoubleRatchet`, `Handshake`, `ConversationEnvelopeV3`, `ConversationFrame`, `NoiseHQN`, `MQTTWireClient`, `MQTTService`, `MQTTConnectProof`, `MQTTTopics`, `PrekeyService`, `InboundQueue`, `AESService`, `HQCKem`, `HQCService`, `AuthService`, `DirectorySync`, `FriendService` logic, `KeyFingerprint` | `ChatStore` (the engine and its `CoreShell`, as the screens read them), `TLSPinning`, `PushManager`, `NotificationService`, `Reachability`, `SecureEnclaveVault` (from `MessageKeyStore`), `FileStore`, the views; the importer under `Migration/` until it is removed |
 | `services/server/src/protocol/`, `src/client/` | done: no production code uses them; they moved to `test/reference/` as the independent implementation the fuzzers and scenarios drive | `src/common/core-client.ts`, the effect loop over the napi `Engine` (fetch, `net`, WebSocket) for the bot |
 | `services/server/src/server/`, `gateway/` | done: the koffi loader and `HQC_LIB` | everything else, calling napi |
-| `native/hqc/` | nothing (the Rust build compiles it) | all |
+| `native/hqc/` | done: the Apple build (`build-apple.sh`, `dist/apple`, `apps/apple/libhqc_wrap.dylib`) | the C wrapper and `prepare-source.sh`, which the Rust build and the Nix package compile |
 
 ## Tests that hold it together
 
@@ -252,5 +256,6 @@ active users to open the app once.
 | Bindings | Node: the vectors through the addon and the TS hqn/1 initiator against the Rust gateway; a TS state file imported into the engine; Swift: generated bindings with a CryptoKit `KeyVault` |
 | Differential | `hqchat-verdict` answers the fuzzers in `services/server/test/fuzz` (envelope decode and encode, handshake, hqn/1): Rust and the TS reference agree on every verdict, AAD and field |
 | Server | the unit and integration layers on the addon; the gateway driven by the TS initiator over real sockets |
-| Scenarios | the local stack (`run-local.sh`): the reference client against the server, the bot on the core, an engine user talking to a reference user, and the Swift app live over hqn/1 |
+| Scenarios | the local stack (`run-local.sh`): the reference client against the server, the bot on the core, an engine user talking to a reference user, and the Apple app's `ChatStore` live (`apps/apple/e2e/hqn-live`: two users over hqn/1, a third falling back to WSS) |
+| Apple | `verify.sh`: the core package's and `CoreShell`'s tests, the move from 3.1.1 on a session the shipped ratchet wrote, the store and reset, both builds, the UI tests |
 | CI | `scripts/check.sh core` on every pull request |
