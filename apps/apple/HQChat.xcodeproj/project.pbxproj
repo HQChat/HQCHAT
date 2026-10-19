@@ -113,6 +113,7 @@
 				Services/PushManager.swift,
 				Services/RatchetSession.swift,
 				Services/Reachability.swift,
+				Services/SecureEnclaveVault.swift,
 				Services/TLSPinning.swift,
 				Services/UserService.swift,
 				Views/AccountSettingsView.swift,

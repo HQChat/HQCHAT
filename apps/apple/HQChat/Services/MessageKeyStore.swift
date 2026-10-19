@@ -569,3 +569,53 @@ extension LAContext {
         return context
     }
 }
+
+// MARK: - The core's device key
+
+/// What the core's `KeyVault` needs from the profile's Enclave key: its public
+/// half, which seals without the user, and one ECDH, which opens. The same key
+/// that wraps message keys today, with the same tier and the same session
+/// context, so moving to the core adds no key and no prompt.
+extension MessageKeyStore {
+    enum AgreementError: Error, Equatable {
+        /// No authenticated context: the user has not unlocked this session.
+        case locked
+        /// The profile has no Enclave key.
+        case missing
+        /// The Enclave refused (a key from another device, a bad point, …).
+        case refused(Int)
+    }
+
+    /// The device key's public half, X9.63 uncompressed (65 bytes), creating
+    /// the pair on first use. Never prompts.
+    static func devicePublicKey(for profileID: UUID) -> Data? {
+        guard let pub = publicKey(for: profileID) else { return nil }
+        return SecKeyCopyExternalRepresentation(pub, nil) as Data?
+    }
+
+    /// One ECDH between the device key and `ephemeralPublic` (X9.63), under the
+    /// session's authenticated context. Never prompts: without that context it
+    /// throws `.locked`, and the core asks the app for the unlock.
+    static func agree(ephemeralPublic: Data, for profileID: UUID) throws -> Data {
+        if isLockedOut { throw AgreementError.locked }
+        guard let context = sharedAuthenticatedContext() else { throw AgreementError.locked }
+        guard let priv = privateKeyRef(profileID, context: context) else {
+            throw hasKey(for: profileID) ? AgreementError.locked : AgreementError.missing
+        }
+        guard let peer = SecKeyCreateWithData(ephemeralPublic as CFData, [
+            kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
+            kSecAttrKeyClass as String: kSecAttrKeyClassPublic
+        ] as CFDictionary, nil) else { throw AgreementError.refused(Int(errSecParam)) }
+        var error: Unmanaged<CFError>?
+        let shared = BiometricAudit.measure("SecKeyCopyKeyExchangeResult",
+                                            item: "device key (core)",
+                                            expectsPrompt: false) {
+            SecKeyCopyKeyExchangeResult(priv, .ecdhKeyExchangeStandard, peer, [:] as CFDictionary, &error) as Data?
+        }
+        guard let shared else {
+            let code = (error?.takeRetainedValue()).map { CFErrorGetCode($0) } ?? 0
+            throw code == aclOperationNotAllowed ? AgreementError.locked : AgreementError.refused(code)
+        }
+        return shared
+    }
+}
