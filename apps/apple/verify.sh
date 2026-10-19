@@ -25,6 +25,16 @@ step "Native HQC wrapper"
 nix build "$(cd ../.. && pwd)#hqc" --no-link
 bash ../../native/hqc/build-apple.sh
 
+# 0b. The Rust core (HQChatCore), rebuilt when its sources moved since the
+#     committed build, then its Swift tests against the xcframework.
+step "Rust core (HQChatCore)"
+core_pkg=../../core/swift/HQChatCore
+if [[ "$(cat "$core_pkg/.source" 2>/dev/null)" != "$(bash ../../core/hqchat-ffi/apple-source-hash.sh)" ]]; then
+  nix develop "$(cd ../.. && pwd)#apple" --command bash ../../core/hqchat-ffi/build-apple.sh
+  echo "⚠️  rebuilt core/swift/HQChatCore: commit it with the core change"
+fi
+(cd "$core_pkg" && xcrun swift test)
+
 # 1. The pure-Swift suites (crypto, ratchet, key fingerprint, MQTT wire codec,
 #    message-at-rest), compiled from the real implementations.
 #

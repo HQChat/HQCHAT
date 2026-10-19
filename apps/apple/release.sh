@@ -44,6 +44,15 @@ project="$here/HQChat.xcodeproj"
 
 xcodebuild -version
 bash "$root/native/hqc/build-apple.sh"
+# The Rust core ships as committed (core/swift/HQChatCore, written by
+# core/hqchat-ffi/build-apple.sh, which needs Rust's Apple targets). A build
+# older than the core's sources is refused rather than shipped.
+if [[ "$(cat "$root/core/swift/HQChatCore/.source" 2>/dev/null)" != "$(bash "$root/core/hqchat-ffi/apple-source-hash.sh")" ]]; then
+  echo "core/swift/HQChatCore is not built from the current core: run" >&2
+  echo "  nix develop .#apple --command core/hqchat-ffi/build-apple.sh" >&2
+  echo "and commit the result." >&2
+  exit 1
+fi
 
 settings="$(xcodebuild -project "$project" -scheme "$scheme" -configuration Release -showBuildSettings 2>/dev/null)"
 setting() { awk -F' = ' -v k="$1" '$1 ~ "^ *"k"$" {print $2; exit}' <<<"$settings"; }

@@ -9,6 +9,8 @@
 /* Begin PBXBuildFile section */
 		5E27A00000000000000004 /* Sentry in Frameworks */ = {isa = PBXBuildFile; productRef = 5E27A00000000000000002 /* Sentry */; };
 		5E27A00000000000000005 /* Sentry in Frameworks */ = {isa = PBXBuildFile; productRef = 5E27A00000000000000003 /* Sentry */; };
+		C0EE00000000000000000004 /* HQChatCore in Frameworks */ = {isa = PBXBuildFile; productRef = C0EE00000000000000000002 /* HQChatCore */; };
+		C0EE00000000000000000005 /* HQChatCore in Frameworks */ = {isa = PBXBuildFile; productRef = C0EE00000000000000000003 /* HQChatCore */; };
 		D96B8E742EF6F4380063D07E /* libhqc_wrap.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = D96B8E732EF6F4380063D07E /* libhqc_wrap.dylib */; };
 		D96B8E762EF6F47B0063D07E /* libhqc_wrap.dylib in CopyFiles */ = {isa = PBXBuildFile; fileRef = D96B8E732EF6F4380063D07E /* libhqc_wrap.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		D9C0DE000000000000000002 /* HQC.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = D9C0DE000000000000000001 /* HQC.xcframework */; };
@@ -71,8 +73,8 @@
 				Models/AppError.swift,
 				Models/Friend.swift,
 				Models/Message.swift,
-				Models/PendingFrame.swift,
 				Models/MessageTypes.swift,
+				Models/PendingFrame.swift,
 				Models/Profile.swift,
 				Persistence.swift,
 				Services/AESKeyStore.swift,
@@ -178,6 +180,7 @@
 			files = (
 				D96B8E742EF6F4380063D07E /* libhqc_wrap.dylib in Frameworks */,
 				5E27A00000000000000004 /* Sentry in Frameworks */,
+				C0EE00000000000000000004 /* HQChatCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -187,6 +190,7 @@
 			files = (
 				D9C0DE000000000000000002 /* HQC.xcframework in Frameworks */,
 				5E27A00000000000000005 /* Sentry in Frameworks */,
+				C0EE00000000000000000005 /* HQChatCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -252,6 +256,7 @@
 			name = HQChat;
 			packageProductDependencies = (
 				5E27A00000000000000002 /* Sentry */,
+				C0EE00000000000000000002 /* HQChatCore */,
 			);
 			productName = HQChat;
 			productReference = D96B8E5E2EF6EB4D0063D07E /* HQChat.app */;
@@ -275,6 +280,7 @@
 			name = "HQChat iOS";
 			packageProductDependencies = (
 				5E27A00000000000000003 /* Sentry */,
+				C0EE00000000000000000003 /* HQChatCore */,
 			);
 			productName = "HQChat iOS";
 			productReference = D96CE2E22FDC9750004125B6 /* HQChat iOS.app */;
@@ -336,6 +342,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				5E27A00000000000000001 /* XCRemoteSwiftPackageReference "sentry-cocoa" */,
+				C0EE00000000000000000001 /* XCLocalSwiftPackageReference "../../core/swift/HQChatCore" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = D96B8E5F2EF6EB4D0063D07E /* Products */;
@@ -616,12 +623,12 @@
 				CODE_SIGN_ENTITLEMENTS = "HQChat iOS/HQChat_iOS.entitlements";
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = 2K837KD8A7;
 				CURRENT_PROJECT_VERSION = 22;
+				DEVELOPMENT_TEAM = 2K837KD8A7;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				"INFOPLIST_KEY_CFBundleDisplayName[sdk=*]" = hqChad;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "HQChat uses Face ID to unlock your private encryption keys so only you can access your messages.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -657,12 +664,12 @@
 				CODE_SIGN_ENTITLEMENTS = "HQChat iOS/HQChat_iOS.entitlements";
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = 2K837KD8A7;
 				CURRENT_PROJECT_VERSION = 22;
+				DEVELOPMENT_TEAM = 2K837KD8A7;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				"INFOPLIST_KEY_CFBundleDisplayName[sdk=*]" = hqChat;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "HQChat uses Face ID to unlock your private encryption keys so only you can access your messages.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -770,6 +777,13 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		C0EE00000000000000000001 /* XCLocalSwiftPackageReference "../../core/swift/HQChatCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../core/swift/HQChatCore;
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCRemoteSwiftPackageReference section */
 		5E27A00000000000000001 /* XCRemoteSwiftPackageReference "sentry-cocoa" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -791,6 +805,14 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 5E27A00000000000000001 /* XCRemoteSwiftPackageReference "sentry-cocoa" */;
 			productName = Sentry;
+		};
+		C0EE00000000000000000002 /* HQChatCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = HQChatCore;
+		};
+		C0EE00000000000000000003 /* HQChatCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = HQChatCore;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
