@@ -285,6 +285,7 @@ pub(crate) struct StoredSession {
     seen_chains: Vec<[u8; 16]>,
     sent_on_chain: u32,
     chain_started_at: i64,
+    peer_key_fresh: bool,
 }
 
 fn state_err(e: hqc::Error) -> CoreError {
@@ -317,6 +318,7 @@ impl StoredSession {
             seen_chains: s.seen_chains.clone(),
             sent_on_chain: s.sent_on_chain,
             chain_started_at: s.chain_started_at,
+            peer_key_fresh: s.peer_key_fresh,
         }
     }
 
@@ -371,6 +373,7 @@ impl StoredSession {
             seen_chains: self.seen_chains.clone(),
             sent_on_chain: self.sent_on_chain,
             chain_started_at: self.chain_started_at,
+            peer_key_fresh: self.peer_key_fresh,
         })
     }
 }
@@ -467,7 +470,7 @@ mod tests {
             medium_pk: medium.public,
             one_time: None,
         };
-        let (mut s, _) = hqchat_protocol::ratchet::start_as_initiator(&kem, &bundle, 1).unwrap();
+        let (mut s, _) = hqchat_protocol::ratchet::start_as_initiator(&kem, &bundle).unwrap();
         hqchat_protocol::ratchet::seal(&kem, &mut s, 2).unwrap();
         let bytes = encode(&StoredSession::from_session(&s)).unwrap();
         let back = decode::<StoredSession>("session/x", &bytes)

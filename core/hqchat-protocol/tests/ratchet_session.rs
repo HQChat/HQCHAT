@@ -58,7 +58,7 @@ fn peer(with_one_time: bool) -> Peer {
 /// Alice's session to Bob, Bob's from Alice's first message, and that message.
 fn pair() -> (SessionState, SessionState) {
     let bob = peer(true);
-    let (mut alice, init) = ratchet::start_as_initiator(&KEM, &bob.bundle, NOW).unwrap();
+    let (mut alice, init) = ratchet::start_as_initiator(&KEM, &bob.bundle).unwrap();
     let first = send(&mut alice, "hello", NOW);
     let mut bob_state = ratchet::start_as_responder(&KEM, &bob, &init, NOW).unwrap();
     assert_eq!(receive(&mut bob_state, &first).as_deref(), Some("hello"));
@@ -99,7 +99,7 @@ fn receive(state: &mut SessionState, sent: &Sent) -> Option<String> {
 #[test]
 fn the_first_message_needs_no_round_trip_and_carries_the_init() {
     let bob = peer(true);
-    let (mut alice, init) = ratchet::start_as_initiator(&KEM, &bob.bundle, NOW).unwrap();
+    let (mut alice, init) = ratchet::start_as_initiator(&KEM, &bob.bundle).unwrap();
     let sealed = ratchet::seal(&KEM, &mut alice, NOW).unwrap();
     assert_eq!(
         sealed.init.as_ref(),
@@ -141,7 +141,7 @@ fn a_conversation_steps_on_direction_flips_and_stays_in_step() {
 }
 
 #[test]
-fn a_rapid_exchange_does_not_step_every_turn_but_the_cap_forces_steps() {
+fn a_rapid_exchange_does_not_step_every_turn_and_a_run_steps_once_per_turn() {
     let (mut alice, mut bob) = pair();
     let first = send(&mut bob, "r0", NOW);
     assert!(
@@ -150,34 +150,63 @@ fn a_rapid_exchange_does_not_step_every_turn_but_the_cap_forces_steps() {
     );
     receive(&mut alice, &first).unwrap();
 
-    // Inside the interval and under the cap, the chain continues.
-    for i in 0..10 {
-        let f = send(&mut bob, &format!("r{}", i + 1), NOW + 1000);
-        assert!(f.header.rk.is_none(), "msg {i} does not step");
-        receive(&mut alice, &f).unwrap();
-    }
-
-    // The cap forces steps during a long run, even with the clock frozen.
+    // Bob's step was his turn: however long his run, he does not step again
+    // until a step of Alice's arrives, so the two can never cross.
     let run = ratchet::RATCHET_MAX_MESSAGES_PER_CHAIN * 3;
-    let mut steps = 0;
     for i in 0..run {
         let f = send(&mut bob, &format!("bulk{i}"), NOW + 1000);
+        assert!(f.header.rk.is_none(), "bulk {i} does not step");
+        assert_eq!(receive(&mut alice, &f), Some(format!("bulk{i}")));
+    }
+
+    // Alice holds the turn. Her first message retires the init chain, which
+    // only the init secrets protect; then her run does not step again.
+    let mut steps = 0;
+    for i in 0..run {
+        let f = send(&mut alice, &format!("a{i}"), NOW + 1000);
         if f.header.rk.is_some() {
             steps += 1;
+            assert_eq!(i, 0, "the init chain goes on the first turn");
         }
-        assert_eq!(
-            receive(&mut alice, &f),
-            Some(format!("bulk{i}")),
-            "bulk {i} opens"
-        );
+        assert_eq!(receive(&mut bob, &f), Some(format!("a{i}")));
     }
-    assert!(
-        steps >= 2,
-        "the cap forced {steps} steps over {run} messages"
+    assert_eq!(steps, 1, "one step per turn");
+
+    // The turn is Bob's again, and his chain is long past the cap.
+    let f = send(&mut bob, "back", NOW + 1000);
+    assert!(f.header.rk.is_some(), "Bob steps on his turn");
+    assert_eq!(receive(&mut alice, &f).as_deref(), Some("back"));
+}
+
+#[test]
+fn steps_due_on_both_sides_at_once_never_cross() {
+    let (mut alice, mut bob) = pair();
+    receive(&mut alice, &send(&mut bob, "hi", NOW)).unwrap();
+    receive(&mut bob, &send(&mut alice, "hi back", NOW)).unwrap();
+    for _ in 0..3 {
+        // Both chains are due (the cap, or "rotate keys now" on each side),
+        // and each side sends before the other's message arrives.
+        for s in [&mut alice, &mut bob] {
+            s.sent_on_chain = ratchet::RATCHET_MAX_MESSAGES_PER_CHAIN;
+            s.chain_started_at = i64::MIN;
+        }
+        let a = send(&mut alice, "from alice", NOW);
+        let b = send(&mut bob, "from bob", NOW);
+        assert!(
+            a.header.rk.is_none() || b.header.rk.is_none(),
+            "at most one side steps"
+        );
+        assert_eq!(receive(&mut bob, &a).as_deref(), Some("from alice"));
+        assert_eq!(receive(&mut alice, &b).as_deref(), Some("from bob"));
+    }
+    // And the session goes on both ways.
+    assert_eq!(
+        receive(&mut bob, &send(&mut alice, "still here", NOW)).as_deref(),
+        Some("still here")
     );
-    assert!(
-        steps <= run / ratchet::RATCHET_MAX_MESSAGES_PER_CHAIN + 1,
-        "no more often than the cap"
+    assert_eq!(
+        receive(&mut alice, &send(&mut bob, "me too", NOW)).as_deref(),
+        Some("me too")
     );
 }
 
@@ -229,6 +258,8 @@ fn the_step_policy_is_count_first_with_time_as_the_backstop() {
 fn out_of_order_delivery_resolves_across_a_step() {
     let (mut alice, mut bob) = pair();
     receive(&mut alice, &send(&mut bob, "x", NOW)).unwrap();
+    // Alice's first turn retires the init chain; what follows is on her new one.
+    receive(&mut bob, &send(&mut alice, "turn", NOW)).unwrap();
     let m: Vec<Sent> = (0..3)
         .map(|i| send(&mut alice, &format!("m{i}"), NOW))
         .collect();
@@ -291,6 +322,8 @@ fn a_forged_step_cannot_destroy_a_live_session() {
 fn a_cached_key_is_not_burned_by_a_frame_that_fails_to_authenticate() {
     let (mut alice, mut bob) = pair();
     receive(&mut alice, &send(&mut bob, "x", NOW)).unwrap();
+    // Alice's first turn retires the init chain; what follows is on her new one.
+    receive(&mut bob, &send(&mut alice, "turn", NOW)).unwrap();
     let m0 = send(&mut alice, "m0", NOW);
     let m1 = send(&mut alice, "m1", NOW);
     receive(&mut bob, &m1).unwrap();
@@ -322,14 +355,14 @@ fn a_gap_past_max_skipped_is_refused_rather_than_bridged() {
 #[test]
 fn an_exhausted_pool_still_starts_a_session_and_a_consumed_one_time_key_is_refused() {
     let bob = peer(false);
-    let (mut alice, init) = ratchet::start_as_initiator(&KEM, &bob.bundle, NOW).unwrap();
+    let (mut alice, init) = ratchet::start_as_initiator(&KEM, &bob.bundle).unwrap();
     assert!(init.one_time.is_none());
     let first = send(&mut alice, "no pool", NOW);
     let mut bob_state = ratchet::start_as_responder(&KEM, &bob, &init, NOW).unwrap();
     assert_eq!(receive(&mut bob_state, &first).as_deref(), Some("no pool"));
 
     let mut bob2 = peer(true);
-    let (_, init2) = ratchet::start_as_initiator(&KEM, &bob2.bundle, NOW).unwrap();
+    let (_, init2) = ratchet::start_as_initiator(&KEM, &bob2.bundle).unwrap();
     bob2.one_time.clear();
     assert!(ratchet::start_as_responder(&KEM, &bob2, &init2, NOW).is_none());
 }
@@ -351,12 +384,17 @@ fn a_frame_naming_a_retired_chain_is_refused() {
 fn stragglers_from_the_previous_chain_resolve_after_the_receiver_moved_on() {
     let (mut alice, mut bob) = pair();
     receive(&mut alice, &send(&mut bob, "x", NOW)).unwrap();
+    // Alice's first turn retires the init chain; what follows is on her new one.
+    receive(&mut bob, &send(&mut alice, "turn", NOW)).unwrap();
     let old: Vec<Sent> = (0..2)
         .map(|i| send(&mut alice, &format!("old{i}"), NOW))
         .collect();
-    receive(&mut alice, &send(&mut bob, "y", NOW))
-        .ok_or(())
-        .ok();
+    // Bob's step gives Alice the turn back.
+    receive(
+        &mut alice,
+        &send(&mut bob, "y", NOW + ratchet::RATCHET_MIN_STEP_INTERVAL_MS),
+    )
+    .unwrap();
     let late_step = send(
         &mut alice,
         "new",

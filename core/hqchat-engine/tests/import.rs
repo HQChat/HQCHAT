@@ -112,7 +112,7 @@ fn imported_sessions_keep_the_conversation_going_both_ways() {
         medium_pk: medium.public.clone(),
         one_time: None,
     };
-    let (alice_session, init) = ratchet::start_as_initiator(&HqcKem, &bundle, NOW).unwrap();
+    let (alice_session, init) = ratchet::start_as_initiator(&HqcKem, &bundle).unwrap();
     let secrets = Secrets {
         identity: bob_id.secret.clone(),
         medium: medium.secret.clone(),

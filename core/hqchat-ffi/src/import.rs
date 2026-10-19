@@ -272,6 +272,8 @@ fn session(s: ImportSessionData) -> Result<SessionState, CoreError> {
         seen_chains,
         sent_on_chain: s.sent_on_chain,
         chain_started_at: s.chain_started_at,
+        // Engine::import decides it, the same way on both sides.
+        peer_key_fresh: false,
     })
 }
 

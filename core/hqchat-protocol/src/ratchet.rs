@@ -31,8 +31,9 @@ pub const MAX_SKIPPED: usize = 2000;
 pub const RATCHET_MIN_STEP_INTERVAL_MS: i64 = 900_000;
 /// A sending chain steps after this many messages.
 pub const RATCHET_MAX_MESSAGES_PER_CHAIN: u32 = 32;
-/// Retired chains remembered for replay rejection. Older replays fail to
-/// decapsulate, because our ratchet secret rotates on every step we send.
+/// Retired chains remembered for replay rejection. Older replays still
+/// decapsulate (to a secret that no longer matches the root), so the AEAD
+/// tag refuses them.
 pub const MAX_SEEN_CHAINS: usize = 64;
 
 /// A 32-byte symmetric key: a root, a chain key or a message key. Wiped on drop.
@@ -124,6 +125,12 @@ pub struct SessionState {
     pub sent_on_chain: u32,
     /// When the current sending chain started, in milliseconds.
     pub chain_started_at: i64,
+    /// Whether the peer's current key arrived after my last step. Only then
+    /// may I step: two steps that cross each derive the next root from the
+    /// same one, so the sides fork for good. Set when a step from the peer
+    /// commits, cleared when I step: the right to step passes back and forth
+    /// with the steps themselves.
+    pub peer_key_fresh: bool,
 }
 
 /// The peer's published bundle, as claimed from `/prekeys/claim`.
@@ -272,7 +279,6 @@ pub fn chain_id(rk: &[u8]) -> [u8; 16] {
 pub fn start_as_initiator(
     kem: &dyn Kem,
     bundle: &PrekeyBundle,
-    now: i64,
 ) -> Result<(SessionState, InitHeader), Error> {
     let (ct_id, ss_id) = kem.encapsulate(&bundle.identity_pk)?;
     let (ct_mt, ss_mt) = kem.encapsulate(&bundle.medium_pk)?;
@@ -303,7 +309,11 @@ pub fn start_as_initiator(
         pending_init: Some(header.clone()),
         seen_chains: Vec::new(),
         sent_on_chain: 0,
-        chain_started_at: now,
+        // The init chain comes from the init secrets alone, so it is retired
+        // on the initiator's first turn: as old as a chain can be.
+        chain_started_at: i64::MIN,
+        // The responder steps first, when it answers.
+        peer_key_fresh: false,
     };
     Ok((state, header))
 }
@@ -341,18 +351,26 @@ pub fn start_as_responder(
         seen_chains: vec![chain_id(init.rk.as_bytes())],
         sent_on_chain: 0,
         chain_started_at: now,
+        peer_key_fresh: true,
     })
 }
 
 /// Whether the next send steps: always when there is no sending chain yet,
-/// never before the peer has advertised a key or on an unused chain,
-/// otherwise once the chain is full or old (the post-compromise window).
+/// never before the peer has advertised a key, never twice without a step
+/// from the peer in between ([`SessionState::peer_key_fresh`]), never on an
+/// unused chain, otherwise once the chain is full or old (the post-compromise
+/// window).
 pub fn should_step(state: &SessionState, now: i64) -> bool {
     if state.peer_rk.is_none() {
         return false;
     }
+    // A first sending chain: the peer cannot be stepping, since it has no key
+    // of ours to step against before this message.
     if state.send.is_none() {
         return true;
+    }
+    if !state.peer_key_fresh {
+        return false;
     }
     if state.sent_on_chain == 0 {
         return false;
@@ -385,6 +403,7 @@ pub fn seal(kem: &dyn Kem, state: &mut SessionState, now: i64) -> Result<Sealed,
         state.rk = mine;
         state.sent_on_chain = 0;
         state.chain_started_at = now;
+        state.peer_key_fresh = false;
     }
     let cid = chain_id(state.rk.public.as_bytes());
     let send = state.send.as_mut().ok_or(Error::Invalid(
@@ -528,6 +547,7 @@ pub fn open(
     if let Some(step) = step {
         state.root = step.root;
         state.peer_rk = Some(step.peer_rk);
+        state.peer_key_fresh = true;
         if let Some((cid, keys)) = step.tail {
             cache_skipped(state, cid, keys);
         }

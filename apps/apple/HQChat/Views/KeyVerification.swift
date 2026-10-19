@@ -162,7 +162,9 @@ struct KeyVerificationView: View {
         }
     }
 
-    /// A live session ratchets from its first message; this forces a step now.
+    /// A live session ratchets from its first message; this asks for a step
+    /// at the next turn (the core never steps twice in a row: two steps that
+    /// cross would fork the session).
     @ViewBuilder
     private var rotation: some View {
         if friend.hasSession, !friend.isVanished {
@@ -173,12 +175,17 @@ struct KeyVerificationView: View {
             Button {
                 onRotateKeys(); dismiss()
             } label: {
-                Label("Rotate keys now", systemImage: "arrow.triangle.2.circlepath")
+                Label("Rotate keys", systemImage: "arrow.triangle.2.circlepath")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.bordered)
             .controlSize(.large)
             .padding(.horizontal)
+            Text("New keys with your next message, or with the one after their reply.")
+                .font(.footnote)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
         }
     }
 
