@@ -121,11 +121,24 @@ fn invalid(what: &str) -> CoreError {
 fn identity_of(identity: ImportIdentity) -> Result<KeyPair, CoreError> {
     match identity {
         ImportIdentity::Seed(seed) => Ok(hqc::keypair_from_seed(&hqc::Seed::from_bytes(seed))?),
-        ImportIdentity::KeyPair { public, secret } => Ok(KeyPair {
-            public: PublicKey::from_bytes(&public).map_err(|_| invalid("identity public key"))?,
-            secret: SecretKey::from_bytes(&secret).map_err(|_| invalid("identity secret key"))?,
-        }),
+        ImportIdentity::KeyPair { public, secret } => pair_of(&public, &secret, "identity"),
     }
+}
+
+/// A keypair from its two halves, refused unless the secret key is the
+/// public key's: a mismatched identity would be named after a key it cannot
+/// decapsulate for, and could neither sign in nor open an init.
+fn pair_of(public: &[u8], secret: &[u8], what: &str) -> Result<KeyPair, CoreError> {
+    let public =
+        PublicKey::from_bytes(public).map_err(|_| invalid(&format!("{what} public key")))?;
+    let secret =
+        SecretKey::from_bytes(secret).map_err(|_| invalid(&format!("{what} secret key")))?;
+    if !secret.belongs_to(&public) {
+        return Err(invalid(&format!(
+            "{what} keypair (the halves do not match)"
+        )));
+    }
+    Ok(KeyPair { public, secret })
 }
 
 fn prekeys_of(p: ImportPrekeys, identity_sk: &SecretKey) -> Result<Prekeys, CoreError> {
@@ -136,12 +149,7 @@ fn prekeys_of(p: ImportPrekeys, identity_sk: &SecretKey) -> Result<Prekeys, Core
     }
     Ok(Prekeys {
         identity_sk: identity_sk.clone(),
-        medium: KeyPair {
-            public: PublicKey::from_bytes(&p.medium_public)
-                .map_err(|_| invalid("medium-term public key"))?,
-            secret: SecretKey::from_bytes(&p.medium_secret)
-                .map_err(|_| invalid("medium-term secret key"))?,
-        },
+        medium: pair_of(&p.medium_public, &p.medium_secret, "medium-term")?,
         rotated_at: p.rotated_at,
         one_time,
         next_id: p.next_id,
