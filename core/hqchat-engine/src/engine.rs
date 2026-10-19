@@ -99,6 +99,21 @@ impl Engine {
         Vec::new()
     }
 
+    /// Announces presence: offline as the app goes to the background (the
+    /// push bridge then wakes the device), online on its return.
+    pub fn set_presence(&self, online: bool, now: i64) -> Vec<Effect> {
+        self.run(|c| {
+            c.set_presence(online, now);
+            Ok(())
+        })
+        .unwrap_or_default()
+    }
+
+    /// This profile's client id, known from the first unlock on.
+    pub fn my_id(&self) -> Option<String> {
+        self.core().me.as_ref().map(ToString::to_string)
+    }
+
     /// A timer fired, or the shell resumed: keep-alive, refresh, retries.
     pub fn tick(&self, now: i64) -> Vec<Effect> {
         self.run(|c| {

@@ -348,6 +348,11 @@ RustBuffer uniffi_hqchat_ffi_fn_method_engine_accept(uint64_t ptr, RustBuffer pe
 RustBuffer uniffi_hqchat_ffi_fn_method_engine_block(uint64_t ptr, RustBuffer peer, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_CANCEL
+#define UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_CANCEL
+RustBuffer uniffi_hqchat_ffi_fn_method_engine_cancel(uint64_t ptr, RustBuffer peer, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_CREATE_IDENTITY
 #define UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_CREATE_IDENTITY
 RustBuffer uniffi_hqchat_ffi_fn_method_engine_create_identity(uint64_t ptr, RustCallStatus *_Nonnull out_status
@@ -453,9 +458,19 @@ RustBuffer uniffi_hqchat_ffi_fn_method_engine_retry(uint64_t ptr, RustBuffer msg
 RustBuffer uniffi_hqchat_ffi_fn_method_engine_send_text(uint64_t ptr, RustBuffer peer, RustBuffer text, int64_t now, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_SENT_INVITES
+#define UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_SENT_INVITES
+RustBuffer uniffi_hqchat_ffi_fn_method_engine_sent_invites(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_SET_USERNAME
 #define UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_SET_USERNAME
 RustBuffer uniffi_hqchat_ffi_fn_method_engine_set_username(uint64_t ptr, RustBuffer username, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_SET_VERIFIED
+#define UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_SET_VERIFIED
+RustBuffer uniffi_hqchat_ffi_fn_method_engine_set_verified(uint64_t ptr, RustBuffer peer, int8_t verified, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_START
@@ -832,6 +847,12 @@ uint16_t uniffi_hqchat_ffi_checksum_method_engine_block(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_CHECKSUM_METHOD_ENGINE_CANCEL
+#define UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_CHECKSUM_METHOD_ENGINE_CANCEL
+uint16_t uniffi_hqchat_ffi_checksum_method_engine_cancel(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_CHECKSUM_METHOD_ENGINE_CREATE_IDENTITY
 #define UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_CHECKSUM_METHOD_ENGINE_CREATE_IDENTITY
 uint16_t uniffi_hqchat_ffi_checksum_method_engine_create_identity(void
@@ -958,9 +979,21 @@ uint16_t uniffi_hqchat_ffi_checksum_method_engine_send_text(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_CHECKSUM_METHOD_ENGINE_SENT_INVITES
+#define UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_CHECKSUM_METHOD_ENGINE_SENT_INVITES
+uint16_t uniffi_hqchat_ffi_checksum_method_engine_sent_invites(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_CHECKSUM_METHOD_ENGINE_SET_USERNAME
 #define UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_CHECKSUM_METHOD_ENGINE_SET_USERNAME
 uint16_t uniffi_hqchat_ffi_checksum_method_engine_set_username(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_CHECKSUM_METHOD_ENGINE_SET_VERIFIED
+#define UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_CHECKSUM_METHOD_ENGINE_SET_VERIFIED
+uint16_t uniffi_hqchat_ffi_checksum_method_engine_set_verified(void
     
 );
 #endif

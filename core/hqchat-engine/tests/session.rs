@@ -232,3 +232,31 @@ fn a_live_link_pings_and_polls_the_directory_every_minute() {
         .count();
     assert_eq!(friends_after, friends_before + 1);
 }
+
+#[test]
+fn going_to_the_background_announces_offline_and_returning_online() {
+    let server = FakeServer::shared();
+    let mut a = Client::signed_in(&server, "a");
+    let mut b = Client::signed_in(&server, "b");
+    Client::befriend(&mut a, &mut b);
+    settle(&mut [&mut a, &mut b]);
+    assert_eq!(a.engine.my_id(), Some(a.id()));
+
+    let e = b.engine.set_presence(false, NOW);
+    b.pump(e);
+    settle(&mut [&mut a, &mut b]);
+    assert!(
+        !a.engine.friends()[0].online,
+        "b is away: the bridge pushes"
+    );
+
+    // A reconnect while away keeps saying offline.
+    b.start(NOW);
+    settle(&mut [&mut a, &mut b]);
+    assert!(!a.engine.friends()[0].online);
+
+    let e = b.engine.set_presence(true, NOW);
+    b.pump(e);
+    settle(&mut [&mut a, &mut b]);
+    assert!(a.engine.friends()[0].online);
+}

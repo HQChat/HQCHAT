@@ -425,6 +425,16 @@ impl JsEngine {
     }
 
     #[napi]
+    pub fn set_presence(&self, online: bool, now: i64) -> Vec<JsEffect> {
+        all(self.engine.set_presence(online, now))
+    }
+
+    #[napi]
+    pub fn my_id(&self) -> Option<String> {
+        self.engine.my_id()
+    }
+
+    #[napi]
     pub fn cancel(&self, peer: String) -> Vec<JsEffect> {
         all(self.engine.cancel(peer))
     }

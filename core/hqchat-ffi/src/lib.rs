@@ -222,6 +222,14 @@ impl Engine {
     pub fn friends(&self) -> Vec<FriendView> {
         self.inner.friends().into_iter().map(Into::into).collect()
     }
+    /// Announces presence: offline on going to the background, online back.
+    pub fn set_presence(&self, online: bool, now: i64) -> Vec<Effect> {
+        effects(self.inner.set_presence(online, now))
+    }
+    /// This profile's client id, once unlocked.
+    pub fn my_id(&self) -> Option<String> {
+        self.inner.my_id()
+    }
     /// Friend requests sent and not answered yet.
     pub fn sent_invites(&self) -> Vec<SentInviteView> {
         self.inner

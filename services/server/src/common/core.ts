@@ -184,6 +184,8 @@ export interface Engine {
   block(peer: string): CoreEffect[];
   unblock(peer: string): CoreEffect[];
   cancel(peer: string): CoreEffect[];
+  setPresence(online: boolean, now: number): CoreEffect[];
+  myId(): string | null;
   setVerified(peer: string, verified: boolean): CoreEffect[];
   sentInvites(): CoreSentInvite[];
   forget(peer: string): CoreEffect[];
