@@ -336,7 +336,7 @@ echo "── Link and router (the last uncompiled files) ──"
 # which imports Sentry and cannot be linked by a slice.
 ORCHESTRATOR_SOURCES=()
 for f in "$APP"/*.swift "$APP"/Models/*.swift "$APP"/Services/*.swift \
-  "$APP"/Helpers/*.swift; do
+  "$APP"/Helpers/*.swift "$APP"/Migration/*.swift; do
   case "${f##*/}" in
     ContentView.swift | HQChatApp.swift | PlatformColors.swift | \
       StatusPresentation.swift | Observability.swift) continue ;;
@@ -357,7 +357,7 @@ xcrun swiftc -O $COV_FLAGS -target arm64-apple-macos15.5 \
 echo ""
 echo "── Moving a profile to the core ───────────────"
 # The import the app runs once per profile: its records, mapped into the core's
-# ImportData and opened by a real engine (Services/CoreImport.swift).
+# ImportData and opened by a real engine (Migration/CoreImport.swift).
 MAIN="$(stage CoreImportTests.swift)"
 xcrun swiftc -O $COV_FLAGS -target arm64-apple-macos15.5 \
   "$MAIN" TestSupport.swift \

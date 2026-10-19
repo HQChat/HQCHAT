@@ -655,6 +655,11 @@ public protocol EngineProtocol: AnyObject, Sendable {
     func fingerprint(peer: String)  -> String?
     
     /**
+     * Forgets a vanished identity and its conversation, on this device.
+     */
+    func forget(peer: String) throws  -> [Effect]
+    
+    /**
      * The friends, sorted for display.
      */
     func friends()  -> [FriendView]
@@ -685,6 +690,11 @@ public protocol EngineProtocol: AnyObject, Sendable {
      * Forget the opened secrets.
      */
     func lock()  -> [Effect]
+    
+    /**
+     * Marks the conversation with `peer` read.
+     */
+    func markRead(peer: String) throws  -> [Effect]
     
     /**
      * Bytes arrived on a connection.
@@ -750,6 +760,11 @@ public protocol EngineProtocol: AnyObject, Sendable {
      * A timer fired, or the app resumed.
      */
     func tick(now: Int64)  -> [Effect]
+    
+    /**
+     * Lifts a block; the friendship is not restored.
+     */
+    func unblock(peer: String)  -> [Effect]
     
     /**
      * The shell authenticated the user.
@@ -892,6 +907,19 @@ open func fingerprint(peer: String) -> String?  {
 }
     
     /**
+     * Forgets a vanished identity and its conversation, on this device.
+     */
+open func forget(peer: String)throws  -> [Effect]  {
+    return try  FfiConverterSequenceTypeEffect.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_hqchat_ffi_fn_method_engine_forget(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(peer),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * The friends, sorted for display.
      */
 open func friends() -> [FriendView]  {
@@ -967,6 +995,19 @@ open func lock() -> [Effect]  {
         uniffiCallStatus in
     uniffi_hqchat_ffi_fn_method_engine_lock(
             self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Marks the conversation with `peer` read.
+     */
+open func markRead(peer: String)throws  -> [Effect]  {
+    return try  FfiConverterSequenceTypeEffect.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_hqchat_ffi_fn_method_engine_mark_read(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(peer),uniffiCallStatus
     )
 })
 }
@@ -1149,6 +1190,19 @@ open func tick(now: Int64) -> [Effect]  {
     uniffi_hqchat_ffi_fn_method_engine_tick(
             self.uniffiCloneHandle(),
         FfiConverterInt64.lower(now),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Lifts a block; the friendship is not restored.
+     */
+open func unblock(peer: String) -> [Effect]  {
+    return try!  FfiConverterSequenceTypeEffect.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_hqchat_ffi_fn_method_engine_unblock(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(peer),uniffiCallStatus
     )
 })
 }
@@ -1991,6 +2045,14 @@ public struct FriendView: Equatable, Hashable {
      * Unread, including those waiting for an unlock.
      */
     public var unread: UInt32
+    /**
+     * When this user blocked them (Unix milliseconds): read-only.
+     */
+    public var blockedAt: Int64?
+    /**
+     * When their identity was replaced under the same username: read-only.
+     */
+    public var vanishedAt: Int64?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -2009,12 +2071,20 @@ public struct FriendView: Equatable, Hashable {
          */hasSession: Bool, 
         /**
          * Unread, including those waiting for an unlock.
-         */unread: UInt32) {
+         */unread: UInt32, 
+        /**
+         * When this user blocked them (Unix milliseconds): read-only.
+         */blockedAt: Int64?, 
+        /**
+         * When their identity was replaced under the same username: read-only.
+         */vanishedAt: Int64?) {
         self.id = id
         self.username = username
         self.online = online
         self.hasSession = hasSession
         self.unread = unread
+        self.blockedAt = blockedAt
+        self.vanishedAt = vanishedAt
     }
 
     
@@ -2037,7 +2107,9 @@ public struct FfiConverterTypeFriendView: FfiConverterRustBuffer {
                 username: FfiConverterOptionString.read(from: &buf), 
                 online: FfiConverterBool.read(from: &buf), 
                 hasSession: FfiConverterBool.read(from: &buf), 
-                unread: FfiConverterUInt32.read(from: &buf)
+                unread: FfiConverterUInt32.read(from: &buf), 
+                blockedAt: FfiConverterOptionInt64.read(from: &buf), 
+                vanishedAt: FfiConverterOptionInt64.read(from: &buf)
         )
     }
 
@@ -2047,6 +2119,8 @@ public struct FfiConverterTypeFriendView: FfiConverterRustBuffer {
         FfiConverterBool.write(value.online, into: &buf)
         FfiConverterBool.write(value.hasSession, into: &buf)
         FfiConverterUInt32.write(value.unread, into: &buf)
+        FfiConverterOptionInt64.write(value.blockedAt, into: &buf)
+        FfiConverterOptionInt64.write(value.vanishedAt, into: &buf)
     }
 }
 
@@ -2381,6 +2455,10 @@ public struct ImportMessageData: Equatable, Hashable {
      * Where an outgoing message had got to.
      */
     public var delivery: Delivery?
+    /**
+     * A received message the user has seen.
+     */
+    public var read: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -2402,13 +2480,17 @@ public struct ImportMessageData: Equatable, Hashable {
          */at: Int64, 
         /**
          * Where an outgoing message had got to.
-         */delivery: Delivery?) {
+         */delivery: Delivery?, 
+        /**
+         * A received message the user has seen.
+         */read: Bool) {
         self.peer = peer
         self.msgId = msgId
         self.outgoing = outgoing
         self.text = text
         self.at = at
         self.delivery = delivery
+        self.read = read
     }
 
     
@@ -2432,7 +2514,8 @@ public struct FfiConverterTypeImportMessageData: FfiConverterRustBuffer {
                 outgoing: FfiConverterBool.read(from: &buf), 
                 text: FfiConverterString.read(from: &buf), 
                 at: FfiConverterInt64.read(from: &buf), 
-                delivery: FfiConverterOptionTypeDelivery.read(from: &buf)
+                delivery: FfiConverterOptionTypeDelivery.read(from: &buf), 
+                read: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -2443,6 +2526,7 @@ public struct FfiConverterTypeImportMessageData: FfiConverterRustBuffer {
         FfiConverterString.write(value.text, into: &buf)
         FfiConverterInt64.write(value.at, into: &buf)
         FfiConverterOptionTypeDelivery.write(value.delivery, into: &buf)
+        FfiConverterBool.write(value.read, into: &buf)
     }
 }
 
@@ -2559,6 +2643,14 @@ public struct ImportPeerData: Equatable, Hashable {
      * The ratchet session with them.
      */
     public var session: ImportSessionData?
+    /**
+     * When this user blocked them, in milliseconds.
+     */
+    public var blockedAt: Int64?
+    /**
+     * When their identity was found replaced, in milliseconds.
+     */
+    public var vanishedAt: Int64?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -2580,13 +2672,21 @@ public struct ImportPeerData: Equatable, Hashable {
          */pinnedPublicKey: Data?, 
         /**
          * The ratchet session with them.
-         */session: ImportSessionData?) {
+         */session: ImportSessionData?, 
+        /**
+         * When this user blocked them, in milliseconds.
+         */blockedAt: Int64?, 
+        /**
+         * When their identity was found replaced, in milliseconds.
+         */vanishedAt: Int64?) {
         self.id = id
         self.username = username
         self.convoId = convoId
         self.handshakeId = handshakeId
         self.pinnedPublicKey = pinnedPublicKey
         self.session = session
+        self.blockedAt = blockedAt
+        self.vanishedAt = vanishedAt
     }
 
     
@@ -2610,7 +2710,9 @@ public struct FfiConverterTypeImportPeerData: FfiConverterRustBuffer {
                 convoId: FfiConverterOptionString.read(from: &buf), 
                 handshakeId: FfiConverterOptionString.read(from: &buf), 
                 pinnedPublicKey: FfiConverterOptionData.read(from: &buf), 
-                session: FfiConverterOptionTypeImportSessionData.read(from: &buf)
+                session: FfiConverterOptionTypeImportSessionData.read(from: &buf), 
+                blockedAt: FfiConverterOptionInt64.read(from: &buf), 
+                vanishedAt: FfiConverterOptionInt64.read(from: &buf)
         )
     }
 
@@ -2621,6 +2723,8 @@ public struct FfiConverterTypeImportPeerData: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.handshakeId, into: &buf)
         FfiConverterOptionData.write(value.pinnedPublicKey, into: &buf)
         FfiConverterOptionTypeImportSessionData.write(value.session, into: &buf)
+        FfiConverterOptionInt64.write(value.blockedAt, into: &buf)
+        FfiConverterOptionInt64.write(value.vanishedAt, into: &buf)
     }
 }
 
@@ -3433,6 +3537,10 @@ public enum Action: Equatable, Hashable {
      */
     case block
     /**
+     * Lifting a block.
+     */
+    case unblock
+    /**
      * A report.
      */
     case report
@@ -3481,13 +3589,15 @@ public struct FfiConverterTypeAction: FfiConverterRustBuffer {
         
         case 6: return .block
         
-        case 7: return .report
+        case 7: return .unblock
         
-        case 8: return .deleteAccount
+        case 8: return .report
         
-        case 9: return .registerPush
+        case 9: return .deleteAccount
         
-        case 10: return .publishPrekeys
+        case 10: return .registerPush
+        
+        case 11: return .publishPrekeys
         
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -3521,20 +3631,24 @@ public struct FfiConverterTypeAction: FfiConverterRustBuffer {
             writeInt(&buf, Int32(6))
         
         
-        case .report:
+        case .unblock:
             writeInt(&buf, Int32(7))
         
         
-        case .deleteAccount:
+        case .report:
             writeInt(&buf, Int32(8))
         
         
-        case .registerPush:
+        case .deleteAccount:
             writeInt(&buf, Int32(9))
         
         
-        case .publishPrekeys:
+        case .registerPush:
             writeInt(&buf, Int32(10))
+        
+        
+        case .publishPrekeys:
+            writeInt(&buf, Int32(11))
         
         }
     }
@@ -5658,6 +5772,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_hqchat_ffi_checksum_method_engine_fingerprint() != 14575) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_hqchat_ffi_checksum_method_engine_forget() != 64254) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_hqchat_ffi_checksum_method_engine_friends() != 7931) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -5674,6 +5791,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_hqchat_ffi_checksum_method_engine_lock() != 55318) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_hqchat_ffi_checksum_method_engine_mark_read() != 4996) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_hqchat_ffi_checksum_method_engine_on_bytes() != 37452) {
@@ -5713,6 +5833,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_hqchat_ffi_checksum_method_engine_tick() != 31361) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_hqchat_ffi_checksum_method_engine_unblock() != 24019) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_hqchat_ffi_checksum_method_engine_unlock() != 53287) {

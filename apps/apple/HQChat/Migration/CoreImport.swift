@@ -1,3 +1,8 @@
+// TRANSITION CODE: it exists only for the update from 3.1.1, the last build on
+// the Swift implementation, to the first build on the core. It is deleted,
+// with everything under Migration/, a few weeks after that release; a profile
+// not opened in that window starts fresh (docs/architecture/core-wiring.md).
+
 import Foundation
 import HQChatCore
 import SwiftData
@@ -19,6 +24,8 @@ struct LegacySnapshot {
         var convoTopicID: String?
         var handshakeTopicID: String?
         var session: RatchetSessionState?
+        var blockedAt: Date?
+        var vanishedAt: Date?
     }
 
     struct Message {
@@ -28,6 +35,8 @@ struct LegacySnapshot {
         var text: String
         var timestamp: Date
         var status: AppMessage.DeliveryStatus?
+        /// A received message the user has seen.
+        var read: Bool
     }
 
     struct Pending {
@@ -100,7 +109,9 @@ enum CoreImport {
             convoId: f.convoTopicID,
             handshakeId: f.handshakeTopicID,
             pinnedPublicKey: f.publicKey.count == HQCPublicKeySize ? f.publicKey : nil,
-            session: try f.session.map(session)
+            session: try f.session.map(session),
+            blockedAt: f.blockedAt.map(milliseconds),
+            vanishedAt: f.vanishedAt.map(milliseconds)
         )
     }
 
@@ -139,7 +150,8 @@ enum CoreImport {
             outgoing: m.isOutgoing,
             text: m.text,
             at: milliseconds(m.timestamp),
-            delivery: m.isOutgoing ? m.status.map(delivery) : nil
+            delivery: m.isOutgoing ? m.status.map(delivery) : nil,
+            read: m.isOutgoing || m.read
         )
     }
 
@@ -190,7 +202,7 @@ extension LegacySnapshot {
         let friends = friendRows.map { f in
             Friend(peerID: f.peerID, username: f.username, publicKey: f.publicKey,
                    convoTopicID: f.convoTopicID, handshakeTopicID: f.handshakeTopicID,
-                   session: f.ratchetSession)
+                   session: f.ratchetSession, blockedAt: f.blockedAt, vanishedAt: f.vanishedAt)
         }
 
         let id = profile.id
@@ -214,7 +226,8 @@ extension LegacySnapshot {
                 isOutgoing: row.isOutgoing,
                 text: text,
                 timestamp: row.timestamp,
-                status: row.isOutgoing ? row.deliveryStatus : nil
+                status: row.isOutgoing ? row.deliveryStatus : nil,
+                read: !row.isUnread
             ))
         }
 

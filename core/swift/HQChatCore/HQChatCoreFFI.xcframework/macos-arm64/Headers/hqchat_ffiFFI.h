@@ -363,6 +363,11 @@ RustBuffer uniffi_hqchat_ffi_fn_method_engine_delete_account(uint64_t ptr, RustC
 RustBuffer uniffi_hqchat_ffi_fn_method_engine_fingerprint(uint64_t ptr, RustBuffer peer, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_FORGET
+#define UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_FORGET
+RustBuffer uniffi_hqchat_ffi_fn_method_engine_forget(uint64_t ptr, RustBuffer peer, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_FRIENDS
 #define UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_FRIENDS
 RustBuffer uniffi_hqchat_ffi_fn_method_engine_friends(uint64_t ptr, RustCallStatus *_Nonnull out_status
@@ -391,6 +396,11 @@ RustBuffer uniffi_hqchat_ffi_fn_method_engine_invites(uint64_t ptr, RustCallStat
 #ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_LOCK
 #define UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_LOCK
 RustBuffer uniffi_hqchat_ffi_fn_method_engine_lock(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_MARK_READ
+#define UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_MARK_READ
+RustBuffer uniffi_hqchat_ffi_fn_method_engine_mark_read(uint64_t ptr, RustBuffer peer, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_ON_BYTES
@@ -456,6 +466,11 @@ RustBuffer uniffi_hqchat_ffi_fn_method_engine_start(uint64_t ptr, int64_t now, R
 #ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_TICK
 #define UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_TICK
 RustBuffer uniffi_hqchat_ffi_fn_method_engine_tick(uint64_t ptr, int64_t now, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_UNBLOCK
+#define UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_UNBLOCK
+RustBuffer uniffi_hqchat_ffi_fn_method_engine_unblock(uint64_t ptr, RustBuffer peer, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_FN_METHOD_ENGINE_UNLOCK
@@ -835,6 +850,12 @@ uint16_t uniffi_hqchat_ffi_checksum_method_engine_fingerprint(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_CHECKSUM_METHOD_ENGINE_FORGET
+#define UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_CHECKSUM_METHOD_ENGINE_FORGET
+uint16_t uniffi_hqchat_ffi_checksum_method_engine_forget(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_CHECKSUM_METHOD_ENGINE_FRIENDS
 #define UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_CHECKSUM_METHOD_ENGINE_FRIENDS
 uint16_t uniffi_hqchat_ffi_checksum_method_engine_friends(void
@@ -868,6 +889,12 @@ uint16_t uniffi_hqchat_ffi_checksum_method_engine_invites(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_CHECKSUM_METHOD_ENGINE_LOCK
 #define UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_CHECKSUM_METHOD_ENGINE_LOCK
 uint16_t uniffi_hqchat_ffi_checksum_method_engine_lock(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_CHECKSUM_METHOD_ENGINE_MARK_READ
+#define UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_CHECKSUM_METHOD_ENGINE_MARK_READ
+uint16_t uniffi_hqchat_ffi_checksum_method_engine_mark_read(void
     
 );
 #endif
@@ -946,6 +973,12 @@ uint16_t uniffi_hqchat_ffi_checksum_method_engine_start(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_CHECKSUM_METHOD_ENGINE_TICK
 #define UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_CHECKSUM_METHOD_ENGINE_TICK
 uint16_t uniffi_hqchat_ffi_checksum_method_engine_tick(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_CHECKSUM_METHOD_ENGINE_UNBLOCK
+#define UNIFFI_FFIDEF_UNIFFI_HQCHAT_FFI_CHECKSUM_METHOD_ENGINE_UNBLOCK
+uint16_t uniffi_hqchat_ffi_checksum_method_engine_unblock(void
     
 );
 #endif
