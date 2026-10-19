@@ -190,6 +190,10 @@ fn js(effect: Effect) -> JsEffect {
         },
         Effect::FriendsChanged => k("friendsChanged"),
         Effect::InvitesChanged => k("invitesChanged"),
+        Effect::ActionDone { action } => JsEffect {
+            action: Some(camel(action)),
+            ..k("actionDone")
+        },
         Effect::PresenceChanged { peer, online } => JsEffect {
             peer: Some(peer),
             online: Some(online),
@@ -269,6 +273,19 @@ pub struct JsFriend {
     pub blocked_at: Option<i64>,
     /// When their identity was replaced under the same username.
     pub vanished_at: Option<i64>,
+    /// Their identity key is pinned.
+    pub has_key: bool,
+    /// The safety number was compared.
+    pub verified: bool,
+}
+
+/// A friend request sent and not answered yet.
+#[napi(object)]
+pub struct JsSentInvite {
+    /// The username or id, as typed.
+    pub to: String,
+    /// When, in Unix milliseconds.
+    pub at: i64,
 }
 
 /// A friend request waiting for an answer.
@@ -408,6 +425,28 @@ impl JsEngine {
     }
 
     #[napi]
+    pub fn cancel(&self, peer: String) -> Vec<JsEffect> {
+        all(self.engine.cancel(peer))
+    }
+
+    #[napi]
+    pub fn set_verified(&self, peer: String, verified: bool) -> napi::Result<Vec<JsEffect>> {
+        self.engine
+            .set_verified(peer, verified)
+            .map(all)
+            .map_err(err)
+    }
+
+    #[napi]
+    pub fn sent_invites(&self) -> Vec<JsSentInvite> {
+        self.engine
+            .sent_invites()
+            .into_iter()
+            .map(|s| JsSentInvite { to: s.to, at: s.at })
+            .collect()
+    }
+
+    #[napi]
     pub fn unblock(&self, peer: String) -> Vec<JsEffect> {
         all(self.engine.unblock(peer))
     }
@@ -485,6 +524,8 @@ impl JsEngine {
                 unread: f.unread,
                 blocked_at: f.blocked_at,
                 vanished_at: f.vanished_at,
+                has_key: f.has_key,
+                verified: f.verified,
             })
             .collect()
     }

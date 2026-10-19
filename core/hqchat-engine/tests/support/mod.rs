@@ -313,6 +313,21 @@ impl FakeServer {
                 self.invites.push((id, to));
                 (200, json!({ "ok": true }))
             }
+            (Method::Post, "/friends/cancel") => {
+                let Some(id) = self.session(authorization) else {
+                    return err(401, "");
+                };
+                let Some(peer) = self.resolve(body["peer"].as_str().unwrap_or("")) else {
+                    return err(400, "");
+                };
+                let before = self.invites.len();
+                self.invites
+                    .retain(|(f, t)| !((*f == id && *t == peer) || (*f == peer && *t == id)));
+                if self.invites.len() == before {
+                    return err(400, "");
+                }
+                (200, json!({ "ok": true }))
+            }
             (Method::Post, "/friends/accept") => {
                 let Some(id) = self.session(authorization) else {
                     return err(401, "");

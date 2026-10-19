@@ -29,7 +29,7 @@ pub use import::{Import, ImportIdentity, ImportMessage, ImportPeer, ImportPendin
 pub use ports::{KeyVault, Store, StoreError, Tier, VaultError};
 pub use types::{
     Config, CoreError, Delivery, Device, FriendView, InviteView, Message, NetworkInfo, PushToken,
-    ReportInput,
+    ReportInput, SentInviteView,
 };
 
 /// The version of this API; shells check it at startup against the bindings

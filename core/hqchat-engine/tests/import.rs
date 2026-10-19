@@ -30,6 +30,7 @@ fn only_seed(fill: u8) -> Import {
         peers: vec![],
         messages: vec![],
         pending: vec![],
+        sent: vec![],
     }
 }
 
@@ -73,6 +74,7 @@ fn a_key_that_does_not_hash_to_its_peer_is_refused_and_nothing_is_kept() {
         session: None,
         blocked_at: None,
         vanished_at: None,
+        verified: false,
     });
     assert!(matches!(engine.import(import, 0), Err(CoreError::State(_))));
     assert!(store.snapshot().is_empty(), "nothing was written");
@@ -150,6 +152,7 @@ fn imported_sessions_keep_the_conversation_going_both_ways() {
         session: Some(session),
         blocked_at: None,
         vanished_at: None,
+        verified: false,
     };
     let start = |profile: &str, fill: u8, peers: Vec<ImportPeer>| {
         let mut c = Client::new(&server, profile);
@@ -162,6 +165,7 @@ fn imported_sessions_keep_the_conversation_going_both_ways() {
                     peers,
                     messages: vec![],
                     pending: vec![],
+                    sent: vec![],
                 },
                 NOW,
             )
@@ -232,6 +236,7 @@ fn imported_sessions_keep_the_conversation_going_both_ways() {
                     payload: from_bob.1,
                     at: NOW,
                 }],
+                sent: vec![],
             },
             NOW,
         )
@@ -307,6 +312,7 @@ fn read_flags_and_friend_states_come_across() {
         session: None,
         blocked_at,
         vanished_at,
+        verified: false,
     };
     let message = |msg_id: &str, outgoing, at, read| ImportMessage {
         peer: id(1),

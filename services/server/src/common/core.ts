@@ -111,6 +111,7 @@ export interface CoreEffect {
     | "messageStatus"
     | "friendsChanged"
     | "invitesChanged"
+    | "actionDone"
     | "presenceChanged"
     | "connection"
     | "tierChanged"
@@ -151,6 +152,13 @@ export interface CoreFriend {
   blockedAt?: number;
   /** Unix ms; their username now belongs to another identity. */
   vanishedAt?: number;
+  hasKey: boolean;
+  verified: boolean;
+}
+
+export interface CoreSentInvite {
+  to: string;
+  at: number;
 }
 
 export interface CoreInvite {
@@ -175,6 +183,9 @@ export interface Engine {
   remove(peer: string): CoreEffect[];
   block(peer: string): CoreEffect[];
   unblock(peer: string): CoreEffect[];
+  cancel(peer: string): CoreEffect[];
+  setVerified(peer: string, verified: boolean): CoreEffect[];
+  sentInvites(): CoreSentInvite[];
   forget(peer: string): CoreEffect[];
   markRead(peer: string): CoreEffect[];
   report(peer: string, reason: string, msgIds: string[], block: boolean): CoreEffect[];

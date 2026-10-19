@@ -188,6 +188,8 @@ pub(crate) struct StoredState {
     pub peers: Vec<StoredPeer>,
     /// Outgoing messages not yet acknowledged by the broker: (peer, msg id).
     pub outbox: Vec<(String, String)>,
+    /// Friend requests sent and not answered: (to, at).
+    pub sent: Vec<(String, i64)>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -210,6 +212,7 @@ pub(crate) struct StoredPeer {
     pub read_until: i64,
     pub blocked_at: Option<i64>,
     pub vanished_at: Option<i64>,
+    pub verified: bool,
 }
 
 /// A message, as the UI shows it.

@@ -18,7 +18,7 @@ use crate::core::{Core, Peer, Prekeys};
 use crate::effect::{Action, Effect, Method};
 use crate::http::{Answer, Pending};
 use crate::persist;
-use crate::types::{CoreError, InviteView, ReportInput};
+use crate::types::{CoreError, InviteView, ReportInput, SentInviteView};
 
 /// One-time prekeys kept published.
 pub(crate) const PREKEY_POOL: u32 = 8;
@@ -229,11 +229,32 @@ impl Core {
                 changed = true;
             }
         }
+        // A request that was answered is no longer pending.
+        let before = self.sent.len();
+        let friends: Vec<(String, Option<String>)> = self
+            .peers
+            .values()
+            .filter(|p| !p.is_read_only())
+            .map(|p| (p.id.to_string(), p.username.clone()))
+            .collect();
+        self.sent.retain(|s| {
+            !friends.iter().any(|(id, name)| {
+                s.to.eq_ignore_ascii_case(id)
+                    || name
+                        .as_deref()
+                        .is_some_and(|n| s.to.eq_ignore_ascii_case(n))
+            })
+        });
+        if self.sent.len() != before {
+            changed = true;
+            self.emit(Effect::InvitesChanged);
+        }
         if changed {
             self.persist_state();
             self.emit(Effect::FriendsChanged);
             self.on_topics_changed(subscribe, unsubscribe);
         }
+        self.fetch_missing_keys();
     }
 
     /// Adopts the invites waiting for an answer, then reads `/friends`.
@@ -328,9 +349,118 @@ impl Core {
 
     pub fn on_then_sync(&mut self, action: Action, a: Answer) {
         if a.ok() {
+            self.emit(Effect::ActionDone { action });
             self.sync_directory();
         } else {
             self.fail(action, &a);
+        }
+    }
+
+    /// Sends a friend request to a username or id.
+    pub fn invite(&mut self, to: &str) {
+        self.request(
+            Method::Post,
+            "/friends/invite",
+            Some(json!({ "to": to })),
+            true,
+            Pending::Invite(to.to_owned()),
+        );
+    }
+
+    pub fn on_invite_sent(&mut self, to: String, a: Answer, now: i64) {
+        if !a.ok() {
+            return self.fail(Action::Invite, &a);
+        }
+        if !self.sent.iter().any(|s| s.to.eq_ignore_ascii_case(&to)) {
+            self.sent.push(SentInviteView { to, at: now });
+            self.persist_state();
+        }
+        self.emit(Effect::InvitesChanged);
+        self.emit(Effect::ActionDone {
+            action: Action::Invite,
+        });
+        self.sync_directory();
+    }
+
+    /// Withdraws a request sent to `peer`, or declines one from them.
+    pub fn cancel(&mut self, peer: &str) {
+        self.request(
+            Method::Post,
+            "/friends/cancel",
+            Some(json!({ "peer": peer })),
+            true,
+            Pending::Cancel(peer.to_owned()),
+        );
+    }
+
+    pub fn on_cancelled(&mut self, peer: &str, a: Answer) {
+        if !a.ok() {
+            return self.fail(Action::Cancel, &a);
+        }
+        self.sent.retain(|s| !s.to.eq_ignore_ascii_case(peer));
+        self.persist_state();
+        self.emit(Effect::InvitesChanged);
+        self.emit(Effect::ActionDone {
+            action: Action::Cancel,
+        });
+        self.sync_directory();
+    }
+
+    /// Records that the user compared the safety number with `peer`.
+    pub fn set_verified(&mut self, peer: &PeerId, verified: bool) -> Result<(), CoreError> {
+        self.unlocked()?;
+        let p = self.peers.get_mut(peer).ok_or(CoreError::NotAFriend)?;
+        if p.pinned.is_none() {
+            return Err(CoreError::State("no pinned key to verify".into()));
+        }
+        if p.verified != verified {
+            p.verified = verified;
+            self.persist_state();
+            self.emit(Effect::FriendsChanged);
+        }
+        Ok(())
+    }
+
+    /// Fetches the key of every friend who has none pinned, so the safety
+    /// number can be shown before the first message (a key never changes
+    /// for an id, so this happens once per friend).
+    fn fetch_missing_keys(&mut self) {
+        let missing: Vec<PeerId> = self
+            .peers
+            .values()
+            .filter(|p| p.pinned.is_none() && !p.is_read_only())
+            .map(|p| p.id.clone())
+            .filter(|id| !self.key_fetches.contains(id))
+            .collect();
+        for id in missing {
+            self.key_fetches.insert(id.clone());
+            self.request(
+                Method::Get,
+                &format!("/peer/{id}/key"),
+                None,
+                false,
+                Pending::PinKey(id),
+            );
+        }
+    }
+
+    pub fn on_pin_key(&mut self, peer: PeerId, a: Answer) {
+        self.key_fetches.remove(&peer);
+        let key = a
+            .str("publicKey")
+            .and_then(|h| hex::decode(h.to_lowercase()).ok())
+            .and_then(|b| hqc::PublicKey::from_bytes(&b).ok())
+            .filter(|k| peer.matches(k) && a.ok());
+        let Some(key) = key else {
+            // Unknown (a deleted account) or not their key: nothing is pinned.
+            return;
+        };
+        if let Some(p) = self.peers.get_mut(&peer)
+            && p.pinned.is_none()
+        {
+            p.pinned = Some(key);
+            self.persist_state();
+            self.emit(Effect::FriendsChanged);
         }
     }
 

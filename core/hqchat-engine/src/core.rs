@@ -37,6 +37,8 @@ pub(crate) struct Peer {
     /// When their identity was replaced by another under the same username:
     /// the conversation is kept, read-only, until the user forgets it.
     pub vanished_at: Option<i64>,
+    /// The user compared the safety number with them.
+    pub verified: bool,
 }
 
 impl Peer {
@@ -53,6 +55,7 @@ impl Peer {
             pending: 0,
             blocked_at: None,
             vanished_at: None,
+            verified: false,
         }
     }
 
@@ -114,6 +117,10 @@ pub(crate) struct Core {
     pub started: bool,
     pub network: Option<crate::types::NetworkInfo>,
     pub invites: Vec<crate::types::InviteView>,
+    /// Requests this user sent that are not answered yet.
+    pub sent: Vec<crate::types::SentInviteView>,
+    /// Friends whose key is being fetched for pinning.
+    pub key_fetches: std::collections::BTreeSet<PeerId>,
     pub net: crate::net::Net,
     /// Effects of the call in progress, in order.
     pub out: Vec<Effect>,
@@ -141,6 +148,8 @@ impl Core {
             started: false,
             network: None,
             invites: Vec::new(),
+            sent: Vec::new(),
+            key_fetches: Default::default(),
             net: Default::default(),
             out: Vec::new(),
         }
@@ -220,8 +229,10 @@ impl Core {
                     read_until: p.read_until,
                     blocked_at: p.blocked_at,
                     vanished_at: p.vanished_at,
+                    verified: p.verified,
                 })
                 .collect(),
+            sent: self.sent.iter().map(|s| (s.to.clone(), s.at)).collect(),
             outbox: self
                 .convo
                 .outbox
@@ -313,11 +324,20 @@ impl Core {
                     pending: previous.map_or(0, |p| p.pending),
                     blocked_at: p.blocked_at,
                     vanished_at: p.vanished_at,
+                    verified: p.verified,
                 },
             );
         }
         self.me = Some(PeerId::of(&identity.public));
         self.peers = peers;
+        self.sent = state
+            .sent
+            .iter()
+            .map(|(to, at)| crate::types::SentInviteView {
+                to: to.clone(),
+                at: *at,
+            })
+            .collect();
         self.convo.outbox = state
             .outbox
             .iter()
@@ -469,6 +489,8 @@ impl Core {
                 unread: p.unread.saturating_add(p.pending),
                 blocked_at: p.blocked_at,
                 vanished_at: p.vanished_at,
+                has_key: p.pinned.is_some(),
+                verified: p.verified,
             })
             .collect();
         out.sort_by(|a, b| {

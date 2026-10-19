@@ -16,7 +16,7 @@ mod types;
 
 pub use import::{
     ImportChain, ImportData, ImportInit, ImportMessageData, ImportOneTimeKey, ImportPeerData,
-    ImportPendingData, ImportPrekeysData, ImportSessionData, ImportSkippedKey,
+    ImportPendingData, ImportPrekeysData, ImportSentData, ImportSessionData, ImportSkippedKey,
 };
 
 pub use types::*;
@@ -221,6 +221,22 @@ impl Engine {
     /// The friends, sorted for display.
     pub fn friends(&self) -> Vec<FriendView> {
         self.inner.friends().into_iter().map(Into::into).collect()
+    }
+    /// Friend requests sent and not answered yet.
+    pub fn sent_invites(&self) -> Vec<SentInviteView> {
+        self.inner
+            .sent_invites()
+            .into_iter()
+            .map(Into::into)
+            .collect()
+    }
+    /// Withdraws a request sent, or declines one received.
+    pub fn cancel(&self, peer: String) -> Vec<Effect> {
+        effects(self.inner.cancel(peer))
+    }
+    /// Records whether the safety number was compared with `peer`.
+    pub fn set_verified(&self, peer: String, verified: bool) -> Result<Vec<Effect>, CoreError> {
+        Ok(effects(self.inner.set_verified(peer, verified)?))
     }
     /// Friend requests waiting for an answer.
     pub fn invites(&self) -> Vec<InviteView> {

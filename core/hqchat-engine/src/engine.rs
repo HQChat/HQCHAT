@@ -130,14 +130,26 @@ impl Engine {
     /// Sends a friend request to a username.
     pub fn invite(&self, username: String) -> Vec<Effect> {
         self.run(|c| {
-            c.friendship(
-                crate::Action::Invite,
-                "/friends/invite",
-                serde_json::json!({ "to": username }),
-            );
+            c.invite(&username);
             Ok(())
         })
         .unwrap_or_default()
+    }
+
+    /// Withdraws a friend request sent to `peer` (a username or id), or
+    /// declines one received from them.
+    pub fn cancel(&self, peer: String) -> Vec<Effect> {
+        self.run(|c| {
+            c.cancel(&peer);
+            Ok(())
+        })
+        .unwrap_or_default()
+    }
+
+    /// Records whether the user compared the safety number with `peer`.
+    pub fn set_verified(&self, peer: String, verified: bool) -> Result<Vec<Effect>, CoreError> {
+        let peer = hqchat_protocol::PeerId::parse(&peer)?;
+        self.run(|c| c.set_verified(&peer, verified))
     }
 
     /// Accepts a friend request.
@@ -254,6 +266,11 @@ impl Engine {
     /// The friends, sorted for display.
     pub fn friends(&self) -> Vec<FriendView> {
         self.core().friends()
+    }
+
+    /// Friend requests this user sent, not answered yet.
+    pub fn sent_invites(&self) -> Vec<crate::SentInviteView> {
+        self.core().sent.clone()
     }
 
     /// Friend requests waiting for this user's answer.

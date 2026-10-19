@@ -64,6 +64,8 @@ pub struct ImportPeer {
     pub blocked_at: Option<i64>,
     /// When their identity was found replaced, in milliseconds.
     pub vanished_at: Option<i64>,
+    /// The user compared the safety number (needs a pinned key).
+    pub verified: bool,
 }
 
 /// One message of the history, as the UI showed it.
@@ -108,6 +110,8 @@ pub struct Import {
     pub messages: Vec<ImportMessage>,
     /// Frames still waiting for an unlock.
     pub pending: Vec<ImportPending>,
+    /// Friend requests sent and not answered: (to, at).
+    pub sent: Vec<(String, i64)>,
 }
 
 fn invalid(what: &str) -> CoreError {
@@ -163,6 +167,7 @@ fn peer_of(p: ImportPeer) -> Result<(Peer, Option<SessionState>), CoreError> {
         }
         None => None,
     };
+    let verified = p.verified && pinned.is_some();
     let peer = Peer {
         username: p.username,
         convo: topic(p.convo_id, "a conversation topic")?,
@@ -170,6 +175,7 @@ fn peer_of(p: ImportPeer) -> Result<(Peer, Option<SessionState>), CoreError> {
         pinned,
         blocked_at: p.blocked_at,
         vanished_at: p.vanished_at,
+        verified,
         ..Peer::new(id)
     };
     Ok((peer, p.session))
@@ -246,6 +252,11 @@ impl Core {
         read_state(&mut peers, &messages);
         let messages = messages.into_iter().map(|(p, m, _)| (p, m)).collect();
         let pending = import.pending;
+        self.sent = import
+            .sent
+            .into_iter()
+            .map(|(to, at)| crate::types::SentInviteView { to, at })
+            .collect();
 
         let result = self.write_import(identity, prekeys, peers, sessions, messages, &pending);
         if result.is_err() {
@@ -253,6 +264,7 @@ impl Core {
             self.unlocked = None;
             self.me = None;
             self.peers.clear();
+            self.sent.clear();
         }
         result?;
         if !pending.is_empty() {

@@ -96,6 +96,19 @@ pub struct FriendView {
     /// username: read-only until `Engine::forget`. Also what an
     /// impersonation looks like.
     pub vanished_at: Option<i64>,
+    /// Their identity key is pinned (checked against their id).
+    pub has_key: bool,
+    /// The user compared the safety number with them.
+    pub verified: bool,
+}
+
+/// A friend request this user sent, not answered yet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SentInviteView {
+    /// The username or id it was sent to, as typed.
+    pub to: String,
+    /// When, in Unix milliseconds.
+    pub at: i64,
 }
 
 /// A friend request waiting for this user's answer.

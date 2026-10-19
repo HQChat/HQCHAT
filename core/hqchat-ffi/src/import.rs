@@ -26,6 +26,17 @@ pub struct ImportData {
     pub messages: Vec<ImportMessageData>,
     /// Frames that arrived while locked and were never opened.
     pub pending: Vec<ImportPendingData>,
+    /// Friend requests sent and not answered.
+    pub sent: Vec<ImportSentData>,
+}
+
+/// A friend request sent and not answered.
+#[derive(uniffi::Record)]
+pub struct ImportSentData {
+    /// The username or id it went to.
+    pub to: String,
+    /// When, in milliseconds.
+    pub at: i64,
 }
 
 /// The prekey secrets.
@@ -71,6 +82,8 @@ pub struct ImportPeerData {
     pub blocked_at: Option<i64>,
     /// When their identity was found replaced, in milliseconds.
     pub vanished_at: Option<i64>,
+    /// The safety number was compared (kept only with a pinned key).
+    pub verified: bool,
 }
 
 /// A ratchet session, field for field (`RatchetSessionState` in Swift).
@@ -290,6 +303,7 @@ impl TryFrom<ImportData> for core::Import {
                     session: p.session.map(session).transpose()?,
                     blocked_at: p.blocked_at,
                     vanished_at: p.vanished_at,
+                    verified: p.verified,
                 })
             })
             .collect::<Result<Vec<_>, CoreError>>()?;
@@ -322,6 +336,7 @@ impl TryFrom<ImportData> for core::Import {
                     at: f.at,
                 })
                 .collect(),
+            sent: d.sent.into_iter().map(|s| (s.to, s.at)).collect(),
         })
     }
 }

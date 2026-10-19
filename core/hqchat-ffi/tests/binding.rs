@@ -150,6 +150,7 @@ fn import_data() -> (ImportData, String) {
             session: Some(session),
             blocked_at: None,
             vanished_at: None,
+            verified: true,
         }],
         messages: vec![ImportMessageData {
             peer: friend_id.clone(),
@@ -161,6 +162,10 @@ fn import_data() -> (ImportData, String) {
             read: true,
         }],
         pending: vec![],
+        sent: vec![ImportSentData {
+            to: "carol".into(),
+            at: 1_000,
+        }],
     };
     (data, friend_id)
 }
@@ -183,6 +188,11 @@ fn an_import_through_the_binding_brings_friends_sessions_and_history() {
     let friends = engine.friends();
     assert_eq!(friends.len(), 1);
     assert!(friends[0].has_session, "the session came across");
+    assert!(
+        friends[0].has_key && friends[0].verified,
+        "the verification came across"
+    );
+    assert_eq!(engine.sent_invites()[0].to, "carol");
     let history = engine.history(friend, None, 10).unwrap();
     assert_eq!(history.len(), 1);
     assert_eq!(history[0].text, "before the move");
