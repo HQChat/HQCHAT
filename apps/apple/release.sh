@@ -21,7 +21,7 @@ set -euo pipefail
 : "${ASC_KEY_ID:?}" "${ASC_ISSUER_ID:?}" "${ASC_KEY_P8:?}"
 case "${1:-}" in
   ios) scheme="HQChat iOS" destination="generic/platform=iOS" asc_platform=IOS arch=() ;;
-  # libhqc_wrap.dylib is built for arm64 only (native/hqc/build-apple.sh).
+  # The core's library (HQChatCoreFFI.xcframework) is built for arm64 only on macOS.
   macos) scheme="HQChat" destination="generic/platform=macOS" asc_platform=MAC_OS arch=(ARCHS=arm64) ;;
   *)
     echo "usage: $0 ios|macos" >&2

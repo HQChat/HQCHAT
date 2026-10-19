@@ -96,7 +96,7 @@ configured by hand. See [the deploy runbook](../runbooks/deploy.md).
 | `apps/apple/` | Xcode project, the shared `HQChat/` sources, `HQChat iOS/`, test slices (`tests/`, `e2e/`, `fuzz/`), `verify.sh` |
 | `apps/site/` | The Worker and its tests |
 | `services/server/` | `src/{server,protocol,common,client,bot,gateway}`, operator `scripts/`, `test/{unit,integration,scenarios,fuzz}` |
-| `native/hqc/` | The HQC-256 wrapper, built from a pinned upstream commit for Linux (Nix) and Apple (`build-apple.sh`) |
+| `native/hqc/` | The HQC-256 wrapper, built from a pinned upstream commit into the Rust core (`hqc-sys`) on every platform, and as a standalone Nix package with its self-test |
 | `infra/environments/` | One JSON file per environment |
 | `infra/terraform/` | The single Terraform root |
 | `infra/nixos/` | Host modules, the host agent, the two-VM stack test |
