@@ -2,6 +2,10 @@ import Foundation
 import SwiftData
 import CryptoKit
 
+/// The app's message model, by a name that files importing the core (whose
+/// bindings also declare a `Message`) can use unambiguously on every target.
+typealias AppMessage = Message
+
 @Model
 final class Message {
     /// The message body, sealed with the owning profile's message key (`MessageKeyStore`).
@@ -76,6 +80,14 @@ final class Message {
             }
             contentCipher = sealed
         }
+    }
+
+    /// The body for the move to the core: the plaintext, or nil when this row
+    /// cannot be opened now. Never a placeholder, so nothing like "locked" is
+    /// ever written into the new history as if it had been said.
+    var contentForImport: String? {
+        guard let contentCipher else { return "" }
+        return Self.open(contentCipher, profileID: profileID)
     }
 
     /// Cache and return the permanent "cannot be read" body.

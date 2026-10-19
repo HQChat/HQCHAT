@@ -6,6 +6,10 @@ import SwiftData
 /// what a complete key looks like.
 let HQCPublicKeySize = 7237
 
+/// The app's friend model, by a name that files whose own types shadow
+/// `Friend` (the core import's snapshot) can still reach on every target.
+typealias AppFriend = Friend
+
 @Model
 final class Friend {
     var username: String

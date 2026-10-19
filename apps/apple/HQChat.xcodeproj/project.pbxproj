@@ -89,6 +89,7 @@
 				Services/ConversationEnvelopeV3.swift,
 				Services/ConversationFrame.swift,
 				Services/ConversationRouter.swift,
+				Services/CoreImport.swift,
 				Services/DataResetService.swift,
 				Services/DeviceAuthCapability.swift,
 				Services/DirectorySync.swift,

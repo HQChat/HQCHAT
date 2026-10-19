@@ -61,12 +61,13 @@ stage() { # stage <TestFile.swift> -> prints the staged main.swift path
 
 # The core's Swift module (core/swift/HQChatCore), compiled once for the slices
 # that build every app file: the files that talk to the core import it, as the
-# app does through the Swift package.
+# app does through the Swift package. Those slices target the app's own macOS
+# deployment target, which the core's library is built for.
 CORE_PKG="$(cd ../../../core/swift/HQChatCore && pwd)"
 CORE_FFI="$CORE_PKG/HQChatCoreFFI.xcframework/macos-arm64"
 CORE_MOD="$TMP/core-module"
 mkdir -p "$CORE_MOD"
-xcrun swiftc -O -target arm64-apple-macos14 -swift-version 5 -parse-as-library \
+xcrun swiftc -O -target arm64-apple-macos15.5 -swift-version 5 -parse-as-library \
   -module-name HQChatCore -emit-module -emit-module-path "$CORE_MOD/HQChatCore.swiftmodule" \
   -emit-library -static -o "$CORE_MOD/libHQChatCore.a" \
   -I "$CORE_FFI/Headers" "$CORE_PKG/Sources/HQChatCore/HQChatCore.swift"
@@ -344,7 +345,7 @@ for f in "$APP"/*.swift "$APP"/Models/*.swift "$APP"/Services/*.swift \
 done
 
 MAIN="$(stage OrchestratorTests.swift)"
-xcrun swiftc -O $COV_FLAGS -target arm64-apple-macos14 \
+xcrun swiftc -O $COV_FLAGS -target arm64-apple-macos15.5 \
   "$MAIN" TestSupport.swift \
   "${ORCHESTRATOR_SOURCES[@]}" "${CORE_FLAGS[@]}" \
   -import-objc-header "$APP/Core/HQC-Bridging-Header.h" -I "$APP/Core" \
@@ -354,12 +355,26 @@ xcrun swiftc -O $COV_FLAGS -target arm64-apple-macos14 \
 "$BINDIR/orchestratorTests"
 
 echo ""
+echo "── Moving a profile to the core ───────────────"
+# The import the app runs once per profile: its records, mapped into the core's
+# ImportData and opened by a real engine (Services/CoreImport.swift).
+MAIN="$(stage CoreImportTests.swift)"
+xcrun swiftc -O $COV_FLAGS -target arm64-apple-macos15.5 \
+  "$MAIN" TestSupport.swift \
+  "${ORCHESTRATOR_SOURCES[@]}" "${CORE_FLAGS[@]}" \
+  -import-objc-header "$APP/Core/HQC-Bridging-Header.h" -I "$APP/Core" \
+  -L ".." -lhqc_wrap -Xlinker -rpath -Xlinker "$(cd .. && pwd)" \
+  -framework Security \
+  -o "$BINDIR/coreImportTests"
+"$BINDIR/coreImportTests"
+
+echo ""
 echo "── Deferred decryption (queue, lock, migration) ─"
 # Frames that arrive locked are queued as ciphertext and opened on unlock; the
 # ratchet and prekey state sits behind the user's unlock. The real router, queue
 # and key store, over in-memory SwiftData and an in-memory key backend.
 MAIN="$(stage InboundQueueTests.swift)"
-xcrun swiftc -O $COV_FLAGS -target arm64-apple-macos14 \
+xcrun swiftc -O $COV_FLAGS -target arm64-apple-macos15.5 \
   "$MAIN" TestSupport.swift \
   "${ORCHESTRATOR_SOURCES[@]}" "${CORE_FLAGS[@]}" \
   -import-objc-header "$APP/Core/HQC-Bridging-Header.h" -I "$APP/Core" \
