@@ -175,13 +175,15 @@ pub enum Effect {
         /// The friend's id.
         peer: String,
     },
-    /// A user action the server refused or could not be reached for.
+    /// A user action the server refused or could not be reached for, or that
+    /// the core refused before sending.
     ActionFailed {
         /// Which action.
         action: Action,
-        /// The HTTP status; 0 when the server could not be reached.
+        /// The HTTP status; 0 when the server could not be reached or the core
+        /// refused (then `code` says why).
         status: u16,
-        /// The server's `error` code, empty when it gave none.
+        /// The server's `error` code, or the core's; empty when there is none.
         code: String,
     },
     /// The account is deleted on the server and this profile's data is gone.

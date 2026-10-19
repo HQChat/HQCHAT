@@ -464,8 +464,9 @@ impl Core {
         }
     }
 
-    /// Files a report about a friend's messages, with their text as the
-    /// excerpt when unlocked, then blocks them if asked.
+    /// Files a report about a friend, quoting at most one message they sent
+    /// (the user's copy of it), then blocks them if asked. Nothing the user
+    /// wrote, and no other message, leaves the device with it.
     pub fn report(&mut self, r: &ReportInput) -> Result<(), CoreError> {
         let peer_id = PeerId::parse(&r.peer)?;
         let convo = self
@@ -473,26 +474,30 @@ impl Core {
             .get(&peer_id)
             .and_then(|p| p.convo.clone())
             .ok_or(CoreError::NotAFriend)?;
-        let mut excerpt = Vec::new();
-        if self.unlocked.is_some() {
-            for id in &r.msg_ids {
-                if let Some(m) = self
+        let quoted = match &r.msg_id {
+            Some(id) => {
+                // Its text is only readable unlocked.
+                self.unlocked()?;
+                let m = self
                     .message_slot_of(&peer_id, id)
-                    .and_then(|s| self.get_message(&s).ok().flatten())
-                {
-                    excerpt.push(m.text);
-                }
+                    .map(|s| self.get_message(&s))
+                    .transpose()?
+                    .flatten()
+                    .filter(|m| !m.outgoing)
+                    .ok_or_else(|| {
+                        CoreError::State("a report quotes one message the friend sent".into())
+                    })?;
+                Some((m.msg_id, m.text))
             }
-        }
+            None => None,
+        };
         let mut body = serde_json::Map::new();
         body.insert("conversation".into(), json!(convo.as_str()));
         body.insert("peer".into(), json!(peer_id.as_str()));
         body.insert("category".into(), json!(r.reason));
-        if !excerpt.is_empty() {
-            body.insert("excerpt".into(), json!(excerpt.join("\n")));
-        }
-        if let Some(first) = r.msg_ids.first() {
-            body.insert("messageId".into(), json!(first));
+        if let Some((msg_id, text)) = quoted {
+            body.insert("excerpt".into(), json!(text));
+            body.insert("messageId".into(), json!(msg_id));
         }
         if let Some(note) = r.note.as_deref().filter(|n| !n.is_empty()) {
             body.insert("note".into(), json!(note));
