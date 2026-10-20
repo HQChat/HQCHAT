@@ -58,9 +58,12 @@ export function readJson(req: http.IncomingMessage): Promise<JsonBody> {
   });
 }
 
-/** A JSON response. */
+/**
+ * A JSON response. Never stored by a cache: these carry session tokens, topic
+ * capabilities and the friend graph.
+ */
 export function send(res: http.ServerResponse, status: number, body: unknown): void {
-  res.writeHead(status, { "content-type": "application/json" });
+  res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
   res.end(JSON.stringify(body));
 }
 
@@ -79,30 +82,49 @@ export function requestId(req: http.IncomingMessage): string {
   return crypto.randomUUID();
 }
 
-const TRUSTED_PROXY_HOPS = Number(process.env.TRUSTED_PROXY_HOPS || 1);
+/** Where a trusted proxy in front of this process puts the caller's address. */
+export const TRUSTED_PROXY_MODES = ["none", "x-real-ip", "cf-connecting-ip", "x-forwarded-for"] as const;
+export type TrustedProxy = (typeof TRUSTED_PROXY_MODES)[number];
+
+/** TRUSTED_PROXY, read per call; unset or unknown is "none". */
+export function trustedProxy(): TrustedProxy {
+  const raw = (process.env.TRUSTED_PROXY || "").trim().toLowerCase();
+  return (TRUSTED_PROXY_MODES as readonly string[]).includes(raw) ? (raw as TrustedProxy) : "none";
+}
 
 /**
- * The caller's IP from edge-set headers: CF-Connecting-IP, then X-Real-IP, then
- * X-Forwarded-For counted from the right by TRUSTED_PROXY_HOPS (the left end is
- * client-controlled).
+ * The caller's IP, which every per-address limit keys on. Headers are
+ * client-supplied, so one is believed only when TRUSTED_PROXY names it, which
+ * says a proxy in front of this process sets it and the process is reachable
+ * only through that proxy:
+ *
+ *   none (default)     the socket peer
+ *   x-real-ip          X-Real-IP (nginx, after real_ip has resolved the client)
+ *   cf-connecting-ip   CF-Connecting-IP (directly behind Cloudflare)
+ *   x-forwarded-for    X-Forwarded-For counted from the right by
+ *                      TRUSTED_PROXY_HOPS (the left end is client-controlled)
+ *
+ * A missing header falls back to the socket peer.
  */
 export function clientIp(req: http.IncomingMessage): string {
-  if (process.env.TRUST_CF_CONNECTING_IP !== "false") {
-    const cf = String(req.headers["cf-connecting-ip"] || "").trim();
-    if (cf) return cf;
+  const socket = req.socket?.remoteAddress || "unknown";
+  const header = (name: string) => String(req.headers[name] || "").trim();
+  switch (trustedProxy()) {
+    case "x-real-ip":
+      return header("x-real-ip") || socket;
+    case "cf-connecting-ip":
+      return header("cf-connecting-ip") || socket;
+    case "x-forwarded-for": {
+      const hops = Math.max(1, Number(process.env.TRUSTED_PROXY_HOPS) || 1);
+      const xff = header("x-forwarded-for")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      return xff.length ? (xff[Math.max(0, xff.length - hops)] ?? socket) : socket;
+    }
+    default:
+      return socket;
   }
-  const realIp = String(req.headers["x-real-ip"] || "").trim();
-  if (realIp) return realIp;
-
-  const xff = String(req.headers["x-forwarded-for"] || "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  if (xff.length) {
-    const idx = Math.max(0, xff.length - TRUSTED_PROXY_HOPS);
-    return xff[idx] ?? req.socket.remoteAddress ?? "unknown";
-  }
-  return req.socket.remoteAddress || "unknown";
 }
 
 /** The field when it is a string, else "" (never a coerced object or number). */

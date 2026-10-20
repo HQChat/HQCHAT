@@ -10,6 +10,7 @@ export class Admission {
   private established = 0;
   private readonly refused = {} as Record<RefusalReason, number>;
   private readonly handshakesByIp = new Map<string, number>();
+  private readonly handshakesByPrefix = new Map<string, number>();
   private readonly connectionsByIp = new Map<string, number>();
   private readonly rateByIp = new Map<string, { windowStart: number; count: number }>();
   /** Ephemeral key (hex) → expiry. */
@@ -24,6 +25,9 @@ export class Admission {
   refusalFor(ip: string): RefusalReason | null {
     if (this.halfOpen >= this.limits.maxHalfOpen) return "half-open";
     if ((this.handshakesByIp.get(ip) ?? 0) >= this.limits.perIpHandshakes) return "ip-handshakes";
+    if ((this.handshakesByPrefix.get(addressPrefix(ip)) ?? 0) >= this.limits.perPrefixHandshakes) {
+      return "prefix-handshakes";
+    }
     if ((this.connectionsByIp.get(ip) ?? 0) >= this.limits.perIpConnections) return "ip-connections";
     if (!this.withinRate(ip)) return "ip-rate";
     return null;
@@ -31,14 +35,17 @@ export class Admission {
 
   /** Counts a handshake in progress; the returned function ends it, once. */
   startHandshake(ip: string): () => void {
+    const prefix = addressPrefix(ip);
     this.halfOpen++;
     bump(this.handshakesByIp, ip, 1);
+    bump(this.handshakesByPrefix, prefix, 1);
     let open = true;
     return () => {
       if (!open) return;
       open = false;
       this.halfOpen--;
       bump(this.handshakesByIp, ip, -1);
+      bump(this.handshakesByPrefix, prefix, -1);
     };
   }
 
@@ -99,6 +106,27 @@ export class Admission {
     r.count++;
     return r.count <= this.limits.perIpHandshakesPerMinute;
   }
+}
+
+/**
+ * The network an address belongs to for the per-prefix cap: its /24 for IPv4
+ * (including IPv4-mapped IPv6), its /56 for IPv6. Anything unparseable is its
+ * own prefix.
+ */
+export function addressPrefix(ip: string): string {
+  const v4 = ip.match(/^(?:::ffff:)?(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.\d{1,3}$/i);
+  if (v4) return `${v4[1]}.${v4[2]}.${v4[3]}.0/24`;
+  const addr = ip.split("%")[0]!.toLowerCase();
+  const halves = addr.split("::");
+  if (halves.length > 2) return ip;
+  const head = halves[0] ? halves[0].split(":") : [];
+  const tail = halves.length === 2 && halves[1] ? halves[1].split(":") : [];
+  const missing = 8 - head.length - tail.length;
+  if (missing < 0 || (halves.length === 1 && missing !== 0)) return ip;
+  const groups = [...head, ...Array(missing).fill("0"), ...tail];
+  if (!groups.every((g) => /^[0-9a-f]{1,4}$/.test(g))) return ip;
+  const hex = groups.map((g) => g.padStart(4, "0")).join("");
+  return `${hex.slice(0, 14)}/56`;
 }
 
 function bump(m: Map<string, number>, ip: string, d: number): void {

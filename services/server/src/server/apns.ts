@@ -120,6 +120,56 @@ export const ApnsService = {
   },
 };
 
+/** A request with no answer by then is given up on, so a stalled APNs cannot pile up wakes. */
+const REQUEST_TIMEOUT_MS = 10_000;
+/** An idle connection is closed after this; the next wake opens a new one. */
+const IDLE_TIMEOUT_MS = 5 * 60_000;
+/** Notifications with the same collapse id replace each other on the device. */
+const COLLAPSE_ID = "new-message";
+
+interface ApnsConnection {
+  session: http2.ClientHttp2Session;
+  /** Resolvers of requests in flight, settled if the connection dies under them. */
+  pending: Set<(r: { status: number; data: string }) => void>;
+}
+
+/**
+ * One long-lived HTTP/2 connection per APNs host, as Apple asks of providers:
+ * opening one per push is what APNs treats as a denial of service. A dead or
+ * idle connection is dropped and the next push opens a fresh one. It holds the
+ * process open only while a request is in flight.
+ */
+const connections = new Map<string, ApnsConnection>();
+
+/** Closes every APNs connection (shutdown, tests); in-flight requests resolve as failed. */
+export function closeApnsConnections(): void {
+  for (const conn of [...connections.values()]) conn.session.destroy();
+  connections.clear();
+}
+
+function connection(host: string): ApnsConnection {
+  const live = connections.get(host);
+  if (live && !live.session.closed && !live.session.destroyed) return live;
+
+  const session = http2.connect(`https://${host}`);
+  const conn: ApnsConnection = { session, pending: new Set() };
+  const drop = (data: string) => {
+    if (connections.get(host) === conn) connections.delete(host);
+    for (const settle of conn.pending) settle({ status: 0, data });
+    conn.pending.clear();
+  };
+  session.on("error", (e) => {
+    logger.error("[apns] connection error", e);
+    drop(String(e));
+  });
+  session.on("goaway", () => drop("goaway"));
+  session.on("close", () => drop("closed"));
+  session.setTimeout(IDLE_TIMEOUT_MS, () => session.close());
+  session.unref();
+  connections.set(host, conn);
+  return conn;
+}
+
 /** POSTs one alert to an APNs host; resolves with the status and body, never rejects. */
 function sendToHost(
   host: string,
@@ -130,37 +180,54 @@ function sendToHost(
   jwt: string,
 ): Promise<{ status: number; data: string }> {
   return new Promise((resolve) => {
-    const client = http2.connect(`https://${host}`);
-    client.on("error", (e) => {
-      logger.error("[apns] connection error", e);
+    let conn: ApnsConnection;
+    try {
+      conn = connection(host);
+    } catch (e) {
       resolve({ status: 0, data: String(e) });
-    });
+      return;
+    }
+    let done = false;
+    const settle = (r: { status: number; data: string }) => {
+      if (done) return;
+      done = true;
+      conn.pending.delete(settle);
+      if (conn.pending.size === 0) conn.session.unref();
+      resolve(r);
+    };
+    conn.pending.add(settle);
+    conn.session.ref();
 
     const payload = JSON.stringify({ aps: { alert: { title, body }, sound: "default" } });
-    const req = client.request({
-      ":method": "POST",
-      ":path": `/3/device/${token}`,
-      authorization: `bearer ${jwt}`,
-      "apns-topic": topic,
-      "apns-push-type": "alert",
-      "content-type": "application/json",
-    });
+    let req: http2.ClientHttp2Stream;
+    try {
+      req = conn.session.request({
+        ":method": "POST",
+        ":path": `/3/device/${token}`,
+        authorization: `bearer ${jwt}`,
+        "apns-topic": topic,
+        "apns-push-type": "alert",
+        "apns-collapse-id": COLLAPSE_ID,
+        "content-type": "application/json",
+      });
+    } catch (e) {
+      settle({ status: 0, data: String(e) });
+      return;
+    }
 
     let status = 0;
     let data = "";
     req.setEncoding("utf8");
+    req.setTimeout(REQUEST_TIMEOUT_MS, () => {
+      req.close(http2.constants.NGHTTP2_CANCEL);
+      settle({ status: 0, data: "timeout" });
+    });
     req.on("response", (h) => {
       status = Number(h[":status"]);
     });
     req.on("data", (c) => (data += c));
-    req.on("end", () => {
-      client.close();
-      resolve({ status, data });
-    });
-    req.on("error", (e) => {
-      client.close();
-      resolve({ status: 0, data: String(e) });
-    });
+    req.on("end", () => settle({ status, data }));
+    req.on("error", (e) => settle({ status: 0, data: String(e) }));
     req.write(payload);
     req.end();
   });

@@ -467,3 +467,82 @@ test("noise-gw-keys fills an empty seed file, and appends rather than overwrites
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// --- what a few hundred silent sockets can do ------------------------------------
+
+test("a socket that never sends its header gives its slot back at the header deadline", async () => {
+  const broker = await fakeBroker();
+  toClose.push(broker.server);
+  const gw = await gateway({ upstreamPort: broker.port, limits: { headerTimeoutMs: 100, handshakeTimeoutMs: 5000 } });
+  toClose.push(gw.server);
+  const s = await dial(gw.port);
+  const t0 = Date.now();
+  await closed(s);
+  assert.ok(Date.now() - t0 < 1000, "a silent socket held its slot for the whole handshake deadline");
+  assert.equal(gw.stats().refused.timeout, 1);
+});
+
+test("half-open handshakes are capped per network, not only per address", async () => {
+  const { Admission } = await import("../../src/gateway/admission");
+  const { DEFAULT_LIMITS } = await import("../../src/gateway/gateway");
+  const a = new Admission({ ...DEFAULT_LIMITS, perIpHandshakes: 8, perPrefixHandshakes: 3 }, Date.now);
+  for (const ip of ["198.51.100.1", "198.51.100.2", "::ffff:198.51.100.3"]) {
+    assert.equal(a.refusalFor(ip), null, ip);
+    a.startHandshake(ip);
+  }
+  assert.equal(a.refusalFor("198.51.100.200"), "prefix-handshakes", "a fourth address in the /24 was admitted");
+  assert.equal(a.refusalFor("198.51.101.1"), null, "the next /24 is a different network");
+
+  const v6 = new Admission({ ...DEFAULT_LIMITS, perPrefixHandshakes: 1 }, Date.now);
+  const leave = v6.startHandshake("2001:db8:aa:bb01::1");
+  assert.equal(v6.refusalFor("2001:db8:aa:bbff:ffff::9"), "prefix-handshakes", "same /56");
+  assert.equal(v6.refusalFor("2001:db8:aa:cc00::1"), null, "another /56");
+  leave();
+  assert.equal(v6.refusalFor("2001:db8:aa:bbff:ffff::9"), null, "a finished handshake frees its network's slot");
+});
+
+test("addressPrefix names the /24 or /56 an address is in", async () => {
+  const { addressPrefix } = await import("../../src/gateway/admission");
+  assert.equal(addressPrefix("203.0.113.77"), "203.0.113.0/24");
+  assert.equal(addressPrefix("::ffff:203.0.113.77"), "203.0.113.0/24");
+  assert.equal(addressPrefix("2001:db8::1"), "20010db8000000/56");
+  assert.equal(addressPrefix("2001:0db8:0000:00ff:1::"), "20010db8000000/56");
+  assert.equal(addressPrefix("fe80::1%en0"), "fe800000000000/56");
+  assert.equal(addressPrefix("?"), "?");
+  assert.equal(addressPrefix("1:2:3"), "1:2:3");
+});
+
+test("a decapsulation worker that dies fails only its own job and is replaced", async () => {
+  const fs = await import("node:fs");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const { DecapPool } = await import("../../src/gateway/decap-pool");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "decap-"));
+  const file = path.join(dir, "worker.js");
+  // Key id 66 kills the worker; any other answers with its key id.
+  fs.writeFileSync(
+    file,
+    `const { parentPort } = require("node:worker_threads");
+     parentPort.on("message", (m) => {
+       if (m.keyId === 66) process.exit(1);
+       setTimeout(() => parentPort.postMessage({ id: m.id, ss: new Uint8Array([m.keyId]) }), 20);
+     });`,
+  );
+  const pool = new DecapPool([], 2, 8, file);
+  try {
+    const slow = pool.decapsulate(1, Buffer.alloc(1));
+    const killer = pool.decapsulate(66, Buffer.alloc(1));
+    const later = [pool.decapsulate(2, Buffer.alloc(1)), pool.decapsulate(3, Buffer.alloc(1))];
+    await assert.rejects(killer, /exited/);
+    assert.deepEqual([...(await slow)], [1], "another worker's job was failed with the dead one");
+    assert.deepEqual(
+      (await Promise.all(later)).map((b) => b[0]),
+      [2, 3],
+      "a job after the death never resolved",
+    );
+    assert.equal(pool.respawned, 1);
+  } finally {
+    await pool.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

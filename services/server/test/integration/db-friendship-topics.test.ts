@@ -98,7 +98,7 @@ test("accepting an invite mints the ids too", async () => {
   try {
     const nb = (await DB.getUsername(b))!;
     await DB.invite(a, nb);
-    assert.ok(await DB.acceptInvite(a, b));
+    assert.equal(await DB.acceptInvite(a, b, 150), "accepted");
     const topics = await DB.getFriendshipTopics(a, b);
     assert.ok(topics);
     assert.match(topics.convoId, TOPIC_ID);

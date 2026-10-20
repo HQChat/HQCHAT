@@ -64,8 +64,8 @@ function recorder() {
       calls.push(`kick ${id}`);
       return true;
     },
-    deleteUser: async (id) => {
-      calls.push(`delete ${id}`);
+    ban: async (id) => {
+      calls.push(`ban ${id}`);
     },
   };
   return { calls, enforce };
@@ -79,14 +79,18 @@ async function account(): Promise<string> {
   const id = peerId(pkHex);
   await DB.ensureUser(id, pkHex);
   created.push(id);
+  keyOf.set(id, pkHex);
   return id;
 }
+const keyOf = new Map<string, string>();
 
 async function wipe(): Promise<void> {
   if (!created.length) return;
   const ids = [...new Set(created)];
   await q(`DELETE FROM reports WHERE reporter_id = ANY($1::text[]) OR reported_id = ANY($1::text[])`, [ids]);
   await q(`DELETE FROM users WHERE id = ANY($1::text[])`, [ids]);
+  await q(`DELETE FROM banned_ids WHERE id = ANY($1::text[])`, [ids]);
+  await q(`DELETE FROM blocks WHERE blocker_id = ANY($1::text[]) OR blocked_id = ANY($1::text[])`, [ids]);
   created.length = 0;
 }
 
@@ -241,7 +245,7 @@ test("a disposition the column would refuse is refused here first", async () => 
   }
 });
 
-test("ejected disconnects the reported account; banned deletes it first", async () => {
+test("ejected disconnects the reported account; banned bans it first", async () => {
   const [a, b] = [await account(), await account()];
   const report = () =>
     DB.createReport({ reporterId: a, reportedId: b, conversationId: topicId(a, b), category: "harassment" });
@@ -259,17 +263,56 @@ test("ejected disconnects the reported account; banned deletes it first", async 
   const banned = recorder();
   const bannedId = await report();
   await captured(() => resolve(bannedId, "banned", banned.enforce));
-  assert.deepEqual(banned.calls, [`delete ${b}`, `kick ${b}`]);
+  assert.deepEqual(banned.calls, [`ban ${b}`, `kick ${b}`]);
 });
 
 test("a ban removes the account but keeps the report against it", async () => {
   const [a, b] = [await account(), await account()];
   const id = await DB.createReport({ reporterId: a, reportedId: b, conversationId: topicId(a, b), category: "spam" });
-  await captured(() => resolve(id, "banned", { kick: async () => true, deleteUser: (u) => DB.deleteUser(u) }));
+  await captured(() => resolve(id, "banned", { kick: async () => true, ban: (u) => DB.banUser(u) }));
   assert.equal((await q(`SELECT 1 FROM users WHERE id = $1`, [b])).rows.length, 0);
   assert.equal(
     (await q<{ disposition: string }>(`SELECT disposition FROM reports WHERE id = $1::uuid`, [id])).rows[0]!
       .disposition,
     "banned",
   );
+});
+
+test("nothing a user typed reaches the operator's terminal as a control sequence", async () => {
+  // A note or excerpt is user text printed on the app host's shell. Raw, it can
+  // clear the screen, set the clipboard (OSC 52), or forge whole queue lines.
+  // The route refuses most of it, so these rows are written directly, as an
+  // older row or a future writer could.
+  await q(`DELETE FROM reports`);
+  const [a, b] = [await account(), await account()];
+  const ESC = "\x1b";
+  const BEL = "\x07";
+  const forged = `${ESC}[2J${ESC}[H${ESC}]52;c;${Buffer.from("rm -rf ~").toString("base64")}${BEL}\n\nno open reports.\n`;
+  await DB.createReport({
+    reporterId: a,
+    reportedId: b,
+    conversationId: topicId(a, b),
+    category: "spam",
+    note: forged,
+    excerpt: `line one\u009b31m\r\u202eevil\nno open reports.`,
+  });
+
+  const out = await captured(() => queue());
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting none reach the terminal
+  assert.ok(!/[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(out), JSON.stringify(out));
+  assert.match(out, /\\x1b\[2J/, "the escape is shown, so the operator can see what was sent");
+  for (const line of out.split("\n").filter((l) => l.includes("no open reports."))) {
+    assert.match(line, /^ {6}[>|] /, `a forged line stands on its own: ${JSON.stringify(line)}`);
+  }
+});
+
+test("a ban refuses the key from then on and keeps the blocks others placed on it", async () => {
+  const [a, b] = [await account(), await account()];
+  await DB.block(a, b);
+  const id = await DB.createReport({ reporterId: a, reportedId: b, conversationId: topicId(a, b), category: "spam" });
+  await captured(() => resolve(id, "banned", { kick: async () => true, ban: (u) => DB.banUser(u) }));
+  assert.ok(await DB.isBanned(b));
+  assert.deepEqual(await DB.blockedIds(a), [b], "the ban lifted the reporter's block");
+  await assert.rejects(DB.ensureUser(b, keyOf.get(b)!), /BANNED/, "the banned key signed back in");
+  assert.equal((await q(`SELECT 1 FROM users WHERE id = $1`, [b])).rows.length, 0);
 });

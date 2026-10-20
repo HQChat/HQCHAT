@@ -14,6 +14,7 @@ import * as crypto from "node:crypto";
 import { test } from "node:test";
 import { createApiHandler } from "../../src/server/api";
 import { DB } from "../../src/server/db/api";
+import { q } from "../../src/server/db/pg";
 import { call as request } from "../helpers/http";
 import { closePg, requirePg } from "../pg-helper";
 
@@ -42,6 +43,14 @@ test("GET /peer/:id/key shape-checks the id before touching the database", async
   for (const bad of ["nothex", "ab", `${"AB".repeat(32)}zz`, "%20"]) {
     const r = await call("GET", `/peer/${bad}/key`);
     assert.equal(r.status, 400, bad);
+    assert.equal(r.body.error, "INVALID_FIELD");
+  }
+});
+
+test("GET /peer/:id/key answers a malformed %-escape with a 400, not a 500", async () => {
+  for (const bad of ["%E0%A4%A", "%", "%zz"]) {
+    const r = await call("GET", `/peer/${bad}/key`);
+    assert.equal(r.status, 400, `${bad}: ${r.text}`);
     assert.equal(r.body.error, "INVALID_FIELD");
   }
 });
@@ -180,4 +189,39 @@ test("GET /users answers only exact usernames, and never enumerates", async () =
 
 test.after(async () => {
   await closePg();
+});
+
+test("a push token must be an APNs device token", async () => {
+  // It is interpolated into the :path of the request sent to Apple.
+  const me = await user();
+  for (const token of [
+    `abc/../../x?y#z${"a".repeat(60)}`,
+    "g".repeat(64),
+    "a".repeat(63),
+    "a".repeat(201),
+    "a b".repeat(30),
+  ]) {
+    const r = await call("POST", "/push/token", {
+      body: { platform: "ios", environment: "production", token },
+      token: me.token,
+    });
+    assert.equal(r.status, 400, `${token.slice(0, 20)}: ${r.text}`);
+  }
+  for (const [platform, environment] of [
+    ["android", "production"],
+    ["ios", "development"],
+  ]) {
+    const r = await call("POST", "/push/token", {
+      body: { platform, environment, token: "ab".repeat(32) },
+      token: me.token,
+    });
+    assert.equal(r.status, 400, `${platform}/${environment}`);
+  }
+  const ok = await call("POST", "/push/token", {
+    body: { platform: "ios", environment: "sandbox", token: "AB".repeat(32) },
+    token: me.token,
+  });
+  assert.equal(ok.status, 200, ok.text);
+  assert.equal((await DB.getPushToken(me.id))?.token, "ab".repeat(32), "stored lowercase");
+  await q(`DELETE FROM push_tokens WHERE id = $1`, [me.id]);
 });
