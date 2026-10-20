@@ -130,10 +130,41 @@ if let first = fixtures.first, let cert = certificate(first),
         check(!TLSPinningDelegate.chainMatchesAnyPin(trust: t, pins: [spki.prefix(16)]), "a truncated pin does not match")
         var padded = spki; padded.append(0x00)
         check(!TLSPinningDelegate.chainMatchesAnyPin(trust: t, pins: [padded]), "a padded pin does not match")
+        // The policy over a chain that passed system trust.
+        check(TLSPinningDelegate.accepts(trust: t, under: .systemTrust), "with no pins, system trust is enough")
+        check(TLSPinningDelegate.accepts(trust: t, under: .pinned([spki])), "a pinned chain is accepted")
+        check(!TLSPinningDelegate.accepts(trust: t, under: .pinned([Data(repeating: 0xAB, count: 32)])),
+              "an unpinned chain is refused")
+        check(!TLSPinningDelegate.accepts(trust: t, under: .misconfigured),
+              "a malformed pin list refuses even a chain it would have pinned")
     } else {
         check(false, "a SecTrust can be built from the fixture")
     }
 }
+
+// ── Reading the configured list ───────────────────────────────────────────────
+//
+// A build meant to pin must never end up pinning less than it says. Dropping
+// a bad entry silently left the rest, and a list of only bad entries became
+// "no pins", which is system trust: a build that looked pinned and was not.
+
+let goodPin = Data(repeating: 0x11, count: 32).base64EncodedString()
+let otherPin = Data(repeating: 0x22, count: 32).base64EncodedString()
+check(PinPolicy.parse([]) == .systemTrust, "an empty list is system trust, as configured on purpose")
+check(PinPolicy.parse([goodPin, otherPin])
+        == .pinned([Data(repeating: 0x11, count: 32), Data(repeating: 0x22, count: 32)]),
+      "well-formed pins are all kept")
+check(PinPolicy.parse([goodPin, "not base64!"]) == .misconfigured,
+      "one undecodable pin makes the whole list a configuration error, not a shorter list")
+check(PinPolicy.parse(["not base64!"]) == .misconfigured,
+      "a list of only bad pins is not system trust")
+check(PinPolicy.parse([""]) == .misconfigured, "an empty entry is a bad pin")
+check(PinPolicy.parse([Data(repeating: 0x11, count: 20).base64EncodedString()]) == .misconfigured,
+      "a digest of the wrong length (SHA-1) is a bad pin")
+check(PinPolicy.parse([Data(repeating: 0x11, count: 48).base64EncodedString()]) == .misconfigured,
+      "…and so is SHA-384")
+check(PinPolicy.parse(nil) == .misconfigured, "a pin key that is not a list of strings is a configuration error")
+check(PinPolicy.parse(Deployment.pinnedSPKIHashes) != .misconfigured, "the compiled-in list is well formed")
 
 // ── Two different keys never share a pin ──────────────────────────────────────
 

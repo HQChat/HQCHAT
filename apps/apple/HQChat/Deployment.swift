@@ -32,7 +32,9 @@ enum Deployment {
 
     /// SHA-256 of the server's SubjectPublicKeyInfo, base64: the TLS pins.
     ///
-    /// Empty means system trust only. A wrong pin locks every installed copy out
+    /// Empty means system trust only. An entry that is not a base64 SHA-256
+    /// digest refuses every connection rather than pinning less: see
+    /// `PinPolicy`. A wrong pin locks every installed copy out
     /// with no server-side fix, so before filling this in
     /// (`scripts/compute-spki-pins.sh` prints candidates):
     ///
