@@ -67,6 +67,7 @@
 				Models/MessageTypes.swift,
 				Models/Profile.swift,
 				Persistence.swift,
+				PrivacyInfo.xcprivacy,
 				Services/BiometricAudit.swift,
 				Services/BiometricCoordinator.swift,
 				Services/ChatStore.swift,
