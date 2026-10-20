@@ -188,6 +188,8 @@ class DataResetService {
             }
             
             try modelContext.save()
+            // Deleted rows stay readable in SQLite's free pages until compacted.
+            PersistenceController.storeNeedsCompacting()
             return true
         } catch {
             Log.storage.error("❌ Failed to clear SwiftData database: \(String(describing: error))")

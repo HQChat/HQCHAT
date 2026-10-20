@@ -45,8 +45,30 @@ func run() {
     try? ctx.save()
     check((try? ctx.fetch(FetchDescriptor<Friend>()))?.count == 1, "the 3.1.1 contact is there")
 
-    CoreMigration.purge(profileID: legacy.id, context: ctx)
-    check((try? ctx.fetch(FetchDescriptor<Friend>()))?.count == 0, "the move's purge deletes the 3.1.1 contacts")
+    // A row from before message ids were kept is imported under an id derived
+    // from the row itself, so a retried import writes over the slots of the
+    // one that failed instead of leaving them beside its own.
+    let otherMsg = Message(timestamp: Date(), isOutgoing: true, friend: friend, profileID: legacy.id)
+    ctx.insert(otherMsg)
+    try? ctx.save()
+    let firstID = try? LegacySnapshot.legacyMessageID(for: msg)
+    check(firstID != nil && firstID == (try? LegacySnapshot.legacyMessageID(for: msg)),
+          "a row without an id gets the same one every time it is read")
+    check(firstID != (try? LegacySnapshot.legacyMessageID(for: otherMsg)), "…and two rows get two ids")
+
+    // The core holding the profile while its 3.1.1 rows are still there is a
+    // move that died before the purge: the launch's sweep finishes it.
+    check(!CoreMigration.hasLeftovers(profileID: legacy.id, context: ctx),
+          "rows the core has not taken are not leftovers: the move has not run")
+    let legacyRoot = try! ChatStore.storeDirectory(for: legacy.id)
+    try! FileManager.default.createDirectory(at: legacyRoot, withIntermediateDirectories: true)
+    try! Data([1]).write(to: legacyRoot.appendingPathComponent("state"))
+    check(CoreMigration.hasLeftovers(profileID: legacy.id, context: ctx),
+          "a profile the core holds, with 3.1.1 rows still there, has leftovers")
+    CoreMigration.sweepLeftovers(profiles: [legacy, fresh], context: ctx)
+    check(!CoreMigration.hasLeftovers(profileID: legacy.id, context: ctx), "the sweep deletes them")
+    try? FileManager.default.removeItem(at: legacyRoot)
+    check((try? ctx.fetch(FetchDescriptor<Friend>()))?.count == 0, "the sweep's purge deletes the 3.1.1 contacts")
     check((try? ctx.fetch(FetchDescriptor<Message>()))?.count == 0, "…their messages")
     check((try? ctx.fetch(FetchDescriptor<PendingFrame>()))?.count == 0, "…and the frames never opened")
     check((try? ctx.fetch(FetchDescriptor<Profile>()))?.count == 2, "but keeps the profile")
@@ -81,6 +103,45 @@ func run() {
     _ = DataResetService.resetAllData(modelContext: ctx)
     check((try? ctx.fetch(FetchDescriptor<Profile>()))?.count == 0,
           "a second reset is harmless")
+
+    // ── Deleted rows do not linger in the file ───────────────────────────────
+    //
+    // SQLite keeps a deleted row's bytes in free pages and in the WAL, and a
+    // 3.1.1 row held a conversation topic, which is the permission to read
+    // it. The compaction the move asks for must leave none of it in the files.
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("hqchat-store-\(UUID().uuidString)", isDirectory: true)
+    try! FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let storeURL = dir.appendingPathComponent("default.store")
+    let secretTopic = "cv/" + String(repeating: "5ec7e7", count: 10)
+    do {
+        let onDisk = try! ModelContainer(
+            for: Profile.self, Friend.self, Message.self, PendingFrame.self,
+            configurations: ModelConfiguration(url: storeURL))
+        let diskCtx = ModelContext(onDisk)
+        let owner = Profile(username: "dave", publicKeyHex: "")
+        diskCtx.insert(owner)
+        for seq in 0..<50 {
+            diskCtx.insert(PendingFrame(profileID: owner.id, topic: secretTopic, raw: Data([1]), seq: seq))
+        }
+        try! diskCtx.save()
+        for row in try! diskCtx.fetch(FetchDescriptor<PendingFrame>()) { diskCtx.delete(row) }
+        try! diskCtx.save()
+    }
+    func residue() -> Bool {
+        let needle = Data(secretTopic.utf8)
+        return ["", "-wal", "-shm"].contains { suffix in
+            (FileManager.default.contents(atPath: storeURL.path + suffix))?.range(of: needle) != nil
+        }
+    }
+    // Without it they are there, which is what this guards against.
+    check(residue(), "before compacting, the deleted topic is still in the store's files")
+    check(PersistenceController.compactStore(at: storeURL), "the store compacts")
+    check(!residue(), "after compacting, no deleted topic is left in the store's files")
+    PersistenceController.protectStoreFiles(storeURL)
+    check((try? storeURL.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup) == true,
+          "the store is left out of backups")
+    try? FileManager.default.removeItem(at: dir)
 
     // ── The profile manager ──────────────────────────────────────────────────
     //

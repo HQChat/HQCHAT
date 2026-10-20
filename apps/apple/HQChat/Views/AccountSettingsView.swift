@@ -112,7 +112,7 @@ struct AccountSettingsView: View {
             HQFieldLabel(text: "username", tint: HQColor.green)
 
             if isEditingUsername {
-                HQTextField(placeholder: "username", text: $draftUsername, prefix: "@")
+                HQTextField(placeholder: "username", text: $draftUsername, prefix: "@", ascii: true)
                     .onChange(of: draftUsername) { _, newValue in
                         // Same alphabet as the server, filtered as typed: the
                         // field can't hold a handle the server would reject, and

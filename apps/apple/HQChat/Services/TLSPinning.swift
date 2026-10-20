@@ -69,12 +69,50 @@ enum ServerConfig {
     static var displayOrigin: String { httpsOrigin }
 }
 
+/// What the configured pin list allows.
+enum PinPolicy: Equatable {
+    /// No pins configured: valid system trust is enough.
+    case systemTrust
+    /// A chain must also contain one of these SPKI SHA-256 digests.
+    case pinned(Set<Data>)
+    /// The list has an entry that is not a SHA-256 digest in base64. A build
+    /// meant to pin must not quietly lose a pin, or end up with none and fall
+    /// back to system trust: every connection is refused instead.
+    case misconfigured
+
+    /// The policy for `raw`, the configured list; nil means the key held
+    /// something that is not a list of strings.
+    static func parse(_ raw: [String]?) -> PinPolicy {
+        guard let raw else { return .misconfigured }
+        if raw.isEmpty { return .systemTrust }
+        var pins = Set<Data>()
+        for entry in raw {
+            guard let pin = Data(base64Encoded: entry), pin.count == SHA256.byteCount else {
+                return .misconfigured
+            }
+            pins.insert(pin)
+        }
+        return .pinned(pins)
+    }
+
+    /// The configured list: the Info.plist key when present (so a build can
+    /// pin without touching source), otherwise the deployment's own list
+    /// (empty by default — see Deployment).
+    static var configured: PinPolicy {
+        if let value = Bundle.main.object(forInfoDictionaryKey: "ServerPinnedSPKIHashes") {
+            return parse(value as? [String])
+        }
+        return parse(Deployment.pinnedSPKIHashes)
+    }
+}
+
 /// Pins the server's SPKI (SHA-256, base64) from Info.plist `ServerPinnedSPKIHashes`.
 /// Used by every request and WebSocket the core makes. Fails closed when pins
-/// are configured; with none configured it still requires valid system trust.
+/// are configured, and when the list is malformed; with none configured it
+/// still requires valid system trust.
 final class TLSPinningDelegate: NSObject, URLSessionDelegate, URLSessionWebSocketDelegate, @unchecked Sendable {
 
-    private let pins: Set<Data>
+    private let policy: PinPolicy
 
     /// Result of the WebSocket handshake, recorded whether or not anyone is
     /// currently awaiting it (the delegate callback can land first).
@@ -90,17 +128,18 @@ final class TLSPinningDelegate: NSObject, URLSessionDelegate, URLSessionWebSocke
     /// polling (the MQTT client uses it to surface a drop as `.disconnected`).
     private var onClose: ((Error) -> Void)?
 
-    override init() {
-        // Info.plist wins so a build can pin without touching source; otherwise
-        // the deployment's own list (empty by default — see Deployment).
-        let raw = (Bundle.main.object(forInfoDictionaryKey: "ServerPinnedSPKIHashes") as? [String])
-            ?? Deployment.pinnedSPKIHashes
-        self.pins = Set(raw.compactMap { Data(base64Encoded: $0) })
-        #if DEBUG
-        if pins.isEmpty {
+    init(policy: PinPolicy = .configured) {
+        self.policy = policy
+        switch policy {
+        case .systemTrust:
+            #if DEBUG
             Log.network.info("🔓 TLS pinning: no pins configured — system trust only (MAS-2)")
+            #endif
+        case .pinned:
+            break
+        case .misconfigured:
+            Log.network.error("❌ TLS pinning: a configured pin is not a base64 SHA-256 digest — every connection is refused")
         }
-        #endif
         super.init()
     }
 
@@ -211,18 +250,23 @@ final class TLSPinningDelegate: NSObject, URLSessionDelegate, URLSessionWebSocke
             return
         }
 
-        // 2. No pins configured → default handling (valid system trust already
-        //    confirmed above). No downgrade; just no extra pinning.
-        if pins.isEmpty {
-            completionHandler(.useCredential, URLCredential(trust: trust))
-            return
-        }
-
-        // 3. Pins configured → at least one cert in the chain must match. Fail closed.
-        if Self.chainMatchesAnyPin(trust: trust, pins: pins) {
+        if Self.accepts(trust: trust, under: policy) {
             completionHandler(.useCredential, URLCredential(trust: trust))
         } else {
             completionHandler(.cancelAuthenticationChallenge, nil)
+        }
+    }
+
+    /// Whether a chain that already passed system trust is accepted.
+    static func accepts(trust: SecTrust, under policy: PinPolicy) -> Bool {
+        switch policy {
+        // 2. No pins configured: valid system trust, confirmed above, is
+        //    enough. No downgrade; just no extra pinning.
+        case .systemTrust: return true
+        // 3. Pins configured: at least one cert in the chain must match.
+        case let .pinned(pins): return chainMatchesAnyPin(trust: trust, pins: pins)
+        // 4. A malformed list pins nothing it was meant to: refuse.
+        case .misconfigured: return false
         }
     }
 

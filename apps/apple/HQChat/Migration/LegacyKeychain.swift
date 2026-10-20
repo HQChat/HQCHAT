@@ -42,14 +42,34 @@ enum AESKeyStore {
         return read
     }
 
-    static func delete(_ account: String) {
+    /// Deletes `account` under both services; false when the Keychain refused
+    /// a delete (an absent item is not a refusal).
+    @discardableResult
+    static func delete(_ account: String) -> Bool {
+        var deleted = true
         for (svc, protected) in [(protectedService, true), (service, false)] {
-            SecItemDelete(query(svc, account, protected: protected) as CFDictionary)
+            let status = SecItemDelete(query(svc, account, protected: protected) as CFDictionary)
+            if status != errSecSuccess && status != errSecItemNotFound {
+                Log.keys.error("[AESKeyStore] ❌ a 3.1.1 item could not be deleted (\(status))")
+                deleted = false
+            }
         }
+        return deleted
     }
 
     /// Every account `profileID` stored, read without authenticating.
     static func accounts(of profileID: UUID) -> [String] {
+        allAccounts().filter { $0.contains(profileID.uuidString) }
+    }
+
+    /// Accounts 3.1.1 wrote while no profile was active (`aes.noprofile.<peer>.ratchet`,
+    /// `prekeys.noprofile`). No profile owns them, so the move never reads
+    /// them: they are only left to delete.
+    static func orphanedAccounts() -> [String] {
+        allAccounts().filter { $0.hasPrefix("aes.noprofile.") || $0 == "prekeys.noprofile" }
+    }
+
+    private static func allAccounts() -> [String] {
         var all: [String] = []
         for (svc, protected) in [(protectedService, true), (service, false)] {
             var q = query(svc, nil, protected: protected)
@@ -61,7 +81,7 @@ enum AESKeyStore {
                   let rows = result as? [[String: Any]] else { continue }
             all += rows.compactMap { $0[kSecAttrAccount as String] as? String }
         }
-        return all.filter { $0.contains(profileID.uuidString) }
+        return all
     }
 
     private static func query(_ service: String, _ account: String?, protected: Bool) -> [String: Any] {
@@ -138,10 +158,17 @@ enum LegacyIdentity {
         return result as? Data
     }
 
-    static func delete(profileID: UUID) {
-        SecItemDelete([
+    /// False when the Keychain refused the delete (an absent key is not a refusal).
+    @discardableResult
+    static func delete(profileID: UUID) -> Bool {
+        let status = SecItemDelete([
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service(profileID),
         ] as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            Log.keys.error("[LegacyIdentity] ❌ the 3.1.1 identity key could not be deleted (\(status))")
+            return false
+        }
+        return true
     }
 }

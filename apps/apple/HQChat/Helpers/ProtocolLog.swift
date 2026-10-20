@@ -23,7 +23,14 @@
 // Redaction is by CONSTRUCTION, not by filtering: every case of `Event` takes
 // ids, counts, enum-ish reasons and booleans. There is no case that takes a
 // payload, a plaintext, a key, a token or a username, so there is no call site
-// that can pass one by mistake. Ids are truncated on the way in.
+// that can pass one by mistake. Ids are truncated on the way in, including any
+// that ride inside a reason or a topic.
+//
+// The free-text fields (`reason`, `topic`) are the one gap in that rule: they
+// come from code that is not this file, the core's drop reasons among them, and
+// a reason can name a conversation topic, which is the permission to read it.
+// So every run of hex in them is cut to eight characters too, and an event
+// that carries one goes to the unified log as `.private`.
 //
 // That is the same rule Observability.redact enforces on Sentry, applied where
 // it is cheaper to enforce: at the type. Security audit M2 is why `dlog` was
@@ -131,7 +138,11 @@ enum ProtocolLog {
 
     static func record(_ event: Event) {
         let line = render(event)
-        log.debug("\(line, privacy: .public)")   // .public: nothing here is private by construction
+        if event.carriesFreeText {
+            log.debug("\(line, privacy: .private)")
+        } else {
+            log.debug("\(line, privacy: .public)")   // .public: nothing here is private by construction
+        }
 
         let entry = Entry(at: Date(), line: line)
         lock.lock()
@@ -148,12 +159,29 @@ enum ProtocolLog {
         return id.count <= 8 ? id : String(id.prefix(8))
     }
 
+    /// `text` with every run of 16 or more hex characters cut to its first 8:
+    /// an id or a topic (`cv/<64 hex>`) named inside a reason gets the same
+    /// treatment as one passed as an id.
+    static func truncatingIDs(_ text: String) -> String {
+        var out = ""
+        var run = ""
+        func flush() {
+            out += run.count >= 16 ? String(run.prefix(8)) + "…" : run
+            run = ""
+        }
+        for c in text {
+            if c.isHexDigit { run.append(c) } else { flush(); out.append(c) }
+        }
+        flush()
+        return out
+    }
+
     private static func render(_ e: Event) -> String {
         switch e {
         case .connected(let me):
             return "🔗 connected as \(s(me))"
         case .disconnected(let reason):
-            return "🔌 disconnected — \(reason)"
+            return "🔌 disconnected — \(truncatingIDs(reason))"
         case .handshakeChallenged(let peer):
             return "🔐 held \(s(peer))'s init and asked them to prove they hold that key"
         case .handshakeProved(let peer):
@@ -175,15 +203,15 @@ enum ProtocolLog {
             return "⛔️ SUBSCRIBE REFUSED \(kind.rawValue)\(peer.map { " \(s($0))" } ?? "") "
                  + "(0x\(String(code, radix: 16))) — no ACL grant; nothing will arrive on it"
         case .publishReplayed(let topic, let attempt):
-            return "↻ replaying an unacked publish to \(topic) (attempt \(attempt))"
+            return "↻ replaying an unacked publish to \(truncatingIDs(topic)) (attempt \(attempt))"
         case .publishAbandoned(let topic, let attempts):
-            return "🧨 ABANDONED a publish to \(topic) after \(attempts) unacknowledged "
+            return "🧨 ABANDONED a publish to \(truncatingIDs(topic)) after \(attempts) unacknowledged "
                  + "replays — the broker is refusing it, and re-sending it was killing "
                  + "the link on every connect"
         case .received(let route, let bytes):
             return "📨 received on \(route.rawValue) (\(bytes) bytes)"
         case .dropped(let stage, let peer, let reason):
-            return "🚫 DROPPED at \(stage)\(peer.map { " for \(s($0))" } ?? "") — \(reason)"
+            return "🚫 DROPPED at \(truncatingIDs(stage))\(peer.map { " for \(s($0))" } ?? "") — \(truncatingIDs(reason))"
         case .initReceived(let from, let hasPk):
             return "🤝 init from \(s(from))\(hasPk ? " (carries senderPk)" : " (no senderPk)")"
         case .initIgnoredSessionOpen(let peer):
@@ -207,7 +235,7 @@ enum ProtocolLog {
         case .keyPinned(let peer, let source):
             return "🔑 pinned \(s(peer))'s key from \(source.rawValue)"
         case .keyRejected(let peer, let reason):
-            return "🚨 REFUSED a key for \(s(peer)) — \(reason)"
+            return "🚨 REFUSED a key for \(s(peer)) — \(truncatingIDs(reason))"
         case .keyFetched(let peer, let verified):
             return "🔎 fetched \(s(peer))'s key — \(verified ? "hashes to their id" : "MISMATCH")"
         case .prekeysPublished(let count, let rotated):
@@ -217,7 +245,7 @@ enum ProtocolLog {
         case .messageDecrypted(let peer):
             return "💬 decrypted a message from \(s(peer))"
         case .messageUndecryptable(let peer, let reason):
-            return "❌ could not decrypt from \(s(peer)) — \(reason)"
+            return "❌ could not decrypt from \(s(peer)) — \(truncatingIDs(reason))"
         case .directorySynced(let n, let noSession, let noKey):
             return "📇 directory: \(n) friend(s), \(noSession) without a session, \(noKey) without a key"
         }
@@ -242,5 +270,26 @@ enum ProtocolLog {
 
     static func clear() {
         lock.lock(); buffer.removeAll(); lock.unlock()
+    }
+}
+
+extension ProtocolLog.Event {
+    /// Whether this event carries a string that did not come from this file.
+    /// Those are cut by `truncatingIDs`, and logged as `.private` as well.
+    /// No `default`: a new case has to say which it is.
+    var carriesFreeText: Bool {
+        switch self {
+        case .disconnected, .publishReplayed, .publishAbandoned, .dropped,
+             .keyRejected, .messageUndecryptable:
+            return true
+        case .connected, .presenceAnnounced, .handshakeChallenged, .handshakeProved,
+             .handshakeProven, .handshakeFailed, .subscribed, .subscribeRefused,
+             .received, .initReceived, .initIgnoredSessionOpen, .initGlareKept,
+             .initGlareYielded, .resent, .directoryResyncedForUnknownSender,
+             .sessionOpenedAsResponder, .sessionOpenedAsInitiator, .initPublished,
+             .keyPinned, .keyFetched, .prekeysPublished, .prekeyPoolChecked,
+             .messageDecrypted, .directorySynced:
+            return false
+        }
     }
 }

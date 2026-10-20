@@ -129,10 +129,11 @@ enum MessageKeyStore {
         defer { BiometricCoordinator.end() }
 
         let context = LAContext()
-        // Each row's unwrap would otherwise re-authenticate. The context is
-        // invalidated by `clearCache()` on background and profile switch.
-        context.touchIDAuthenticationAllowableReuseDuration =
-            LATouchIDAuthenticationMaximumAllowableReuseDuration
+        // No reuse window: a recent Touch ID unlock of the device must not
+        // stand in for this one. Rows do not re-authenticate anyway, since
+        // they all use this evaluated context, which `clearCache()` drops on
+        // background and profile switch.
+        context.touchIDAuthenticationAllowableReuseDuration = 0
         do {
             let ok = try await BiometricAudit.measureAsync("LAContext.evaluatePolicy",
                                                            item: "message-read unlock",
@@ -192,6 +193,12 @@ enum MessageKeyStore {
     // MARK: - Sealing (no authentication)
 
     /// This profile's public key, creating the key pair on first use.
+    ///
+    /// Only a profile with no private key gets a new pair. When the stored
+    /// public half cannot be read but the private key is there, the public
+    /// half comes from the private key; failing that, nil. Minting then would
+    /// put a second key under the same tag: the core would seal to the new
+    /// one while the lookup that opens could return either.
     static func publicKey(for profileID: UUID) -> SecKey? {
         lock.lock()
         defer { lock.unlock() }
@@ -200,7 +207,20 @@ enum MessageKeyStore {
             publicCache[profileID] = stored
             return stored
         }
-        guard let priv = createKeyPair(profileID), let pub = SecKeyCopyPublicKey(priv) else { return nil }
+        let status = privateKeyStatus(profileID)
+        if status == errSecItemNotFound {
+            guard let priv = createKeyPair(profileID), let pub = SecKeyCopyPublicKey(priv) else { return nil }
+            publicCache[profileID] = pub
+            return pub
+        }
+        // There is a key, or the Keychain cannot say: never mint over it. A key
+        // reference needs no authentication; only using it does.
+        guard let priv = privateKeyRef(profileID, context: LAContext.nonInteractive()),
+              let pub = SecKeyCopyPublicKey(priv) else {
+            Log.keys.error("[MessageKeyStore] ❌ no public half for the Enclave key (Keychain status \(String(describing: status))); not creating another")
+            return nil
+        }
+        storePublicKey(pub, for: profileID)
         publicCache[profileID] = pub
         return pub
     }
@@ -295,6 +315,14 @@ enum MessageKeyStore {
         defer { lock.unlock() }
         if publicCache[profileID] != nil { return true }
         if loadStoredPublicKey(profileID) != nil { return true }
+        let status = privateKeyStatus(profileID)
+        return status == errSecSuccess || status == errSecInteractionNotAllowed
+    }
+
+    /// Whether the private key is in the Keychain, asked without prompting:
+    /// `errSecItemNotFound` is the only answer that means it is not. The
+    /// caller holds `lock`.
+    private static func privateKeyStatus(_ profileID: UUID) -> OSStatus {
         // Without interaction, a present item that needs a user answers
         // `errSecInteractionNotAllowed` instead of prompting.
         let probe: [String: Any] = [
@@ -310,7 +338,7 @@ enum MessageKeyStore {
                                             expectsPrompt: false) {
             SecItemCopyMatching(probe as CFDictionary, nil)
         }
-        return status == errSecSuccess || status == errSecInteractionNotAllowed
+        return status
     }
 
     /// Deletes the profile's key pair and stored public key. Call when the profile is deleted.
