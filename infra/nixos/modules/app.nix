@@ -37,6 +37,10 @@ let
 
   common = {
     NODE_ENV = "production";
+    # nginx resolves CF-Connecting-IP (set_real_ip_from Cloudflare only) and
+    # passes the result as X-Real-IP: the one client address the server's
+    # per-address limits may believe.
+    TRUSTED_PROXY = "x-real-ip";
     LOG_LEVEL = "info";
     SENTRY_ENVIRONMENT = env.name;
     SENTRY_DSN = env.sentryDsn;
