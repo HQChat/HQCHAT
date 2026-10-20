@@ -90,11 +90,15 @@ in
       "nftables.service"
     ];
     wants = [ "network-online.target" ];
-    serviceConfig = {
+    serviceConfig = config.hqcat.rootService // {
       Type = "oneshot";
-      PrivateTmp = true;
-      ProtectHome = true;
-      NoNewPrivileges = true;
+      CapabilityBoundingSet = [ "CAP_NET_ADMIN" ];
+      RestrictAddressFamilies = [
+        "AF_INET"
+        "AF_INET6"
+        "AF_UNIX"
+        "AF_NETLINK"
+      ];
     };
     path = with pkgs; [
       curl

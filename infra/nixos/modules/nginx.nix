@@ -134,9 +134,12 @@ lib.mkIf (cfg.role == "app") {
     wantedBy = [ "multi-user.target" ];
     before = [ "nginx.service" ];
     requiredBy = [ "nginx.service" ];
-    serviceConfig = {
+    serviceConfig = cfg.rootService // {
       Type = "oneshot";
       RemainAfterExit = true;
+      ReadWritePaths = [ certDir ];
+      # Hands the files to the ssl-cert group, which root is not in.
+      CapabilityBoundingSet = [ "CAP_CHOWN" ];
     };
     path = with pkgs; [
       openssl

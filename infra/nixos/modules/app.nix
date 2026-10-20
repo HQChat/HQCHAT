@@ -131,9 +131,22 @@ let
     };
 
   # Operator tools (scripts/reports.ts, scripts/check-push.ts) run as a
-  # transient unit with the server's environment and credentials:
+  # transient unit with the server's environment, credentials and sandbox:
   #   hqcat-ops reports [<report-id> <disposition>]
   #   hqcat-ops check-push <username>
+  sandboxProp = v: if builtins.isBool v then (if v then "yes" else "no") else toString v;
+  sandboxArgs = lib.concatStringsSep " " (
+    lib.concatLists (
+      lib.mapAttrsToList
+        (k: v: map (x: "-p ${lib.escapeShellArg "${k}=${sandboxProp x}"}") (lib.toList v))
+        (
+          removeAttrs cfg.hardenedService [
+            "Restart"
+            "RestartSec"
+          ]
+        )
+    )
+  );
   exportLine =
     k: v:
     if lib.hasPrefix "%d/" v then
@@ -160,7 +173,7 @@ let
           exit 2
           ;;
       esac
-      exec systemd-run --pty --wait --collect --quiet \
+      exec systemd-run --pty --wait --collect --quiet ${sandboxArgs} \
         ${lib.concatMapStringsSep " " (c: "-p LoadCredential=${cred c}") serverCreds} \
         ${opsEnv} "$tool" "$@"
     '';

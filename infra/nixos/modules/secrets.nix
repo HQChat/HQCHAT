@@ -114,6 +114,7 @@ in
     systemd.tmpfiles.rules = [
       "d /etc/hqcat 0700 root root -"
       "d ${dir} 0700 root root -"
+      "d /var/lib/hqcat-host 0700 root root -"
     ];
 
     systemd.services.hqcat-secrets-sync = {
@@ -121,10 +122,17 @@ in
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
       restartIfChanged = false;
-      serviceConfig = {
+      # Reads a public URL into age and jq: confined to the two directories it
+      # writes, with no capabilities (restarting the consumers is a request to
+      # systemd, which trusts uid 0).
+      serviceConfig = cfg.rootService // {
         Type = "oneshot";
         EnvironmentFile = "/run/hqcat/host.env";
         ExecStart = lib.getExe sync;
+        ReadWritePaths = [
+          "/etc/hqcat"
+          "/var/lib/hqcat-host"
+        ];
       };
     };
 

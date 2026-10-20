@@ -41,9 +41,50 @@ in
         "@system-service"
         "~@privileged"
       ];
+      ProtectProc = "invisible";
+      LimitCORE = 0;
       UMask = "0077";
       Restart = "on-failure";
       RestartSec = 2;
+    };
+  };
+
+  # The root oneshots that turn fetched or metadata input into host state
+  # (secrets, network files, keys, firewall sets) are root because they write
+  # root's files, not because they need root's reach: each adds only the paths
+  # it writes (ReadWritePaths) and the capabilities it uses.
+  options.hqcat.rootService = lib.mkOption {
+    type = lib.types.attrsOf lib.types.anything;
+    readOnly = true;
+    description = "systemd serviceConfig shared by the root setup units: read-only system, no capabilities unless added.";
+    default = {
+      ProtectSystem = "strict";
+      ProtectHome = true;
+      PrivateTmp = true;
+      PrivateDevices = true;
+      NoNewPrivileges = true;
+      ProtectKernelTunables = true;
+      ProtectKernelModules = true;
+      ProtectKernelLogs = true;
+      ProtectControlGroups = true;
+      ProtectClock = true;
+      ProtectHostname = true;
+      ProtectProc = "invisible";
+      RestrictNamespaces = true;
+      RestrictRealtime = true;
+      RestrictSUIDSGID = true;
+      LockPersonality = true;
+      MemoryDenyWriteExecute = true;
+      CapabilityBoundingSet = "";
+      RestrictAddressFamilies = [
+        "AF_INET"
+        "AF_INET6"
+        "AF_UNIX"
+      ];
+      SystemCallArchitectures = "native";
+      SystemCallFilter = [ "@system-service" ];
+      LimitCORE = 0;
+      UMask = "0077";
     };
   };
 
@@ -82,6 +123,10 @@ in
         (lib.mkIf cfg.admin.totp "AuthenticationMethods publickey,keyboard-interactive:pam\n")
       ];
     };
+
+    # Only root talks to the nix-daemon: no service user can add store paths
+    # or substitute closures through it.
+    nix.settings.allowed-users = [ "root" ];
 
     users.users.root.openssh.authorizedKeys.keys = cfg.admin.sshKeys;
     users.users.root.hashedPassword = "!";

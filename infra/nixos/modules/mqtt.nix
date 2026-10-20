@@ -102,12 +102,19 @@ lib.mkIf (cfg.role == "mqtt") {
     description = "Render EMQX's cookie, dashboard password and admin API key";
     before = [ "podman-emqx.service" ];
     requiredBy = [ "podman-emqx.service" ];
-    serviceConfig = {
+    serviceConfig = cfg.rootService // {
       Type = "oneshot";
       RemainAfterExit = true;
       RuntimeDirectory = "hqcat-emqx";
       RuntimeDirectoryMode = "0750";
       RuntimeDirectoryPreserve = "yes";
+      ReadWritePaths = [ "/var/lib/hqcat-emqx" ];
+      # Hands the API key file to EMQX's uid and then narrows its mode.
+      CapabilityBoundingSet = [
+        "CAP_CHOWN"
+        "CAP_FOWNER"
+      ];
+      RestrictAddressFamilies = [ "AF_UNIX" ];
     };
     path = [
       pkgs.coreutils

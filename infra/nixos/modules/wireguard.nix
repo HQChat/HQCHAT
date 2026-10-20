@@ -30,6 +30,8 @@ in
 
   config = lib.mkIf (cfg.role != "base") {
     environment.systemPackages = [ pkgs.wireguard-tools ];
+    # Loaded at boot: the link's unit may not load kernel modules.
+    boot.kernelModules = [ "wireguard" ];
     boot.kernel.sysctl."net.ipv4.ip_nonlocal_bind" = 1;
     hqcat.secretConsumers = lib.mkBefore [ "hqcat-wireguard.service" ];
 
@@ -43,12 +45,17 @@ in
         wireguard-tools
         jq
       ];
-      serviceConfig = {
+      serviceConfig = cfg.rootService // {
         Type = "oneshot";
         RemainAfterExit = true;
         RuntimeDirectory = "hqcat-wireguard";
         RuntimeDirectoryMode = "0700";
         ExecStop = "${pkgs.iproute2}/bin/ip link del wg0";
+        CapabilityBoundingSet = [ "CAP_NET_ADMIN" ];
+        RestrictAddressFamilies = [
+          "AF_UNIX"
+          "AF_NETLINK"
+        ];
       };
       script = ''
         set -euo pipefail
