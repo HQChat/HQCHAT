@@ -206,7 +206,7 @@ fn incomplete_is_not_malformed() {
     for partial in [&[][..], &[0x30], &[0x30, 0x80], &[0x30, 0x05, 0x00]] {
         assert_eq!(decode_one(partial).unwrap(), None, "{partial:?}");
     }
-    let legal_four = [0x30, 0xff, 0xff, 0xff, 0x0f];
+    let legal_four = [0x90, 0xff, 0xff, 0xff, 0x0f];
     assert!(
         decode_one(&legal_four).is_err(),
         "legal prefix, but over MAX_PACKET_BYTES"
@@ -220,10 +220,10 @@ fn hostile_lengths_are_refused_before_buffering() {
         "five continuation bytes"
     );
     let mut d = Decoder::default();
-    d.push(&[0x30, 0xff, 0xff, 0xff, 0x7f]);
+    d.push(&[0x90, 0xff, 0xff, 0xff, 0x7f]);
     assert!(d.next_packet().is_err(), "a 256 MB claim");
     let just_over = MAX_PACKET_BYTES - 2;
-    let mut claim = vec![0x30];
+    let mut claim = vec![0x90];
     let mut n = just_over;
     loop {
         let mut b = (n % 128) as u8;
@@ -357,4 +357,72 @@ fn the_encoder_refuses_what_the_decoder_would() {
         mqtt::encode(&long_topic).is_err(),
         "a topic over 65535 bytes"
     );
+}
+
+fn remaining(mut n: usize) -> Vec<u8> {
+    let mut out = Vec::new();
+    loop {
+        let mut b = (n % 128) as u8;
+        n /= 128;
+        if n > 0 {
+            b |= 0x80;
+        }
+        out.push(b);
+        if n == 0 {
+            return out;
+        }
+    }
+}
+
+#[test]
+fn an_oversized_publish_is_skipped_unbuffered_and_the_stream_goes_on() {
+    // Anyone may publish into an inbox: one publish over the limit must not
+    // end the connection, or the broker redelivers it on every reconnect.
+    let topic = format!("u/{ID}/inbox");
+    let payload_len = MAX_PACKET_BYTES * 4;
+    let mut body = Vec::new();
+    body.extend((topic.len() as u16).to_be_bytes());
+    body.extend(topic.as_bytes());
+    body.extend(7u16.to_be_bytes());
+    let mut stream = vec![0x32];
+    stream.extend(remaining(body.len() + payload_len));
+    stream.extend(&body);
+    stream.extend(vec![0x41; payload_len]);
+    stream.extend(mqtt::encode(&Packet::Pingresp).unwrap());
+
+    let mut d = Decoder::default();
+    let mut got = Vec::new();
+    for chunk in stream.chunks(4096) {
+        d.push(chunk);
+        assert!(d.pending() <= 2 * 4096 + body.len(), "nothing piles up");
+        while let Some(p) = d.next_packet().unwrap() {
+            got.push(p);
+        }
+    }
+    assert_eq!(
+        got,
+        vec![
+            Packet::Oversized {
+                qos: QoS::AtLeastOnce,
+                packet_id: Some(7)
+            },
+            Packet::Pingresp
+        ]
+    );
+    assert!(mqtt::encode(&got[0]).is_err(), "never sent");
+}
+
+#[test]
+fn an_oversized_packet_other_than_a_publish_still_fails_the_stream() {
+    let mut claim = vec![0x90];
+    claim.extend(remaining(MAX_PACKET_BYTES));
+    assert!(decode_one(&claim).is_err());
+}
+
+#[test]
+fn a_remaining_length_has_one_encoding() {
+    // C0 80 00 is PINGREQ with a two-byte zero length; only C0 00 is.
+    assert!(decode_one(&[0xc0, 0x80, 0x00]).is_err());
+    assert!(decode_one(&[0xd0, 0x80, 0x80, 0x00]).is_err());
+    assert_eq!(decode_one(&[0xc0, 0x00]).unwrap(), Some(Packet::Pingreq));
 }

@@ -308,6 +308,14 @@ impl Core {
                 }
                 self.on_publish(&topic, payload, now);
             }
+            Packet::Oversized { qos, packet_id } => {
+                if let (QoS::AtLeastOnce, Some(packet_id)) = (qos, packet_id) {
+                    self.send_packet(&Packet::Puback { packet_id }, now);
+                }
+                self.emit(Effect::Dropped {
+                    reason: "a publish over the packet size limit".into(),
+                });
+            }
             Packet::Puback { packet_id } => {
                 let settled = self
                     .net
