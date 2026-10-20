@@ -114,6 +114,8 @@ enum CoreMigration {
                 context.delete(row)
             }
             try context.save()
+            // Deleted rows stay readable in SQLite's free pages until compacted.
+            PersistenceController.storeNeedsCompacting()
         } catch {
             Log.storage.error("[CoreMigration] ❌ the 3.1.1 rows could not be deleted: \(String(describing: error))")
         }
