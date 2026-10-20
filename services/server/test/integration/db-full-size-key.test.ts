@@ -77,7 +77,7 @@ test("the identity, graph and ACL tables are keyed by a 64-character id", async 
 
   await DB.invite(a, nb);
   assert.equal((await DB.getMyInvites(b)).length, 1);
-  assert.ok(await DB.acceptInvite(a, b));
+  assert.equal(await DB.acceptInvite(a, b, 150), "accepted");
   assert.ok(await DB.areFriends(a, b), "friendship pair key");
 
   await DB.deleteUser(a);

@@ -56,14 +56,32 @@ export const friends = {
     return res.rows.map((r) => ({ id: r.id, username: r.username, sent_at: Number(r.sent_at) }));
   },
 
-  /** Accepts a pending invite, creating the friendship. False when there was none. */
-  async acceptInvite(fromId: string, myId: string): Promise<boolean> {
+  /**
+   * Accepts a pending invite, creating the friendship, unless either side
+   * already has `cap` friends. Both accounts are locked for the check and the
+   * insert, so concurrent accepts cannot overshoot the cap. A refused accept
+   * leaves the invite in place.
+   */
+  async acceptInvite(
+    fromId: string,
+    myId: string,
+    cap: number,
+  ): Promise<"accepted" | "no-invite" | "full" | "peer-full"> {
     return tx(async (c) => {
+      await c.query(`SELECT 1 FROM users WHERE id = ANY($1::text[]) ORDER BY id FOR UPDATE`, [[myId, fromId]]);
+      const counts = await c.query<{ id: string; n: number }>(
+        `SELECT u.id, (SELECT count(*)::int FROM friendships f WHERE f.id_lo = u.id OR f.id_hi = u.id) AS n
+           FROM unnest($1::text[]) AS u(id)`,
+        [[myId, fromId]],
+      );
+      const friendsOf = (id: string) => counts.rows.find((r) => r.id === id)?.n ?? 0;
+      if (friendsOf(myId) >= cap) return "full";
+      if (friendsOf(fromId) >= cap) return "peer-full";
       const taken = await c.query(`DELETE FROM invites WHERE to_id = $1 AND from_id = $2`, [myId, fromId]);
-      if (!taken.rowCount) return false;
+      if (!taken.rowCount) return "no-invite";
       const [lo, hi] = pair(myId, fromId);
       await c.query(`INSERT INTO friendships (id_lo, id_hi) VALUES ($1, $2) ON CONFLICT DO NOTHING`, [lo, hi]);
-      return true;
+      return "accepted";
     });
   },
 

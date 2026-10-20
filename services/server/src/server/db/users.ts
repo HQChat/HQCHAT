@@ -113,7 +113,14 @@ export const users = {
     const owner = await users.getIdByUsername(username);
     if (owner === id) return;
     if (owner) throw new Error("USERNAME_TAKEN");
-    const res = await q(`UPDATE users SET username = $2 WHERE id = $1`, [id, username]);
+    let res: Awaited<ReturnType<typeof q>>;
+    try {
+      res = await q(`UPDATE users SET username = $2 WHERE id = $1`, [id, username]);
+    } catch (e) {
+      // Two claims racing past the owner check: the unique index decides.
+      if ((e as { code?: string }).code === "23505") throw new Error("USERNAME_TAKEN");
+      throw e;
+    }
     if (!res.rowCount) throw new Error("UNKNOWN_IDENTITY");
   },
 

@@ -715,6 +715,38 @@ test("the friend ceiling is checked on both sides of an accept", async () => {
   assert.equal(res.body.peer, true, "the client is told it is the other side that is full");
 });
 
+test("concurrent accepts cannot overshoot the friend ceiling", async () => {
+  // The cap is checked inside the accept's transaction with both accounts
+  // locked; checked before it, ten simultaneous accepts all saw room.
+  const me = await account();
+  const cap = Number(process.env.FRIEND_CAP || 150);
+  await q(
+    `INSERT INTO friendships (id_lo, id_hi)
+     SELECT least($1, f), greatest($1, f)
+       FROM (SELECT md5(i::text || $1) || md5($1 || i::text) AS f FROM generate_series(1, $2) i) fake`,
+    [me.id, cap - 2],
+  );
+  const inviters = await Promise.all(Array.from({ length: 10 }, account));
+  for (const f of inviters) assert.equal((await call("POST", "/friends/invite", { to: me.id }, f.token)).status, 200);
+  const replies = await Promise.all(inviters.map((f) => call("POST", "/friends/accept", { from: f.id }, me.token)));
+  assert.equal(replies.filter((r) => r.status === 200).length, 2, replies.map((r) => r.status).join(", "));
+  assert.ok(replies.every((r) => r.status === 200 || (r.status === 409 && r.body.error === "FRIEND_LIMIT")));
+  assert.equal(await DB.countFriends(me.id), cap);
+  assert.equal((await DB.getMyInvites(me.id)).length, 8, "a refused accept keeps its invite");
+});
+
+test("a username race answers USERNAME_TAKEN, never the database's own words", async () => {
+  const name = `race_${crypto.randomBytes(4).toString("hex")}`;
+  const users = await Promise.all(Array.from({ length: 12 }, account));
+  const replies = await Promise.all(users.map((u) => call("POST", "/username", { username: name }, u.token)));
+  assert.equal(replies.filter((r) => r.status === 200).length, 1, replies.map((r) => r.status).join(", "));
+  for (const r of replies.filter((x) => x.status !== 200)) {
+    assert.equal(r.status, 409, r.text);
+    assert.equal(r.body.error, "USERNAME_TAKEN");
+    assert.ok(!/duplicate|constraint|users_/i.test(r.text), r.text);
+  }
+});
+
 // --- moderation: report + block -------------------------------------------------------------------------
 //
 // Guideline 1.2. The refusals are the emphasis here for the same reason they are

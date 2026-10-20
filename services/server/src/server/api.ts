@@ -103,6 +103,9 @@ function reportMessageId(body: Record<string, unknown>): string | null {
   return value;
 }
 
+/** The refusals `setUsername` names; any other error is not the client's to read. */
+const USERNAME_REFUSALS = new Set(["USERNAME_RESERVED", "INVALID_USERNAME", "UNKNOWN_IDENTITY"]);
+
 /** Routes that need a session, keyed by "METHOD path". */
 const authenticated: Record<string, Route> = {
   "POST /username": async ({ req, res, id }) => {
@@ -112,7 +115,8 @@ const authenticated: Record<string, Route> = {
     } catch (e) {
       const code = (e as Error).message;
       if (code === "USERNAME_TAKEN") throw new HttpError(409, code, "That username is taken");
-      throw new HttpError(400, code, "That username is not allowed");
+      if (USERNAME_REFUSALS.has(code)) throw new HttpError(400, code, "That username is not allowed");
+      throw e; // anything else is a 500 with no detail
     }
     ok(res, { username });
   },
@@ -148,8 +152,11 @@ const authenticated: Record<string, Route> = {
     const fromId = await peerArg(req, "from");
     if (!fromId) return send(res, 400, { ok: false });
     if (await DB.isBlocked(id, fromId)) return send(res, 404, { error: "NOT_FOUND" });
-    if (await friendCapReached(fromId)) return send(res, 409, { error: "FRIEND_LIMIT", limit: FRIEND_CAP, peer: true });
-    if (!(await DB.acceptInvite(fromId, id))) return send(res, 400, { ok: false });
+    // The cap is enforced again inside the accept, where concurrent accepts cannot race it.
+    const outcome = await DB.acceptInvite(fromId, id, FRIEND_CAP);
+    if (outcome === "full") return send(res, 409, { error: "FRIEND_LIMIT", limit: FRIEND_CAP });
+    if (outcome === "peer-full") return send(res, 409, { error: "FRIEND_LIMIT", limit: FRIEND_CAP, peer: true });
+    if (outcome === "no-invite") return send(res, 400, { ok: false });
     await EMQX.notifyGraphChanged([fromId, id]);
     const topics = await DB.getFriendshipTopics(id, fromId);
     ok(res, topics ? { friend: { id: fromId, convo_id: topics.convoId, handshake_id: topics.handshakeId } } : {});
