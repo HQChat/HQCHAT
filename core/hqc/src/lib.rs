@@ -123,6 +123,13 @@ impl SecretKey {
     pub fn as_bytes(&self) -> &[u8; SECRET_KEY_BYTES] {
         &self.0
     }
+
+    /// Whether `public` is this key's public half. An HQC-KEM secret key
+    /// starts with its public key (`dk_kem = ek_kem ‖ dk_pke ‖ σ ‖ seed_kem`),
+    /// so a pair read from outside is checked without a KEM round trip.
+    pub fn belongs_to(&self, public: &PublicKey) -> bool {
+        self.0.first_chunk::<PUBLIC_KEY_BYTES>() == Some(&*public.0)
+    }
 }
 
 impl fmt::Debug for SecretKey {

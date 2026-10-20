@@ -121,3 +121,12 @@ fn concurrent_encapsulations_all_decapsulate() {
         t.join().unwrap();
     }
 }
+
+#[test]
+fn a_secret_key_knows_its_own_public_key_only() {
+    let a = keypair_from_seed(&kat_seed()).unwrap();
+    let b = generate_keypair().unwrap();
+    assert!(a.secret.belongs_to(&a.public));
+    assert!(b.secret.belongs_to(&b.public));
+    assert!(!a.secret.belongs_to(&b.public));
+}
