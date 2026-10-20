@@ -116,9 +116,15 @@ next chain key:   ck' = HKDF(ck, "hqchat/v2/ck")
 chain id:         cid = first 16 bytes of SHA-256(rkPub), as hex
 ```
 
-- **When to step:** the first send after hearing from the peer always steps;
-  after that a sending chain steps only once it has been used and has carried
-  32 messages or lived 15 minutes. These bounds are the post-compromise window.
+- **When to step:** the two sides take turns. A side may step only once a
+  step from the peer has arrived since its own last step (the first sending
+  chain is the exception: the peer has no key of ours to step against yet).
+  Two steps that cross would each derive the next root from the same one and
+  fork the session for good, as Signal's ratchet also avoids. On its turn, a
+  sending chain steps once it has been used and has carried 32 messages or
+  lived 15 minutes; these bounds are the post-compromise window, and a one-way
+  run steps once per turn. "Rotate keys" lifts the bounds, never the turn.
+  Sessions imported from 3.1.1 kept no turn: the lower id has it.
 - **Out of order:** keys skipped on the way to a later message are cached by
   chain and index, at most 2,000 across all chains, oldest evicted.
 - **Replays and forged steps:** a cached key is consumed only if its payload

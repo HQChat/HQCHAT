@@ -108,7 +108,6 @@ fn import_data() -> (ImportData, String) {
             medium_pk: medium.public.clone(),
             one_time: None,
         },
-        0,
     )
     .unwrap();
     let init = s.pending_init.as_ref().unwrap();

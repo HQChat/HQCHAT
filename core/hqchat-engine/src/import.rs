@@ -243,11 +243,16 @@ impl Core {
             .prekeys
             .map(|p| prekeys_of(p, &identity.secret))
             .transpose()?;
+        let me = PeerId::of(&identity.public);
         let mut peers = BTreeMap::new();
         let mut sessions = Vec::new();
         for p in import.peers {
             let (peer, session) = peer_of(p)?;
-            if let Some(session) = session {
+            if let Some(mut session) = session {
+                // Older clients kept no record of whose turn it is to step.
+                // Both sides of a session break the tie the same way: the
+                // lower id may step first, the other once that step arrives.
+                session.peer_key_fresh = me < peer.id;
                 sessions.push((peer.id.clone(), session));
             }
             peers.insert(peer.id.clone(), peer);
