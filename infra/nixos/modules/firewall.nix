@@ -97,21 +97,43 @@ in
     path = with pkgs; [
       curl
       nftables
-      gnused
+      coreutils
     ];
+    # The body is fetched over the network and goes to nft as root: only a
+    # list made entirely of plain CIDRs, none wider than /8 and a plausible
+    # number of them, replaces the current set.
     script = ''
       set -euo pipefail
+      cidr() {
+        local v="$1" addr="''${2%/*}" bits="''${2##*/}"
+        [[ "$2" == */* && "$bits" =~ ^[0-9]{1,3}$ ]] || return 1
+        if [[ "$v" == 4 ]]; then
+          [[ "$addr" =~ ^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])$ ]] &&
+            ((10#$bits >= 8 && 10#$bits <= 32))
+        else
+          [[ "$addr" =~ ^[0-9a-fA-F:]{2,39}$ && "$addr" == *:* ]] && ((10#$bits >= 8 && 10#$bits <= 128))
+        fi
+      }
       for v in 4 6; do
         list="$(curl -fsS --max-time 20 "https://www.cloudflare.com/ips-v$v")" || {
           echo "cloudflare ips-v$v unreachable; keeping the current set"
           continue
         }
-        [ -n "$list" ] || continue
+        ranges=()
+        ok=1
+        while IFS= read -r line; do
+          line="$(tr -d '[:space:]' <<<"$line")"
+          [[ -n "$line" ]] || continue
+          cidr "$v" "$line" || { ok=0; break; }
+          ranges+=("$line")
+        done <<<"$list"
+        if ((ok == 0 || ''${#ranges[@]} < 3 || ''${#ranges[@]} > 200)); then
+          echo "cloudflare ips-v$v is not a plausible list of CIDRs (''${#ranges[@]} ranges); keeping the current set"
+          continue
+        fi
         {
           echo "flush set inet filter cloudflare_v$v"
-          echo -n "add element inet filter cloudflare_v$v { "
-          echo -n "$(echo "$list" | sed '/^$/d' | paste -sd, -)"
-          echo " }"
+          echo "add element inet filter cloudflare_v$v { $(IFS=,; echo "''${ranges[*]}") }"
         } | nft -f -
       done
     '';
