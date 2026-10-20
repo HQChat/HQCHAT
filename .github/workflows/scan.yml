@@ -1,0 +1,89 @@
+# Secret and known-vulnerability scans.
+#
+#   every PR, and every push to main   gitleaks over the new commits; npm audit
+#                                      of the server and the site (production
+#                                      dependencies at moderate, all at high)
+#   weekly                             the same audits plus cargo deny's
+#                                      advisories, against unchanged lock
+#                                      files: a new advisory surfaces without
+#                                      waiting for a change
+#
+# No path filter: a secret committed under apps/apple/ or docs/ counts too.
+name: Scan
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scan-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  secrets:
+    if: github.event_name != 'schedule' && github.event.pull_request.draft != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = false
+      - name: gitleaks
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          gitleaks=(nix shell --inputs-from . nixpkgs#gitleaks --command gitleaks)
+          if [ -n "$BASE" ] && git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            "${gitleaks[@]}" detect --source . --config .gitleaks.toml --redact --no-banner --log-opts="$BASE..HEAD"
+          else
+            "${gitleaks[@]}" detect --source . --config .gitleaks.toml --redact --no-banner --no-git
+          fi
+
+  npm:
+    if: github.event.pull_request.draft != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      # Reads the lock files only; nothing is installed or run.
+      - name: npm audit
+        run: |
+          for dir in services/server apps/site; do
+            npm audit --prefix "$dir" --omit=dev --audit-level=moderate
+            npm audit --prefix "$dir" --audit-level=high
+          done
+
+  cargo:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = false
+      - name: cargo deny advisories
+        run: nix shell --inputs-from . nixpkgs#cargo nixpkgs#cargo-deny --command bash -c 'cd core && cargo deny --locked check advisories'

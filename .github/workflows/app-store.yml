@@ -54,6 +54,8 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
@@ -69,12 +71,15 @@ jobs:
           version="$(node apps/apple/asc-review.mjs submit "$BUNDLE_ID" "$VERSION" "$WHATS_NEW")"
           echo "version=$version" >>"$GITHUB_OUTPUT"
       # A resubmission after a rejection may come from a later commit: the tag follows it.
+      # Through the API, so no token sits in .git/config while asc-review.mjs runs.
       - name: Tag the commit the server will deploy from
         env:
           VERSION: ${{ steps.submit.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          git tag -f "app-store/$VERSION" "$GITHUB_SHA"
-          git push -f origin "refs/tags/app-store/$VERSION"
+          ref="tags/app-store/$VERSION"
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/$ref" -f sha="$GITHUB_SHA" -F force=true >/dev/null 2>&1 ||
+            gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/$ref" -f sha="$GITHUB_SHA" >/dev/null
           {
             echo "Submitted **$VERSION** for App Review, manual release."
             echo "Once approved, the watcher deploys \`app-store/$VERSION\` ($GITHUB_SHA) and then releases the app."

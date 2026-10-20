@@ -133,6 +133,8 @@ jobs:
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - name: Check Sentry is configured (warns, never fails)
         run: infra/scripts/check-sentry.sh "$ENVIRONMENT"
       - name: Read the environment
@@ -208,6 +210,8 @@ jobs:
       AGE_IDENTITY_MQTT: ${{ secrets.AGE_IDENTITY_MQTT }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         with:
           terraform_version: "1.15.6"
@@ -281,6 +285,8 @@ jobs:
       API_HOST: ${{ needs.infra.outputs.api_host }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       # The scenarios load the core addon (HQCHAT_NODE); the release's own build
       # is in the cache, inside the server's closure.
       - uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
@@ -376,6 +382,8 @@ jobs:
     environment: ${{ inputs.environment }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
