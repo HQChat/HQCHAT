@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import { apnsGaps, apnsIntended, apnsSummary } from "../server/apns-config";
 import { donationGaps, donationSummary, resolvePrices } from "../server/donations-config";
+import { TRUSTED_PROXY_MODES } from "../server/http";
 
 /**
  * Process configuration. Importing this module resolves the `*_FILE`
@@ -23,7 +24,7 @@ for (const key of Object.keys(process.env)) {
 /** Whether this deployment takes donations through Stripe. */
 export const DONATIONS_ENABLED = /^(1|true|yes)$/i.test(process.env.DONATIONS_ENABLED || "");
 
-export type ConfigNeed = "stripe" | "apns";
+export type ConfigNeed = "stripe" | "apns" | "proxy";
 
 /**
  * Validates the configuration a service needs and exits with every problem
@@ -52,6 +53,16 @@ export function assertConfig(needs: ConfigNeed[] = []): void {
         ? `APNs is partially configured, missing ${apnsGaps(process.env).join(", ")}`
         : apnsSummary(process.env),
     );
+  }
+
+  // Without it every request seems to come from the proxy, and each per-address
+  // limit becomes one limit for everybody.
+  const proxy = process.env.TRUSTED_PROXY?.trim().toLowerCase() || "";
+  if (needs.includes("proxy") && process.env.NODE_ENV === "production" && !proxy) {
+    errors.push("TRUSTED_PROXY is required in production (x-real-ip behind nginx; see src/server/http.ts).");
+  }
+  if (proxy && !(TRUSTED_PROXY_MODES as readonly string[]).includes(proxy)) {
+    errors.push(`TRUSTED_PROXY="${proxy}" is not one of ${TRUSTED_PROXY_MODES.join(", ")}.`);
   }
 
   const databaseUrl = process.env.DATABASE_URL || "";

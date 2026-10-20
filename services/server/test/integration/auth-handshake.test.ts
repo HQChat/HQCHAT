@@ -15,6 +15,8 @@ import { peerId } from "../reference/protocol/identity";
 test.before(requirePg);
 
 setLogLevel("silent"); // the failure path logs per attempt; see the alert test
+// Callers are told apart by X-Real-IP, as behind the production nginx.
+process.env.TRUSTED_PROXY = "x-real-ip";
 
 const handler = createAuthHandler();
 
