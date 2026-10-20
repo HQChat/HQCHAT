@@ -953,15 +953,25 @@ impl Core {
         {
             p.pinned = sender_pk;
         }
+        // The message before the session: kept once by id, so if a later
+        // write fails, the frame that comes again is not lost as a replay.
+        let kept = match self.keep_received(sender, &frame.header.msg_id, text, now) {
+            Ok(kept) => kept,
+            Err(e) => return self.storage_failed("a received message", &e),
+        };
+        if let Err(e) = self.put_session(sender, session) {
+            return self.storage_failed("a session", &e);
+        }
         if let Some(o) = &frame.header.one_time
             && let Some(prekeys) = self.unlocked.as_mut().and_then(|u| u.prekeys.as_mut())
         {
             prekeys.one_time.remove(&o.ot_id);
         }
-        if self.put_session(sender, session).is_err() || self.save_state().is_err() {
-            return;
+        self.persist_state();
+        if let Some(record) = kept {
+            self.announce_received(sender, record);
         }
-        self.deliver(sender, &frame.header.msg_id, text, now);
+        self.send_receipt(sender, &frame.header.msg_id, now);
         if self.convo.yielded.remove(sender) {
             self.resend_unconfirmed(sender, now);
         }
@@ -985,50 +995,76 @@ impl Core {
                 frame.header.kind, frame.header.n
             ));
         };
-        if self.save_session(sender).is_err() {
-            return;
+        // The message before the session (see open_init); a failed write
+        // undoes the advance, and the frame is not acknowledged.
+        let kept = if frame.header.kind == Kind::Receipt {
+            None
+        } else {
+            match self.keep_received(sender, &frame.header.msg_id, text, now) {
+                Ok(kept) => kept,
+                Err(e) => {
+                    self.drop_cached_session(sender);
+                    return self.storage_failed("a received message", &e);
+                }
+            }
+        };
+        if let Err(e) = self.save_session(sender) {
+            self.drop_cached_session(sender);
+            return self.storage_failed("a session", &e);
         }
         if frame.header.kind == Kind::Receipt {
             self.set_status(sender, &frame.header.msg_id, Delivery::Delivered);
         } else {
-            self.deliver(sender, &frame.header.msg_id, text, now);
+            if let Some(record) = kept {
+                self.announce_received(sender, record);
+            }
+            self.send_receipt(sender, &frame.header.msg_id, now);
         }
         // Their answer may have opened our session for what waits.
         self.flush(sender, now);
     }
 
-    /// Stores a received message once, tells the UI, and acknowledges it.
-    fn deliver(&mut self, sender: &PeerId, msg_id: &str, text: String, now: i64) {
-        if self.message_slot_of(sender, msg_id).is_none() {
-            let at = self.stamp(now);
-            let record = StoredMessage {
-                format: persist::FORMAT,
-                msg_id: msg_id.to_owned(),
-                outgoing: false,
-                text: text.clone(),
-                at,
-                delivery: None,
-            };
-            if self.put_message(sender, &record).is_err() {
-                return;
-            }
-            if let Some(p) = self.peers.get_mut(sender) {
-                p.unread = p.unread.saturating_add(1);
-            }
-            self.persist_state();
-            self.emit(Effect::MessageAdded(Message {
-                msg_id: msg_id.to_owned(),
-                peer: sender.to_string(),
-                outgoing: false,
-                text,
-                at,
-                delivery: None,
-            }));
-            self.emit(Effect::Notify {
-                peer: Some(sender.to_string()),
-            });
+    /// Stores a received message once: the record when it is new, `None`
+    /// when it was kept before (a redelivery).
+    fn keep_received(
+        &mut self,
+        sender: &PeerId,
+        msg_id: &str,
+        text: String,
+        now: i64,
+    ) -> Result<Option<StoredMessage>, CoreError> {
+        if self.message_slot_of(sender, msg_id).is_some() {
+            return Ok(None);
         }
-        self.send_receipt(sender, msg_id, now);
+        let record = StoredMessage {
+            format: persist::FORMAT,
+            msg_id: msg_id.to_owned(),
+            outgoing: false,
+            text,
+            at: self.stamp(now),
+            delivery: None,
+        };
+        self.put_message(sender, &record)?;
+        Ok(Some(record))
+    }
+
+    /// Counts a newly kept message as unread and tells the UI.
+    fn announce_received(&mut self, sender: &PeerId, record: StoredMessage) {
+        if let Some(p) = self.peers.get_mut(sender) {
+            p.unread = p.unread.saturating_add(1);
+        }
+        self.persist_state();
+        self.emit(Effect::MessageAdded(Message {
+            msg_id: record.msg_id.clone(),
+            peer: sender.to_string(),
+            outgoing: false,
+            text: record.text.clone(),
+            at: record.at,
+            delivery: None,
+        }));
+        self.emit(Effect::Notify {
+            peer: Some(sender.to_string()),
+        });
     }
 
     /// A receipt never opens a session and is sent only inside an answered one.

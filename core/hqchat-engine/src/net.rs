@@ -307,10 +307,15 @@ impl Core {
                 packet_id,
                 ..
             } => {
-                if let (QoS::AtLeastOnce, Some(packet_id)) = (qos, packet_id) {
+                // Acknowledged once handled: a frame whose message or session
+                // could not be written comes again on the next connection.
+                self.write_failed = false;
+                self.on_publish(&topic, payload, now);
+                if let (QoS::AtLeastOnce, Some(packet_id), false) =
+                    (qos, packet_id, self.write_failed)
+                {
                     self.send_packet(&Packet::Puback { packet_id }, now);
                 }
-                self.on_publish(&topic, payload, now);
             }
             Packet::Oversized { qos, packet_id } => {
                 if let (QoS::AtLeastOnce, Some(packet_id)) = (qos, packet_id) {

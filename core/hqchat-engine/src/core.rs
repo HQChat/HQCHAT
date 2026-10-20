@@ -124,6 +124,9 @@ pub(crate) struct Core {
     pub net: crate::net::Net,
     /// Effects of the call in progress, in order.
     pub out: Vec<Effect>,
+    /// A write failed while handling the current inbound frame: it is not
+    /// acknowledged, so the broker delivers it again.
+    pub write_failed: bool,
 }
 
 impl Core {
@@ -152,6 +155,7 @@ impl Core {
             key_fetches: Default::default(),
             net: Default::default(),
             out: Vec::new(),
+            write_failed: false,
         }
     }
 
@@ -260,6 +264,7 @@ impl Core {
 
     /// Reports a store write that failed.
     pub fn storage_failed(&mut self, what: &str, e: &CoreError) {
+        self.write_failed = true;
         self.emit(Effect::StorageFailed {
             reason: format!("could not save {what}: {e:?}"),
         });
@@ -388,6 +393,14 @@ impl Core {
         )?;
         u.sessions.insert(peer.clone(), session);
         Ok(())
+    }
+
+    /// Forgets the in-memory copy of the session with `peer`, so the next use
+    /// reads the stored one: an advance that could not be written is undone.
+    pub fn drop_cached_session(&mut self, peer: &PeerId) {
+        if let Some(u) = self.unlocked.as_mut() {
+            u.sessions.remove(peer);
+        }
     }
 
     /// Writes the in-memory session with `peer` back after it advanced.
