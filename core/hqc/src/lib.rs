@@ -202,9 +202,10 @@ pub struct Seed([u8; SEED_BYTES]);
 impl Seed {
     /// A fresh seed from the OS random generator.
     pub fn generate() -> Result<Self, Error> {
-        let mut seed = [0u8; SEED_BYTES];
-        getrandom::fill(&mut seed).map_err(|_| Error::Entropy)?;
-        Ok(Self(seed))
+        // Filled in place: no unwiped copy of the seed is left behind.
+        let mut seed = Self([0u8; SEED_BYTES]);
+        getrandom::fill(&mut seed.0).map_err(|_| Error::Entropy)?;
+        Ok(seed)
     }
 
     /// A seed from known bytes (a stored identity seed, a test vector).

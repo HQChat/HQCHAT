@@ -62,8 +62,9 @@ pub struct SkippedKey {
     pub chain: [u8; 16],
     /// Its index.
     pub n: u32,
-    /// The message key.
-    pub key: SymmetricKey,
+    /// The message key, boxed: the list shifts and grows, and a key moved
+    /// inline would leave unwiped copies in its old slots.
+    pub key: Box<SymmetricKey>,
 }
 
 /// What an `init` carries besides the message header.
@@ -486,10 +487,13 @@ fn compute_step(
 }
 
 fn cache_skipped(state: &mut SessionState, chain: [u8; 16], keys: Vec<(u32, SymmetricKey)>) {
-    state.skipped.extend(
-        keys.into_iter()
-            .map(|(n, key)| SkippedKey { chain, n, key }),
-    );
+    state
+        .skipped
+        .extend(keys.into_iter().map(|(n, key)| SkippedKey {
+            chain,
+            n,
+            key: Box::new(key),
+        }));
     if state.skipped.len() > MAX_SKIPPED {
         let excess = state.skipped.len().saturating_sub(MAX_SKIPPED);
         state.skipped.drain(..excess);
@@ -523,7 +527,8 @@ pub fn open(
         if !state.skipped.get(i).is_some_and(|s| verify(&s.key)) {
             return None;
         }
-        return Some(state.skipped.remove(i).key);
+        let used = state.skipped.remove(i);
+        return Some(SymmetricKey(used.key.0));
     }
 
     let current = state.peer_rk.as_ref().map(|rk| chain_id(rk.as_bytes()));

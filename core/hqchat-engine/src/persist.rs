@@ -366,7 +366,7 @@ impl StoredSession {
                 .map(|(chain, n, key)| SkippedKey {
                     chain: *chain,
                     n: *n,
-                    key: SymmetricKey(*key),
+                    key: Box::new(SymmetricKey(*key)),
                 })
                 .collect(),
             pending_init,
@@ -394,6 +394,23 @@ impl Drop for StoredState {
         use zeroize::Zeroize;
         self.identity_sk.zeroize();
         self.data_key.zeroize();
+    }
+}
+
+impl Drop for StoredPrekeys {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.medium_sk.zeroize();
+        for (_, sk) in &mut self.one_time {
+            sk.zeroize();
+        }
+    }
+}
+
+impl Drop for StoredChain {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.ck.zeroize();
     }
 }
 

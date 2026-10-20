@@ -168,7 +168,7 @@ fn session(s: &Value) -> Result<SessionState, String> {
         skipped.push(SkippedKey {
             chain: chain_id(field(k, "chain")?)?,
             n: u32_of(k, "n")?,
-            key: SymmetricKey(array(k, "key")?),
+            key: Box::new(SymmetricKey(array(k, "key")?)),
         });
     }
     let mut seen_chains = vec![];
