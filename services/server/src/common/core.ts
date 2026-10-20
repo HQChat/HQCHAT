@@ -55,7 +55,7 @@ export interface HqnMessage2 {
 
 export interface HqnGatewayHandshake {
   openMessage1(msg1: Buffer): Buffer;
-  finishMessage1(sharedSecret: Buffer): Buffer;
+  finishMessage1(secret: HqnSecret): Buffer;
   writeMessage2(payload: Buffer): HqnMessage2;
 }
 
@@ -63,6 +63,15 @@ export interface HqnGatewayHandshake {
 export interface GatewayKeyPair {
   readonly keyId: number;
   publicKey(): GatewayPublicKey;
+  /** The key's fingerprint, as the apps' `hqnKeyPins` list it. */
+  fingerprint(): string;
+  /** Decapsulates on libuv's thread pool; the secret stays in the core. */
+  decapsulate(ct: Buffer): Promise<HqnSecret>;
+}
+
+/** A decapsulated secret held by the core: a handle, never bytes. */
+export interface HqnSecret {
+  readonly __hqnSecret?: never;
 }
 
 export interface HqnGatewayHandshakeClass {
@@ -234,6 +243,8 @@ export interface CoreAddon {
   readonly HQN_VERSION: number;
   GatewayKeyPair: new (key: GatewayKey) => GatewayKeyPair;
   HqnGatewayHandshake: HqnGatewayHandshakeClass;
+  /** `fromBytes` is for tests that drive the handshake with a stand-in KEM. */
+  HqnSecret: { fromBytes(ss: Buffer): HqnSecret };
   HqnMessage2: unknown;
   HqnTransport: unknown;
   Engine: new (options: EngineOptions) => Engine;
@@ -264,6 +275,7 @@ export const CORE_EXPORTS: readonly (keyof CoreAddon)[] = [
   "HQN_VERSION",
   "GatewayKeyPair",
   "HqnGatewayHandshake",
+  "HqnSecret",
   "HqnMessage2",
   "HqnTransport",
   "Engine",

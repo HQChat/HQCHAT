@@ -1,5 +1,5 @@
 import * as net from "node:net";
-import { core, type GatewayKeyPair, type HqnGatewayHandshake, type HqnTransport } from "../common/core";
+import { core, type GatewayKeyPair, type HqnGatewayHandshake, type HqnSecret, type HqnTransport } from "../common/core";
 import { Admission } from "./admission";
 import { connectClientId } from "./mqtt-connect";
 
@@ -20,7 +20,7 @@ import { connectClientId } from "./mqtt-connect";
  *     decapsulation. (A real Noise client can still spend one decapsulation per
  *     handshake; that is what the per-IP handshake rate is for.)
  *   - Decapsulation runs off the event loop (`decapsulate` is async; main.ts
- *     backs it with a worker pool) behind a bounded queue, so a burst of
+ *     backs it with the core's, on libuv's pool) behind a bounded queue, so a burst of
  *     well-formed handshakes sheds load instead of stalling every established
  *     stream on this process.
  *   - Every failure is a silent close. No error frame, no timing difference
@@ -34,7 +34,7 @@ export interface GatewayOptions {
   /** Loaded server key pairs, by key id. */
   keys: Map<number, GatewayKeyPair>;
   /** HQC-256 decapsulation, off the event loop. Rejects when overloaded. */
-  decapsulate: (keyId: number, ct: Buffer) => Promise<Buffer>;
+  decapsulate: (keyId: number, ct: Buffer) => Promise<HqnSecret>;
   /** Where the decrypted stream goes: EMQX's internal plain-TCP listener. */
   upstream: { host: string; port: number };
   limits?: Partial<GatewayLimits>;
@@ -211,7 +211,7 @@ class Gateway {
     } catch {
       return this.refuse(sock, ip, "noise");
     }
-    let ss: Buffer;
+    let ss: HqnSecret;
     try {
       ss = await this.opts.decapsulate(keyId, ct);
     } catch {
