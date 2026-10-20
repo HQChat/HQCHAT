@@ -290,9 +290,16 @@ const authenticated: Record<string, Route> = {
   },
 
   "POST /account/delete": async ({ req, res, id }) => {
+    const friends = await DB.getFriendsList(id);
     await DB.deleteUser(id);
     await DB.revokeSessionToken(bearer(req));
     await EMQX.kick(id);
+    // Former friends are taken off the retired topics and told to refetch,
+    // as for an unfriend, rather than finding out at their next poll.
+    await Promise.all(
+      friends.map((f) => EMQX.revokeFriendshipTopics(id, f.id, { convoId: f.convo_id, handshakeId: f.handshake_id })),
+    );
+    await EMQX.notifyGraphChanged(friends.map((f) => f.id));
     ok(res);
   },
 };

@@ -275,3 +275,38 @@ test("a malformed body is a 400, not a 500", async () => {
 test.after(async () => {
   await closePg();
 });
+
+// --- /auth/logout --------------------------------------------------------------
+
+test("/auth/logout ends the session that asks, and only that one", async () => {
+  const id = someId();
+  const [mine, other] = [await DB.mintSessionToken(id), await DB.mintSessionToken(id)];
+  const r = await call("POST", "/auth/logout", {}, { authorization: `Bearer ${mine}` });
+  assert.equal(r.status, 200, r.text);
+  assert.equal(await DB.resolveSessionToken(mine), null, "the token outlived its logout");
+  assert.equal((await DB.resolveSessionToken(other))?.id, id, "another device was logged out too");
+  const again = await call("POST", "/auth/logout", {}, { authorization: `Bearer ${mine}` });
+  assert.equal(again.status, 401);
+});
+
+test("/auth/logout everywhere ends every session and signing key", async () => {
+  const { id, session, keyId } = await v1Client();
+  const other = await DB.mintSessionToken(id);
+  const r = await call("POST", "/auth/logout", { everywhere: true }, { authorization: `Bearer ${session}` });
+  assert.equal(r.status, 200, r.text);
+  assert.equal(await DB.resolveSessionToken(other), null);
+  assert.equal(await DB.getMqttSessionKey(id, keyId), null, "a signing key outlived logout everywhere");
+});
+
+test("token-bearing responses are never cached", async () => {
+  const { session, refresh } = await v1Client();
+  assert.ok(refresh.mqttKeyId);
+  const r = await call(
+    "POST",
+    "/auth/refresh",
+    { mqttSigningKey: signingKey().raw.toString("base64") },
+    { authorization: `Bearer ${session}` },
+  );
+  assert.equal(r.headers["cache-control"], "no-store");
+  assert.equal((await call("POST", "/auth/verify", {})).headers["cache-control"], "no-store");
+});

@@ -172,8 +172,17 @@ export const sessions = {
     return row ? { id: row.id } : null;
   },
 
-  async revokeSessionToken(token: string): Promise<void> {
-    if (token) await q(`DELETE FROM sessions WHERE token_hash = $1`, [tokenHash(token)]);
+  /** Ends one session; true when the token named one. */
+  async revokeSessionToken(token: string): Promise<boolean> {
+    if (!token) return false;
+    const res = await q(`DELETE FROM sessions WHERE token_hash = $1`, [tokenHash(token)]);
+    return (res.rowCount ?? 0) > 0;
+  },
+
+  /** Ends every session and MQTT signing key of a client. */
+  async revokeAllSessions(id: string): Promise<void> {
+    await q(`DELETE FROM sessions WHERE id = $1`, [id]);
+    await q(`DELETE FROM mqtt_session_keys WHERE id = $1`, [id]);
   },
 
   /** Fixed-window counter; returns the count after this hit. */

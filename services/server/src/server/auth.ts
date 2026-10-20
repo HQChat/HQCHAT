@@ -13,6 +13,7 @@ import { resolveTransportInfo } from "./transport-config";
  *   POST /auth/init        { pk }                          → { ct, challenge }  KEM challenge to the public key
  *   POST /auth/verify      { pk, solution, mqttSigningKey, challenge? } → session and MQTT signing-key id
  *   POST /auth/refresh     (Bearer) { mqttSigningKey }     → a new MQTT signing-key id
+ *   POST /auth/logout      (Bearer) { everywhere? }        → ends this session, or every session and MQTT key
  *   GET  /auth/transport                                   → the hqn/1 gateway, when enabled
  *   POST /mqtt/authn       EMQX hook: verifies a signed, single-use CONNECT proof
  *   POST /mqtt/authn/internal  EMQX hook for the internal listener (push bridge)
@@ -198,6 +199,19 @@ export function createAuthHandler(opts: { internalMqttSecret?: string } = {}): h
         const session = await DB.resolveSessionToken(bearer(req));
         if (!session) return send(res, 401, { error: "unauthenticated" });
         return send(res, 200, await signingKeyFields(session.id, readSigningKey(await readJson(req))));
+      }
+
+      if (method === "POST" && url === "/auth/logout") {
+        const token = bearer(req);
+        const session = await DB.resolveSessionToken(token);
+        if (!session) return send(res, 401, { error: "unauthenticated" });
+        if ((await readJson(req)).everywhere === true) {
+          await DB.revokeAllSessions(session.id);
+          await EMQX.kick(session.id);
+        } else {
+          await DB.revokeSessionToken(token);
+        }
+        return send(res, 200, { ok: true });
       }
 
       if (method === "POST" && url === "/mqtt/authn/internal") {

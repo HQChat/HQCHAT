@@ -655,6 +655,16 @@ test("deleting an account leaves no row anywhere, and ends the live connection",
   assert.equal(kicks.length, 1, "the live connection was left open");
   assert.deepEqual(kicks[0]!.args, [a.id]);
 
+  // The former friend is taken off the retired topics and told to refetch.
+  const revoked = called("revokeFriendshipTopics");
+  assert.equal(revoked.length, 1);
+  assert.deepEqual(revoked[0]!.args.slice(0, 2), [a.id, b.id]);
+  assert.equal((revoked[0]!.args[2] as { convoId: string }).convoId, hash);
+  assert.ok(
+    called("notifyGraphChanged").some((c) => (c.args[0] as string[]).includes(b.id)),
+    "the former friend was not nudged",
+  );
+
   // BOTH sessions, not just the one that asked.
   assert.equal((await call("GET", "/friends", undefined, a.token)).status, 401, "the deleting session");
   assert.equal(

@@ -58,9 +58,12 @@ export function readJson(req: http.IncomingMessage): Promise<JsonBody> {
   });
 }
 
-/** A JSON response. */
+/**
+ * A JSON response. Never stored by a cache: these carry session tokens, topic
+ * capabilities and the friend graph.
+ */
 export function send(res: http.ServerResponse, status: number, body: unknown): void {
-  res.writeHead(status, { "content-type": "application/json" });
+  res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
   res.end(JSON.stringify(body));
 }
 
