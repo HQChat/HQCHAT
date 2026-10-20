@@ -33,6 +33,15 @@ final class FileStoreTests: XCTestCase {
         store.delete(key: "state")
         XCTAssertNil(store.get(key: "state"))
         XCTAssertEqual(store.list(prefix: "").count, 3)
+        // A prefix that ends inside a segment still matches by prefix.
+        XCTAssertEqual(store.list(prefix: "msg/a"), [
+            "msg/aa/00000000000000000001/cc",
+            "msg/aa/00000000000000000002/bb",
+            "msg/ab/00000000000000000001/dd",
+        ])
+        XCTAssertEqual(store.list(prefix: "msg/aa/00000000000000000002"), ["msg/aa/00000000000000000002/bb"])
+        XCTAssertEqual(store.list(prefix: "msg/zz/"), [], "a directory that does not exist lists nothing")
+        XCTAssertEqual(store.list(prefix: "../"), [], "a prefix that could leave the directory lists nothing")
     }
 
     func testAPutLeavesOnlyTheBlobBehindOwnerOnly() throws {

@@ -115,10 +115,24 @@ public final class FileStore: Store, @unchecked Sendable {
         lock.withLock { _ = try? FileManager.default.removeItem(at: url) }
     }
 
+    /// Walks only the directory the prefix names up to its last `/`
+    /// (`msg/<peer>/` is one peer's messages), not the whole profile: the
+    /// core lists a conversation on every message, receipt and status change.
     public func list(prefix: String) -> [String] {
-        lock.withLock {
-            guard let walker = FileManager.default.enumerator(
-                at: root, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles]
+        // The part of the prefix that names directories; a key under it must
+        // pass the same segment rule, so a prefix that fails it matches nothing.
+        let dirPart = prefix.split(separator: "/", omittingEmptySubsequences: false).dropLast()
+        let start: URL
+        if dirPart.isEmpty {
+            start = root
+        } else {
+            guard let dir = url(for: dirPart.joined(separator: "/")) else { return [] }
+            start = dir
+        }
+        return lock.withLock {
+            guard FileManager.default.fileExists(atPath: start.path),
+                  let walker = FileManager.default.enumerator(
+                at: start, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles]
             ) else { return [] }
             let base = root.resolvingSymlinksInPath().path + "/"
             var keys: [String] = []
