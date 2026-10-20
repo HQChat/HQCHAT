@@ -47,6 +47,7 @@ lib.mkIf (cfg.role == "app") {
     recommendedTlsSettings = false;
 
     commonHttpConfig = ''
+      server_tokens off;
       limit_req_zone $binary_remote_addr zone=api:10m rate=20r/s;
       map $request_method $checkout_limit_key {
           POST    $binary_remote_addr;
@@ -69,7 +70,10 @@ lib.mkIf (cfg.role == "app") {
       sslCertificateKey = "${certDir}/origin.key";
 
       extraConfig = ''
-        ssl_protocols TLSv1.2 TLSv1.3;
+        # Only Cloudflare connects here, and it speaks TLS 1.3 with the hybrid
+        # post-quantum group to origins; X25519 alone stays as its fallback.
+        ssl_protocols TLSv1.3;
+        ssl_ecdh_curve X25519MLKEM768:X25519;
         ssl_prefer_server_ciphers off;
         client_max_body_size 1m;
         add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;

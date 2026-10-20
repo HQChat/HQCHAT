@@ -143,6 +143,9 @@ lib.mkIf (cfg.role == "mqtt") {
       imageFile = image;
       environment = {
         EMQX_NODE__NAME = "emqx@127.0.0.1";
+        # A single node: Erlang distribution (4370) listens on loopback only,
+        # as rpc does, never on every address of the host network.
+        ERL_FLAGS = "-kernel inet_dist_use_interface {127,0,0,1}";
         EMQX_API_KEY__BOOTSTRAP_FILE = "/run/hqcat-emqx/api_bootstrap";
       };
       environmentFiles = [ "/run/hqcat-emqx/emqx.env" ];

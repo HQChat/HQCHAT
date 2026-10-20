@@ -40,6 +40,7 @@ output "bundle" {
         privateKey    = wireguard_asymmetric_key.host["app"].private_key
         peerPublicKey = wireguard_asymmetric_key.host["mqtt"].public_key
         peerEndpoint  = digitalocean_droplet.host["mqtt"].ipv4_address_private
+        presharedKey  = random_bytes.wireguard_psk.base64
       })
     }
     mqtt = {
@@ -48,6 +49,7 @@ output "bundle" {
         privateKey    = wireguard_asymmetric_key.host["mqtt"].private_key
         peerPublicKey = wireguard_asymmetric_key.host["app"].public_key
         peerEndpoint  = digitalocean_droplet.host["app"].ipv4_address_private
+        presharedKey  = random_bytes.wireguard_psk.base64
       })
     }
   }

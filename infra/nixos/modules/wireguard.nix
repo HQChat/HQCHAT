@@ -1,7 +1,9 @@
 # The private link between an app host and its broker: app = 10.200.0.1,
 # mqtt = 10.200.0.2. Configured at runtime from the `wireguard` bundle entry,
-# `{ privateKey, peerPublicKey, peerEndpoint }`, which the Deploy workflow
-# builds from Terraform's keys and the peer's VPC address.
+# `{ privateKey, peerPublicKey, peerEndpoint, presharedKey }`, which the Deploy
+# workflow builds from Terraform's keys and the peer's VPC address. The
+# preshared key is mixed into every handshake when the bundle has one; both
+# hosts get it in the same deploy.
 {
   config,
   lib,
@@ -58,9 +60,14 @@ in
         fi
         umask 077
         jq -r .privateKey "$conf" > "$RUNTIME_DIRECTORY/key"
+        psk=()
+        if [ -n "$(jq -r '.presharedKey // empty' "$conf")" ]; then
+          jq -r .presharedKey "$conf" > "$RUNTIME_DIRECTORY/psk"
+          psk=(preshared-key "$RUNTIME_DIRECTORY/psk")
+        fi
         ip link add wg0 type wireguard
         wg set wg0 listen-port ${toString port} private-key "$RUNTIME_DIRECTORY/key" \
-          peer "$(jq -r .peerPublicKey "$conf")" allowed-ips ${peer}/32 \
+          peer "$(jq -r .peerPublicKey "$conf")" allowed-ips ${peer}/32 "''${psk[@]}" \
           endpoint "$(jq -r .peerEndpoint "$conf"):${toString port}" persistent-keepalive 25
         ip address add ${toString self}/24 dev wg0
         ip link set wg0 up
