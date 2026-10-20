@@ -359,7 +359,7 @@ final class ChatStore: ObservableObject {
     func report(_ contact: Contact, category: String, note: String?, messageID: String?,
                 block: Bool) async throws {
         let input = ReportInput(peer: contact.peerID, reason: category,
-                                msgIds: messageID.map { [$0] } ?? [], note: note, block: block)
+                                msgId: messageID, note: note, block: block)
         try await perform(.report) { engine, _ in engine.report(report: input) }
         if block {
             // The block follows the report; its answer refreshes the list.
@@ -584,7 +584,7 @@ final class ChatStore: ObservableObject {
 
     /// A server refusal or an unreachable server, in the app's words.
     nonisolated static func appError(action: Action, status: UInt16, code: String) -> AppError {
-        if status == 0 { return .network(.cannotConnectToHost) }
+        if status == 0 && code.isEmpty { return .network(.cannotConnectToHost) }
         let message: String
         switch code {
         case "USER_NOT_FOUND", "NOT_FOUND": message = "No account with that username."
@@ -594,6 +594,8 @@ final class ChatStore: ObservableObject {
         case "FRIEND_LIMIT": message = "The contact limit has been reached."
         case "NOT_FRIENDS", "NOT_A_MEMBER", "NO_CONVERSATION": message = "You're not connected with that person."
         case "RATE_LIMITED": message = "Too many requests. Wait a moment and try again."
+        case "LOCKED": message = "Unlock HQChat to do that."
+        case "NOT_REPORTABLE": message = "Only a message they sent can be reported."
         case "": message = "The server refused that (\(status))."
         default: message = code
         }

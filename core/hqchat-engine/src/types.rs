@@ -127,8 +127,8 @@ pub struct ReportInput {
     pub peer: String,
     /// The reason chosen.
     pub reason: String,
-    /// The message ids whose text is sent as the excerpt.
-    pub msg_ids: Vec<String>,
+    /// The one message, sent by the friend, whose text is the excerpt.
+    pub msg_id: Option<String>,
     /// What the user added, if anything.
     pub note: Option<String>,
     /// Block them too, once the report is filed.

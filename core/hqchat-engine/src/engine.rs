@@ -3,9 +3,9 @@
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::core::Core;
-use crate::effect::{CloseReason, Effect};
+use crate::effect::{Action, CloseReason, Effect};
 use crate::import::Import;
-use crate::ports::{KeyVault, Store};
+use crate::ports::{KeyVault, Store, VaultError};
 use crate::types::{Config, CoreError, FriendView, Message, NetworkInfo, PushToken, ReportInput};
 
 /// The client. `Send + Sync`: every call takes an internal lock and returns
@@ -171,7 +171,7 @@ impl Engine {
     pub fn accept(&self, peer: String) -> Vec<Effect> {
         self.run(|c| {
             c.friendship(
-                crate::Action::Accept,
+                Action::Accept,
                 "/friends/accept",
                 serde_json::json!({ "from": peer }),
             );
@@ -184,7 +184,7 @@ impl Engine {
     pub fn remove(&self, peer: String) -> Vec<Effect> {
         self.run(|c| {
             c.friendship(
-                crate::Action::Remove,
+                Action::Remove,
                 "/friends/remove",
                 serde_json::json!({ "peer": peer }),
             );
@@ -197,7 +197,7 @@ impl Engine {
     pub fn block(&self, peer: String) -> Vec<Effect> {
         self.run(|c| {
             c.friendship(
-                crate::Action::Block,
+                Action::Block,
                 "/friends/block",
                 serde_json::json!({ "peer": peer }),
             );
@@ -212,7 +212,7 @@ impl Engine {
     pub fn unblock(&self, peer: String) -> Vec<Effect> {
         self.run(|c| {
             c.friendship(
-                crate::Action::Unblock,
+                Action::Unblock,
                 "/friends/unblock",
                 serde_json::json!({ "peer": peer }),
             );
@@ -239,9 +239,22 @@ impl Engine {
         self.run(|c| c.mark_read(&peer))
     }
 
-    /// Reports a friend's messages.
+    /// Reports a friend, quoting at most one message they sent. A report the
+    /// core refuses before sending fails like one the server refused, with
+    /// status 0 and a code naming why, so no screen waits for an answer.
     pub fn report(&self, report: ReportInput) -> Vec<Effect> {
-        self.run(|c| c.report(&report)).unwrap_or_default()
+        self.run(|c| c.report(&report)).unwrap_or_else(|e| {
+            let code = match e {
+                CoreError::NotAFriend => "NOT_FRIENDS",
+                CoreError::Vault(VaultError::Locked) => "LOCKED",
+                _ => "NOT_REPORTABLE",
+            };
+            vec![Effect::ActionFailed {
+                action: Action::Report,
+                status: 0,
+                code: code.into(),
+            }]
+        })
     }
 
     /// Claims a username.
