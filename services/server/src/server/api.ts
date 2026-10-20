@@ -284,8 +284,11 @@ const authenticated: Record<string, Route> = {
     if (environment !== "production" && environment !== "sandbox") {
       throw new HttpError(400, "INVALID_FIELD", "environment is production or sandbox");
     }
-    const token = requireString(body, "token", { min: 8, max: 512 });
-    await DB.setPushToken(id, platform as PushPlatform, environment as PushEnvironment, token);
+    // An APNs device token is hex; it is put into the request path sent to Apple.
+    const token = requireString(body, "token", { min: 64, max: 200 });
+    if (!/^[0-9a-fA-F]+$/.test(token))
+      throw new HttpError(400, "INVALID_FIELD", "token must be an APNs device token (hex)");
+    await DB.setPushToken(id, platform as PushPlatform, environment as PushEnvironment, token.toLowerCase());
     ok(res);
   },
 
