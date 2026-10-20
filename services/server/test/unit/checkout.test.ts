@@ -37,6 +37,7 @@ const {
   oneTimeAvailable,
   displayNameFromSession,
   supporterFromEvent,
+  labelCache,
   DISPLAY_NAME_FIELD_KEY,
 } = require("../../src/server/stripe") as typeof import("../../src/server/stripe");
 const { CSP, CHECKOUT_ORIGIN } = require("../../src/server/donate") as typeof import("../../src/server/donate");
@@ -169,6 +170,32 @@ test("only a paid checkout puts a name on the supporters page", () => {
   assert.equal(supporterFromEvent(ev("checkout.session.async_payment_succeeded", "paid")), "Ada");
   assert.equal(supporterFromEvent(ev("checkout.session.async_payment_failed", "unpaid")), null);
   assert.equal(supporterFromEvent(ev("checkout.session.expired", "paid")), null);
+});
+
+test("tier labels are read from Stripe once per window, not per page view", async () => {
+  let loads = 0;
+  let complete = true;
+  let clock = 0;
+  const cache = labelCache(
+    async () => {
+      loads++;
+      return { labels: [{ priceId: "price_a", label: `v${loads}` }], complete };
+    },
+    { ttlMs: 600_000, failedTtlMs: 60_000, now: () => clock },
+  );
+  await Promise.all(Array.from({ length: 20 }, () => cache.get()));
+  assert.equal(loads, 1, "concurrent views each called Stripe");
+  clock += 599_999;
+  assert.equal((await cache.get())[0]!.label, "v1");
+  clock += 1;
+  assert.equal((await cache.get())[0]!.label, "v2", "a stale label was kept past its window");
+
+  complete = false;
+  clock += 600_000;
+  await cache.get();
+  clock += 60_000;
+  await cache.get();
+  assert.equal(loads, 4, "a fallback label is retried after a minute, not ten");
 });
 
 // --- the CSP half of the same outage ----------------------------------------
