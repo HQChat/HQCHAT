@@ -438,7 +438,7 @@ export class Conversations {
     let text: string | null = null;
     const key = open(this.o.kem, session, messageHeaderOf(frame), (mk) => {
       try {
-        text = openPayload(frame.payload, mk, aad);
+        text = openPayload(frame.payload, mk, aad, frame.padded === true);
         return true;
       } catch {
         return false;
