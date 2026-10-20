@@ -87,8 +87,8 @@ pub fn compiled_sizes() -> [usize; 5] {
     sizes
 }
 
-/// The C functions. Call the safe wrappers above instead.
-pub mod ffi {
+/// The C functions, reached only through the safe wrappers above.
+mod ffi {
     use std::ffi::c_int;
 
     unsafe extern "C" {
