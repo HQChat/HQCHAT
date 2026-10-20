@@ -476,7 +476,14 @@ impl Core {
         let skip = slots.len().saturating_sub(limit);
         let mut out = Vec::new();
         for slot in slots.iter().skip(skip) {
-            if let Some(m) = self.get_message(slot)? {
+            // One message that cannot be read does not hide the others; a
+            // locked vault still fails the page.
+            let m = match self.get_message(slot) {
+                Ok(m) => m,
+                Err(e @ CoreError::Vault(_)) => return Err(e),
+                Err(_) => None,
+            };
+            if let Some(m) = m {
                 out.push(Message {
                     msg_id: m.msg_id,
                     peer: peer.to_string(),
