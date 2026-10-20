@@ -60,6 +60,14 @@ lib.mkIf (cfg.role == "mqtt") {
       message = "emqx.conf must keep client wildcard subscriptions off; the ACL depends on it.";
     }
     {
+      assertion = lib.all (s: lib.hasInfix s template) [
+        "mqtt.max_packet_size = "
+        "mqtt.max_subscriptions = "
+        "delayed { enable = false }"
+      ];
+      message = "emqx.conf must cap packets and subscriptions and keep delayed publish off: any client may publish to any inbox.";
+    }
+    {
       assertion = !(lib.hasInfix "cookie =" template);
       message = "emqx.conf must not carry a cookie; it is generated per host.";
     }
