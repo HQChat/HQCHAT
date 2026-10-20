@@ -153,16 +153,56 @@ in
 
     system.autoUpgrade.enable = false;
 
+    # An interface takes redirects when either `all` or its own value says so,
+    # and new interfaces copy `default`: both are set.
     boot.kernel.sysctl = {
       "net.ipv4.conf.all.rp_filter" = 1;
       "net.ipv4.conf.default.rp_filter" = 1;
       "net.ipv4.conf.all.accept_redirects" = 0;
+      "net.ipv4.conf.default.accept_redirects" = 0;
+      "net.ipv4.conf.all.secure_redirects" = 0;
+      "net.ipv4.conf.default.secure_redirects" = 0;
       "net.ipv6.conf.all.accept_redirects" = 0;
+      "net.ipv6.conf.default.accept_redirects" = 0;
       "net.ipv4.conf.all.send_redirects" = 0;
+      "net.ipv4.conf.default.send_redirects" = 0;
       "net.ipv4.conf.all.accept_source_route" = 0;
+      "net.ipv4.conf.default.accept_source_route" = 0;
+      "net.ipv6.conf.all.accept_source_route" = 0;
+      "net.ipv6.conf.default.accept_source_route" = 0;
+      "net.ipv4.conf.all.log_martians" = 1;
+      "net.ipv4.conf.default.log_martians" = 1;
       "net.ipv4.tcp_syncookies" = 1;
       "kernel.dmesg_restrict" = 1;
       "kernel.kptr_restrict" = 2;
+      "kernel.unprivileged_bpf_disabled" = 1;
+      "net.core.bpf_jit_harden" = 2;
+      "kernel.kexec_load_disabled" = 1;
+      "kernel.sysrq" = 0;
+      "kernel.yama.ptrace_scope" = 2;
+      "fs.suid_dumpable" = 0;
+      "fs.protected_fifos" = 2;
+      "fs.protected_regular" = 2;
+    };
+
+    # A crash of the server, gateway or bot would write its memory (database
+    # URL, gateway keys, bot seed, push key) to disc: no core dumps are kept.
+    systemd.coredump.settings.Coredump = {
+      Storage = "none";
+      ProcessSizeMax = 0;
+    };
+
+    # Changes to the secrets, SSH's keys and configuration, and the system
+    # profile are recorded. The log stays on the host until a sink is chosen.
+    security.auditd.enable = true;
+    security.audit = {
+      enable = true;
+      rules = [
+        "-w /etc/hqcat -p wa -k hqcat-secrets"
+        "-w /etc/ssh -p wa -k sshd"
+        "-w /nix/var/nix/profiles -p wa -k system-profile"
+        "-w /root/.ssh -p wa -k admin-keys"
+      ];
     };
 
     security.sudo.execWheelOnly = true;
