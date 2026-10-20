@@ -84,3 +84,22 @@ fn an_oversized_inbox_publish_is_acknowledged_and_dropped_not_fatal() {
     assert_eq!(id.len(), 1);
     assert_eq!(id[0].text, "still reachable");
 }
+
+#[test]
+fn a_broker_that_never_acknowledges_cannot_hang_the_engine() {
+    let server = FakeServer::shared();
+    let mut a = Client::signed_in(&server, "a");
+    let mut b = Client::signed_in(&server, "b");
+    Client::befriend(&mut a, &mut b);
+    settle(&mut [&mut a, &mut b]);
+    // The shell writes these and the broker never answers: far more
+    // publishes than there are packet ids.
+    let started = std::time::Instant::now();
+    for _ in 0..70_000u32 {
+        let _ = b.engine.set_presence(true, NOW);
+    }
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(30),
+        "every call returned"
+    );
+}

@@ -33,6 +33,10 @@ const READ_TIMEOUT_MS: i64 = 2 * KEEP_ALIVE_MS;
 const BACKOFF_START_MS: i64 = 2_000;
 const BACKOFF_MAX_MS: i64 = 30_000;
 pub(crate) const DIRECTORY_POLL_MS: i64 = 60_000;
+/// QoS 1 publishes awaiting a PUBACK at once. Past it, messages wait in the
+/// outbox for the next PUBACK, so a broker that stops acknowledging (or a
+/// flood of challenges to answer) cannot exhaust the 16-bit packet ids.
+const MAX_IN_FLIGHT: usize = 128;
 
 /// What a QoS 1 publish of ours stands for, settled by its PUBACK.
 #[derive(Debug, Clone)]
@@ -412,14 +416,21 @@ impl Core {
         true
     }
 
+    /// A packet id not in flight, or `None` when `MAX_IN_FLIGHT` publishes
+    /// already wait for their PUBACK: the caller keeps the message queued.
     fn packet_id(&mut self) -> Option<u16> {
         let c = self.net.conn.as_mut()?;
-        loop {
+        if c.inflight.len() >= MAX_IN_FLIGHT {
+            return None;
+        }
+        // Fewer than MAX_IN_FLIGHT ids are taken, so a free one is near.
+        for _ in 0..=MAX_IN_FLIGHT {
             c.next_packet_id = c.next_packet_id.wrapping_add(1);
             if c.next_packet_id != 0 && !c.inflight.contains_key(&c.next_packet_id) {
                 return Some(c.next_packet_id);
             }
         }
+        None
     }
 
     /// Publishes at QoS 1 on a live link; false when there is none.

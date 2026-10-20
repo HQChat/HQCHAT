@@ -504,11 +504,15 @@ impl Core {
 
     // ── Link events (hooks of net.rs) ──────────────────────────────────────
 
-    pub fn on_puback(&mut self, peer: &PeerId, msg_id: &str, _now: i64) {
+    pub fn on_puback(&mut self, peer: &PeerId, msg_id: &str, now: i64) {
         let before = self.convo.outbox.len();
         self.convo.outbox.retain(|o| o.msg_id != msg_id);
         if self.convo.outbox.len() != before {
             self.persist_state();
+        }
+        // A slot freed: what waited for one goes now.
+        if self.convo.outbox.iter().any(|o| !o.in_flight) {
+            self.flush_all(now);
         }
         let online = self.peers.get(peer).is_some_and(|p| p.online);
         self.set_status(
