@@ -129,10 +129,11 @@ enum MessageKeyStore {
         defer { BiometricCoordinator.end() }
 
         let context = LAContext()
-        // Each row's unwrap would otherwise re-authenticate. The context is
-        // invalidated by `clearCache()` on background and profile switch.
-        context.touchIDAuthenticationAllowableReuseDuration =
-            LATouchIDAuthenticationMaximumAllowableReuseDuration
+        // No reuse window: a recent Touch ID unlock of the device must not
+        // stand in for this one. Rows do not re-authenticate anyway, since
+        // they all use this evaluated context, which `clearCache()` drops on
+        // background and profile switch.
+        context.touchIDAuthenticationAllowableReuseDuration = 0
         do {
             let ok = try await BiometricAudit.measureAsync("LAContext.evaluatePolicy",
                                                            item: "message-read unlock",
