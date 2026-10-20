@@ -12,9 +12,9 @@ from") and the environment.
 | `ci` | The full CI suite: lint, unit, integration, functional scenarios, Terraform policy tests, the two-VM NixOS stack test. |
 | `build` | Builds the app and broker closures and the environment's droplet image, signs the closures and pushes them to the Nix cache; uploads the image if it changed. |
 | `infra` | `infra/scripts/terraform.sh <env> apply`: VPC, image, droplets, EMQX volume, reserved IP, firewalls, managed Postgres, DNS, site Worker, origin certificate. Before applying, imports what the plan would create but already exists (a Worker route with the same pattern, a DNS record with the same name and type: `infra/scripts/tf-adopt.sh`), so it converges over a running account or after a half-finished apply. Refuses to destroy droplets, the volume, the database or the reserved IP unless run with `allow_replace`. Then publishes each host's secret bundle. |
-| `release` | Moves `channels/<env>/app` and `/mqtt` to the new closures, keeping the old pointers as `.previous`. |
+| `release` | Moves `channels/<env>/app` and `/mqtt` to the new closures: a pointer naming the closure and a release number, signed with the cache key (`channels/<env>/<role>.signed`). Reports the closures it replaced. |
 | `verify` | Waits for `https://<domain>/health` to report this commit with a healthy broker, checks only the expected ports answer, then runs the functional scenarios against the live environment. |
-| `rollback` | If `verify` fails, puts the channels back on the previous release. |
+| `rollback` | If `verify` fails, puts the channels back on the closures this run's `release` replaced, under a new release number. |
 | `apple` | If `verify` passed and `ship_apple` is on: runs the Apple release workflow (`apple-release.yml`), which archives the iOS and macOS apps, signs them and uploads a new version of each to App Store Connect (`apps/apple/release.sh`). Version and build number are always above everything already uploaded (`apps/apple/asc-next.mjs`). |
 
 Re-running Deploy on the same ref changes nothing. Running it on an older ref
@@ -26,9 +26,17 @@ A droplet boots the environment's base image. `hqcat-netconf` reads
 DigitalOcean's metadata service: addresses, its role and the SSH host key
 Terraform generated for it. Every two minutes `hqcat-host-agent` fetches the
 host's secret bundle (`secrets/<env>/<role>.age`, encrypted to that host key)
-and the channel pointer, and switches to the signed closure it names. If the
-new generation's `hqcat-health-check` fails within five minutes, it rolls back
-and skips that release. Nothing in CI connects to a host.
+and the channel pointer, and switches to the signed closure it names. The
+pointer must carry the cache key's signature, name this environment and role,
+and have a release number no lower than the last one the host accepted, so
+whoever can write to the bucket can neither point a host at another closure
+nor replay an older pointer to roll it back. (A host that has never accepted
+one, a new droplet, takes the current one on trust.) If the new generation's
+`hqcat-health-check` fails within five minutes, it rolls back and skips that
+release. Nothing in CI connects to a host.
+
+To return to an earlier release by hand, run Deploy on the earlier ref: it
+rebuilds nothing that is in the cache, and signs a new pointer to it.
 
 ## A new environment
 

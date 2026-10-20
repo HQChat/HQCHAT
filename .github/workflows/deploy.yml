@@ -9,11 +9,13 @@
 #   build     both host closures and the environment's image, signed, pushed to the
 #             cache; warns first if the server or app Sentry DSN is empty
 #   infra     Terraform (guarded), then each host's secret bundle
-#   release   move channels/<environment>/<role>; hosts switch within minutes
+#   release   move channels/<environment>/<role>, signed with the cache key;
+#             hosts switch within minutes
 #   verify    /health reports this commit and a healthy broker, on the domain and
 #             on the apps' API host, then the functional scenarios run against
 #             the live environment
-#   rollback  if verify fails, the channels go back to the previous release
+#   rollback  if verify fails, the channels go back to the release this run
+#             replaced
 #   apple     once verify passes (and ship_apple is on): apple-release.yml
 #             uploads a new version of the iOS app to App Store Connect
 #   app-store once verify passes (and app_store_version is set): releases that
@@ -243,13 +245,23 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: ${{ inputs.environment }}
+    outputs:
+      app_previous: ${{ steps.move.outputs.app_previous }}
+      mqtt_previous: ${{ steps.move.outputs.mqtt_previous }}
     env:
       R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      NIX_CACHE_SIGNING_KEY: ${{ secrets.NIX_CACHE_SIGNING_KEY }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - name: Move the channels
-        run: infra/scripts/release.sh "$ENVIRONMENT" promote "${{ needs.build.outputs.app }}" "${{ needs.build.outputs.mqtt }}"
+        id: move
+        env:
+          APP: ${{ needs.build.outputs.app }}
+          MQTT: ${{ needs.build.outputs.mqtt }}
+        run: infra/scripts/release.sh "$ENVIRONMENT" promote "$APP" "$MQTT"
 
   verify:
     needs: [build, infra, release]
@@ -326,10 +338,17 @@ jobs:
     env:
       R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      NIX_CACHE_SIGNING_KEY: ${{ secrets.NIX_CACHE_SIGNING_KEY }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      # What this run's release replaced, never a pointer read back from the bucket.
       - name: Return the channels to the previous release
-        run: infra/scripts/release.sh "$ENVIRONMENT" rollback
+        env:
+          APP: ${{ needs.release.outputs.app_previous }}
+          MQTT: ${{ needs.release.outputs.mqtt_previous }}
+        run: infra/scripts/release.sh "$ENVIRONMENT" rollback "$APP" "$MQTT"
 
   # The apps ship only against a server that verify has just proven live.
   apple:
