@@ -105,6 +105,6 @@ readable to anyone who kept a copy and can later break X25519).
 
 SSH is for diagnosis, not for changes: `ssh root@<app ip>`, and the broker
 through it (`ssh -J root@<app ip> root@<broker vpc ip>`). Host keys are in the
-Terraform output `hosts`. Useful units: `hqcat-host-agent`, `hqcat-secrets-sync`,
+Terraform output `hosts` (sensitive: `terraform output -json hosts`). Useful units: `hqcat-host-agent`, `hqcat-secrets-sync`,
 `hqcat-netconf`, `hqcat-server`, `hqcat-bot`, `podman-emqx`, `hqcat-noise-gw`,
 `hqcat-wireguard`.

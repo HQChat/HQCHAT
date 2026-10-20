@@ -195,7 +195,6 @@ jobs:
     outputs:
       domain: ${{ steps.apply.outputs.domain }}
       api_host: ${{ steps.apply.outputs.api_host }}
-      app_ipv4: ${{ steps.apply.outputs.app_ipv4 }}
       mqtt_ipv4: ${{ steps.apply.outputs.mqtt_ipv4 }}
     env:
       DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
@@ -235,7 +234,6 @@ jobs:
           {
             echo "domain=$(jq -r .domain.value "$TF_OUTPUTS")"
             echo "api_host=$(jq -r .api_host.value "$TF_OUTPUTS")"
-            echo "app_ipv4=$(jq -r .hosts.value.app.public_ipv4 "$TF_OUTPUTS")"
             echo "mqtt_ipv4=$(jq -r .hqn_ipv4.value "$TF_OUTPUTS")"
           } >>"$GITHUB_OUTPUT"
       - name: Publish the secret bundles
@@ -280,6 +278,7 @@ jobs:
     if: ${{ !cancelled() && !failure() }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    environment: ${{ inputs.environment }}
     env:
       DOMAIN: ${{ needs.infra.outputs.domain }}
       API_HOST: ${{ needs.infra.outputs.api_host }}
@@ -324,11 +323,18 @@ jobs:
             echo "::error::https://$API_HOST/health does not serve $GITHUB_SHA: the apps cannot reach this server (${health:-no answer})"
             exit 1
           }
+      # The origin's address is looked up here and masked before any use: it is
+      # never a job output or a step variable, which the public log would show.
       - name: Only the expected ports answer
         env:
-          APP_IPV4: ${{ needs.infra.outputs.app_ipv4 }}
+          DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
           HQN_IPV4: ${{ needs.infra.outputs.mqtt_ipv4 }}
         run: |
+          APP_IPV4="$(curl -fsS -H @<(printf 'Authorization: Bearer %s\n' "$DIGITALOCEAN_TOKEN") \
+            "https://api.digitalocean.com/v2/droplets?tag_name=hqchat-$ENVIRONMENT-app" |
+            jq -r '[.droplets[].networks.v4[] | select(.type == "public") | .ip_address][0] // empty')"
+          [ -n "$APP_IPV4" ] || { echo "::error::no app droplet found for $ENVIRONMENT"; exit 1; }
+          echo "::add-mask::$APP_IPV4"
           ! curl -sk --max-time 5 -o /dev/null "https://$APP_IPV4/health" || { echo "::error::the origin answers outside Cloudflare"; exit 1; }
           for port in 1883 1884 8083 8081 18083; do
             ! nc -z -w 3 "$HQN_IPV4" "$port" || { echo "::error::the broker answers on $port"; exit 1; }

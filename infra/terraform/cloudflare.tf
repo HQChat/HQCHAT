@@ -20,10 +20,11 @@ resource "cloudflare_record" "origin" {
   zone_id  = local.zone_id
   name     = each.value
   type     = "A"
-  content  = digitalocean_droplet.host["app"].ipv4_address
-  proxied  = true
-  ttl      = 1
-  comment  = "${local.name} origin"
+  # Marked sensitive so a plan or apply log never shows the origin's address.
+  content = sensitive(digitalocean_droplet.host["app"].ipv4_address)
+  proxied = true
+  ttl     = 1
+  comment = "${local.name} origin"
 }
 
 resource "cloudflare_record" "hqn" {
