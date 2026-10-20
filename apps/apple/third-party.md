@@ -12,7 +12,7 @@ rather than taken.
 
 | | |
 |---|---|
-| **Where it lives** | Source not vendored: `native/hqc/package.nix` fetches it at build time; `native/hqc/HQC_UPSTREAM.txt` pins it. The Apple builds compiled from it are committed (`native/hqc/dist/apple/HQC.xcframework`, `apps/apple/libhqc_wrap.dylib`) so the app builds from a clone. |
+| **Where it lives** | Source not vendored: `native/hqc/package.nix` fetches it at build time; `native/hqc/HQC_UPSTREAM.txt` pins it. The Apple apps get it compiled inside the Rust core's static libraries (`core/swift/HQChatCore/HQChatCoreFFI.xcframework`), which are built from source and never committed. |
 | **Upstream** | https://gitlab.com/pqc-hqc/hqc |
 | **Revision** | `3a0f86f84f6cb9c90729f038828a6e5f7df8634f` (Nix hash `sha256-uBlMOtCz7c8ZA+ldPXuaHendLR3/wCVWgiND2ssEcVE=`) |
 | **Licence** | Public domain (SPDX: `LicenseRef-PublicDomain`), per the upstream `LICENSE` at that revision |
@@ -51,8 +51,8 @@ does two things to the fetched tree, both visible in that file:
    `hqc_kem_{keypair,enc,dec}_wrap`. The wrapper is this project's code, under
    AGPL-3.0 with the rest of `native/`.
 
-`native/hqc/build-apple.sh` compiles the Apple targets from that same patched
-tree (`nix build .#hqc.source`).
+`core/hqchat-ffi/build-apple.sh` compiles the Apple targets, through the Rust
+core (`core/hqc-sys`), from that same patched tree (`nix build .#hqc.source`).
 
 ---
 
@@ -72,8 +72,16 @@ Apple frameworks and the sources above.
 
 ## Compiled artefacts in this repository
 
-None. `libhqc_wrap.dylib` and the xcframework are built locally by
-`native/hqc/build-apple.sh` (or `nix build .#hqc`) and are `.gitignore`d.
+None. The core's static libraries
+(`core/swift/HQChatCore/HQChatCoreFFI.xcframework`, which contain the HQC code
+above) are built from source by `core/hqchat-ffi/build-apple.sh`, inside
+`nix develop .#apple`: on a developer's Mac by `apps/apple/verify.sh`, and for
+every App Store upload by the Apple release workflow, on its own runner from
+the commit it ships. They are `.gitignore`d, and `apps/apple/release.sh`
+refuses to archive without a build of the current commit. The Swift bindings
+generated with them (`core/swift/HQChatCore/Sources/HQChatCore/HQChatCore.swift`)
+are committed as text, and the release fails if they differ from what the
+core generates.
 
 ---
 
