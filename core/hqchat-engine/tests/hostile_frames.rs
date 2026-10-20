@@ -186,3 +186,43 @@ fn while_locked_a_frame_out_of_place_neither_notifies_nor_is_stored() {
     assert_eq!(pending, 64, "only those are kept");
     assert_eq!(victim.engine.friends()[0].unread, 0);
 }
+
+#[test]
+fn a_drop_reason_never_carries_a_conversation_id() {
+    let server = FakeServer::shared();
+    let mut a = Client::signed_in(&server, "a");
+    let mut b = Client::signed_in(&server, "b");
+    Client::befriend(&mut a, &mut b);
+    for text in ["hello", "again"] {
+        let e = b.engine.send_text(a.id(), text.into(), b.now).unwrap();
+        b.pump(e);
+        settle(&mut [&mut a, &mut b]);
+    }
+    let before = server.borrow().broker.routed.len();
+    let e = b.engine.send_text(a.id(), "third".into(), b.now).unwrap();
+    b.pump(e);
+    let (convo_topic, payload) = server.borrow().broker.routed[before..]
+        .iter()
+        .find(|(t, _)| t.starts_with("cv/"))
+        .cloned()
+        .expect("a conversation frame");
+    // Republished on the inbox, where anyone may publish: dropped, and the
+    // reason (which reaches logs) says where it was expected without the id.
+    let inbox = format!("u/{}/inbox", a.id());
+    server.borrow_mut().route(&inbox, payload, false);
+    settle(&mut [&mut a, &mut b]);
+    let id = convo_topic.trim_start_matches("cv/");
+    let reasons: Vec<&String> = a
+        .seen
+        .iter()
+        .filter_map(|e| match e {
+            Effect::Dropped { reason } => Some(reason),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        reasons.iter().any(|r| r.contains("expected cv/…")),
+        "{reasons:?}"
+    );
+    assert!(!reasons.iter().any(|r| r.contains(&id[..8])), "{reasons:?}");
+}

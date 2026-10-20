@@ -282,7 +282,7 @@ impl Core {
                     }
                 }
                 Err(e) => {
-                    self.drop_frame(format!("could not seal for {peer}: {e:?}"));
+                    self.drop_frame(format!("could not seal for {}: {e:?}", topics::short(peer)));
                     break;
                 }
             }
@@ -412,7 +412,8 @@ impl Core {
             None => {
                 self.convo.starting.remove(&peer);
                 self.drop_frame(format!(
-                    "the key served for {peer} does not hash to that id"
+                    "the key served for {} does not hash to that id",
+                    topics::short(&peer)
                 ));
                 self.fail_outbox(&peer);
             }
@@ -548,7 +549,9 @@ impl Core {
         }
         let (frame, aad) = match envelope::decode(&payload) {
             Ok(d) => d,
-            Err(_) => return self.drop_frame(format!("not a frame on {topic}")),
+            Err(_) => {
+                return self.drop_frame(format!("not a frame on {}", topics::redacted(topic)));
+            }
         };
         let Some(me) = self.me.clone() else { return };
         let sender = frame.header.sender.clone();
@@ -561,7 +564,10 @@ impl Core {
             .filter(|p| !p.is_read_only())
             .cloned()
         else {
-            return self.drop_frame(format!("frame from {sender}, not a friend"));
+            return self.drop_frame(format!(
+                "frame from {}, not a friend",
+                topics::short(&sender)
+            ));
         };
         if frame.header.to != me {
             return self.drop_frame("frame addressed to someone else");
@@ -573,8 +579,12 @@ impl Core {
         };
         if expected.as_deref() != Some(topic) {
             return self.drop_frame(format!(
-                "{:?} on {topic}, expected {expected:?}",
-                frame.header.kind
+                "{:?} on {}, expected {}",
+                frame.header.kind,
+                topics::redacted(topic),
+                expected
+                    .as_deref()
+                    .map_or("no topic".into(), topics::redacted)
             ));
         }
         if frame.header.kind == Kind::Init {
@@ -596,7 +606,7 @@ impl Core {
             None
         } else {
             let Ok((f, _)) = envelope::decode(&payload) else {
-                return self.drop_frame(format!("not a frame on {topic}"));
+                return self.drop_frame(format!("not a frame on {}", topics::redacted(topic)));
             };
             let Some(peer) = self
                 .peers
@@ -616,7 +626,11 @@ impl Core {
                 }
             };
             if f.header.to != me || !vouched {
-                return self.drop_frame(format!("{:?} out of place on {topic}", f.header.kind));
+                return self.drop_frame(format!(
+                    "{:?} out of place on {}",
+                    f.header.kind,
+                    topics::redacted(topic)
+                ));
             }
             match f.header.kind {
                 Kind::Receipt => None,
@@ -866,7 +880,7 @@ impl Core {
             .and_then(|p| p.handshake.as_ref())
             .map(topics::handshake_topic);
         if expected.as_deref() != Some(topic) {
-            return self.drop_frame(format!("handshake frame on {topic}"));
+            return self.drop_frame(format!("handshake frame on {}", topics::redacted(topic)));
         }
         match h {
             HandshakeFrame::Challenge { nonce, ct, .. } => {
@@ -984,8 +998,9 @@ impl Core {
             Ok(Some(session)) => open_with(&kem, session, frame, aad),
             _ => {
                 return self.drop_frame(format!(
-                    "{:?} from {sender} with no session",
-                    frame.header.kind
+                    "{:?} from {} with no session",
+                    frame.header.kind,
+                    topics::short(sender)
                 ));
             }
         };

@@ -393,7 +393,7 @@ impl Core {
                 self.on_frame(topic, payload, now);
             }
             None => self.emit(Effect::Dropped {
-                reason: format!("publish on {topic}, outside the layout"),
+                reason: format!("publish on {}", topics::redacted(topic)),
             }),
         }
     }
