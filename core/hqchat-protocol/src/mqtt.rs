@@ -8,7 +8,11 @@
 //! 2, reserved flag bits, packet id 0, a password without a username, bad
 //! UTF-8) is an error, and an error fails the connection. A packet's claimed
 //! size is checked against [`MAX_PACKET_BYTES`] before any of it is
-//! buffered, so a hostile length cannot grow memory.
+//! buffered, so a hostile length cannot grow memory. An oversized PUBLISH is
+//! the one exception to failing: anyone may publish into an inbox, and a
+//! QoS 1 publish the client never acknowledges comes back on every
+//! reconnect. It is skipped unbuffered and reported as
+//! [`Packet::Oversized`], to be acknowledged and dropped.
 
 use crate::Error;
 use crate::wire::Reader;
@@ -136,6 +140,14 @@ pub enum Packet {
     Pingresp,
     /// Client → broker: clean close (the will is not published).
     Disconnect,
+    /// Decoded only: a PUBLISH over [`MAX_PACKET_BYTES`], whose body was
+    /// skipped without being buffered. Acknowledge it (QoS 1) and drop it.
+    Oversized {
+        /// Its QoS.
+        qos: QoS,
+        /// Present exactly when QoS is 1.
+        packet_id: Option<u16>,
+    },
 }
 
 // ── Encoding ────────────────────────────────────────────────────────────────
@@ -280,6 +292,9 @@ pub fn encode(packet: &Packet) -> Result<Vec<u8>, Error> {
         Packet::Pingreq => 0xc0,
         Packet::Pingresp => 0xd0,
         Packet::Disconnect => 0xe0,
+        Packet::Oversized { .. } => {
+            return Err(Error::Invalid("an oversized publish is never sent"));
+        }
     };
     let mut out = Vec::with_capacity(body.len().saturating_add(5));
     out.push(header);
@@ -315,12 +330,17 @@ fn put_remaining_length(out: &mut Vec<u8>, mut len: usize) -> Result<(), Error> 
 #[derive(Debug, Default)]
 pub struct Decoder {
     buffer: Vec<u8>,
+    /// Bytes of an oversized publish still to arrive, dropped as they do.
+    skip: usize,
 }
 
 impl Decoder {
     /// Appends bytes as they arrive.
     pub fn push(&mut self, chunk: &[u8]) {
-        self.buffer.extend_from_slice(chunk);
+        let skipped = self.skip.min(chunk.len());
+        self.skip = self.skip.saturating_sub(skipped);
+        self.buffer
+            .extend_from_slice(chunk.get(skipped..).unwrap_or_default());
     }
 
     /// The next complete packet; `Ok(None)` until one has arrived, an error
@@ -332,7 +352,7 @@ impl Decoder {
         let header_len = len_bytes.saturating_add(1);
         let total = header_len.saturating_add(remaining);
         if total > MAX_PACKET_BYTES {
-            return Err(Error::Malformed("packet over MAX_PACKET_BYTES"));
+            return self.skip_oversized(header_len, total);
         }
         let (Some(&header), Some(body)) = (self.buffer.first(), self.buffer.get(header_len..total))
         else {
@@ -347,6 +367,36 @@ impl Decoder {
     pub fn pending(&self) -> usize {
         self.buffer.len()
     }
+
+    /// An oversized packet: an error unless it is a PUBLISH, which is
+    /// reported once its topic and packet id are in, then skipped.
+    fn skip_oversized(&mut self, header_len: usize, total: usize) -> Result<Option<Packet>, Error> {
+        let Some(&header) = self.buffer.first() else {
+            return Ok(None);
+        };
+        let (kind, flags) = (header >> 4, header & 0x0f);
+        if kind != 3 {
+            return Err(Error::Malformed("packet over MAX_PACKET_BYTES"));
+        }
+        let qos = QoS::from_bits((flags >> 1) & 0x03)?;
+        let mut c = Reader::new(self.buffer.get(header_len..).unwrap_or_default(), "");
+        // The topic (at most 64 KiB) and the id: buffered like any header.
+        let Ok(_topic) = field(&mut c) else {
+            return Ok(None);
+        };
+        let packet_id = match qos {
+            QoS::AtMostOnce => None,
+            QoS::AtLeastOnce => match c.u16() {
+                Ok(0) => return Err(Error::Malformed("packet id 0 is reserved")),
+                Ok(id) => Some(id),
+                Err(_) => return Ok(None),
+            },
+        };
+        let have = self.buffer.len().min(total);
+        self.buffer.drain(..have);
+        self.skip = total.saturating_sub(have);
+        Ok(Some(Packet::Oversized { qos, packet_id }))
+    }
 }
 
 /// The remaining length after the fixed-header byte and how many bytes it
@@ -360,6 +410,11 @@ fn remaining_length(buf: &[u8]) -> Result<Option<(usize, usize)>, Error> {
             .ok_or(Error::Malformed("remaining length"))?;
         value |= digit;
         if byte & 0x80 == 0 {
+            // A final 0 after a continuation is a longer encoding of a
+            // shorter length: refused, so every length has one encoding.
+            if byte == 0 && used > 1 {
+                return Err(Error::Malformed("remaining length is not minimal"));
+            }
             return Ok(Some((value, used)));
         }
     }

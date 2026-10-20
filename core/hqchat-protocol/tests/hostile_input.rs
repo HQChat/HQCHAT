@@ -126,6 +126,9 @@ fn the_mqtt_decoder_survives_mutated_streams() {
             let mut d = mqtt::Decoder::default();
             d.push(&m);
             while let Ok(Some(p)) = d.next_packet() {
+                if matches!(p, mqtt::Packet::Oversized { .. }) {
+                    continue;
+                }
                 let again = mqtt::encode(&p).expect("a decoded packet encodes");
                 let mut back = mqtt::Decoder::default();
                 back.push(&again);
