@@ -74,4 +74,19 @@ if [[ -n "$host_key" ]]; then
   fi
   rm -f /run/hqcat/host_key
 fi
+
+# The age post-quantum identity the host's secret bundle is sealed to
+# (modules/secrets.nix). A droplet created before Terraform handed one over
+# has none in its user data and keeps the one installed by hand.
+age_identity="$(jq -r '.ageIdentity // empty' <<<"$user_data")"
+if [[ -n "$age_identity" ]]; then
+  umask 077
+  mkdir -p /etc/hqcat
+  printf '%s\n' "$age_identity" >/etc/hqcat/age-identity.new
+  if cmp -s /etc/hqcat/age-identity.new /etc/hqcat/age-identity; then
+    rm -f /etc/hqcat/age-identity.new
+  else
+    mv -f /etc/hqcat/age-identity.new /etc/hqcat/age-identity
+  fi
+fi
 echo "configured as $role: public $public_ip, anchor ${anchor_ip:-none}, vpc ${vpc_ip:-none}"

@@ -23,7 +23,8 @@
 #             server proven to speak its protocol (app-store.yml sets it)
 #
 # Environment secrets: DIGITALOCEAN_TOKEN, CLOUDFLARE_API_TOKEN, R2_ACCESS_KEY_ID,
-# R2_SECRET_ACCESS_KEY, NIX_CACHE_SIGNING_KEY, BOT_SEED, NOISE_KEYS and,
+# R2_SECRET_ACCESS_KEY, NIX_CACHE_SIGNING_KEY, BOT_SEED, NOISE_KEYS,
+# AGE_IDENTITY_APP, AGE_IDENTITY_MQTT (the hosts' age post-quantum identities) and,
 # optionally, STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, APNS_KEY_P8
 # (infra/scripts/init-environment.sh sets the generated ones); for the apple job,
 # ASC_KEY_ID, ASC_ISSUER_ID and ASC_KEY_P8 (an App Store Connect API key).
@@ -203,6 +204,8 @@ jobs:
       TF_VAR_image_name: ${{ needs.build.outputs.image_name }}
       ALLOW_REPLACE: ${{ inputs.allow_replace }}
       TF_OUTPUTS: /tmp/tf-outputs.json
+      AGE_IDENTITY_APP: ${{ secrets.AGE_IDENTITY_APP }}
+      AGE_IDENTITY_MQTT: ${{ secrets.AGE_IDENTITY_MQTT }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
@@ -220,6 +223,10 @@ jobs:
       - name: Terraform
         id: apply
         run: |
+          # Handed to a new droplet in its user data; the bundles are sealed to them.
+          TF_VAR_age_identities="$(jq -cn --arg app "$AGE_IDENTITY_APP" --arg mqtt "$AGE_IDENTITY_MQTT" \
+            '{app: $app, mqtt: $mqtt} | with_entries(select(.value != ""))')"
+          export TF_VAR_age_identities
           infra/scripts/terraform.sh "$ENVIRONMENT" apply
           {
             echo "domain=$(jq -r .domain.value "$TF_OUTPUTS")"
@@ -234,10 +241,11 @@ jobs:
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
           APNS_KEY_P8: ${{ secrets.APNS_KEY_P8 }}
+          NIX_CACHE_SIGNING_KEY: ${{ secrets.NIX_CACHE_SIGNING_KEY }}
         run: |
           BOT_ID="$(nix shell .#hqcat-server --command hqcat-bot --print-id)"
           export BOT_ID
-          nix shell --inputs-from . nixpkgs#age nixpkgs#awscli2 --command infra/scripts/publish-secrets.sh "$ENVIRONMENT"
+          nix shell --inputs-from . nixpkgs#age nixpkgs#awscli2 nixpkgs#openssl --command infra/scripts/publish-secrets.sh "$ENVIRONMENT"
 
   release:
     needs: [build, infra]

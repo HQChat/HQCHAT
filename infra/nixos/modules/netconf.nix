@@ -1,7 +1,7 @@
 # Configures a droplet from DigitalOcean's metadata service, reached over IPv4
 # link-local: static addressing for the public, anchor and VPC addresses, the
-# role named in user data, and the SSH host key Terraform generated for it
-# (also the key the host's secret bundle is encrypted to). Writes
+# role named in user data, the SSH host key Terraform generated for it, and the
+# age identity its secret bundle is sealed to (/etc/hqcat/age-identity). Writes
 # /run/hqcat/host.env (ROLE, PUBLIC_IPV4, ANCHOR_IPV4, VPC_IPV4).
 { lib, pkgs, ... }:
 let

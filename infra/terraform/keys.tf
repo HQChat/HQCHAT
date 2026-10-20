@@ -1,7 +1,8 @@
-# Credentials generated here and delivered to the hosts in their secret
-# bundles: each host's SSH host key (also its bundle's age recipient, handed to
-# the droplet in user data), the WireGuard key pairs, and the EMQX admin-API
-# secret shared by both hosts.
+# Credentials generated here and delivered to the hosts: each host's SSH host
+# key (in user data), and in the secret bundles the WireGuard key pairs and
+# the EMQX admin-API secret shared by both hosts. A bundle is sealed to the
+# host's age post-quantum identity instead (var.age_identities), which
+# Terraform cannot generate.
 
 resource "tls_private_key" "host" {
   for_each  = local.roles

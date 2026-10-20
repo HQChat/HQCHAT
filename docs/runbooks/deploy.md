@@ -23,10 +23,15 @@ deploys that ref.
 ## How a host gets there
 
 A droplet boots the environment's base image. `hqcat-netconf` reads
-DigitalOcean's metadata service: addresses, its role and the SSH host key
-Terraform generated for it. Every two minutes `hqcat-host-agent` fetches the
-host's secret bundle (`secrets/<env>/<role>.age`, encrypted to that host key)
-and the channel pointer, and switches to the signed closure it names. The
+DigitalOcean's metadata service: addresses, its role, the SSH host key
+Terraform generated for it, and its age post-quantum identity
+(`/etc/hqcat/age-identity`, from the `AGE_IDENTITY_<ROLE>` secret). Every two
+minutes `hqcat-host-agent` fetches the host's secret bundle
+(`secrets/<env>/<role>.age`, sealed to that identity with age's ML-KEM-768 +
+X25519 hybrid) and installs it only if `<role>.age.sig` is a statement signed
+with the cache key naming this environment, role, the bundle's SHA-256 and a
+release no older than the last one installed. Then it fetches the channel
+pointer, and switches to the signed closure it names. The
 pointer must carry the cache key's signature, name this environment and role,
 and have a release number no lower than the last one the host accepted, so
 whoever can write to the bucket can neither point a host at another closure
@@ -54,8 +59,9 @@ rebuilds nothing that is in the cache, and signs a new pointer to it.
    ```
 
    It creates the GitHub Environment and the R2 buckets, serves the cache on
-   its hostname, and generates `BOT_SEED`, `NOISE_KEYS` and (if none exists)
-   `NIX_CACHE_SIGNING_KEY`. It never overwrites a secret.
+   its hostname, and generates `BOT_SEED`, `NOISE_KEYS`, `AGE_IDENTITY_APP`,
+   `AGE_IDENTITY_MQTT` and (if none exists) `NIX_CACHE_SIGNING_KEY`. It never
+   overwrites a secret.
 4. Optionally set `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` and
    `APNS_KEY_P8` on the GitHub Environment. For the `apple` job (on by default
    through the `ship_apple` input), also set `ASC_KEY_ID`, `ASC_ISSUER_ID` and
@@ -73,6 +79,27 @@ rebuilds nothing that is in the cache, and signs a new pointer to it.
 The hqn/1 gateway keys (`NOISE_KEYS`) are what the apps pin; an environment
 whose keys differ from the ones compiled into `Deployment.swift` still works,
 because clients also learn them from `/auth/transport` over HTTPS.
+
+## Post-quantum secret bundles on hosts that predate them
+
+`publish-secrets.sh` seals bundles only to post-quantum age recipients, and
+refuses to run without `AGE_IDENTITY_APP` and `AGE_IDENTITY_MQTT`. A droplet
+created before those existed has no identity in its user data (which never
+changes after creation), so install one by hand, once per host, before the
+next Deploy:
+
+```bash
+age-keygen -pq 2>/dev/null | grep '^AGE-SECRET-KEY-PQ-1' >app.id   # and mqtt.id
+gh secret set AGE_IDENTITY_APP --env <env> <app.id
+ssh root@<app ip> 'umask 077; mkdir -p /etc/hqcat; cat >/etc/hqcat/age-identity' <app.id
+# the broker through the app host: ssh -J root@<app ip> root@<broker vpc ip>
+rm app.id mqtt.id
+```
+
+Until a host has its identity, `hqcat-secrets-sync` fails and leaves the
+installed secrets as they are; everything else keeps running. After the
+switch, rotate what the earlier, classically sealed bundles held (they stay
+readable to anyone who kept a copy and can later break X25519).
 
 ## Break-glass
 

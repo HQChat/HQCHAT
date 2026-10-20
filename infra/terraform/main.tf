@@ -23,6 +23,13 @@ variable "image_name" {
   type        = string
 }
 
+variable "age_identities" {
+  description = "role → the host's age post-quantum identity (AGE-SECRET-KEY-PQ-1…), which opens its secret bundle; handed to a new droplet in user data."
+  type        = map(string)
+  sensitive   = true
+  default     = {}
+}
+
 locals {
   env  = jsondecode(file("${path.module}/../environments/${var.environment}.json"))
   name = "hqchat-${local.env.name}"

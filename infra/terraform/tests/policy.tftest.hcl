@@ -57,6 +57,10 @@ run "production" {
 
   variables {
     environment = "production"
+    age_identities = {
+      app  = "AGE-SECRET-KEY-PQ-1APPTEST"
+      mqtt = "AGE-SECRET-KEY-PQ-1MQTTTEST"
+    }
   }
 
   assert {
@@ -122,6 +126,10 @@ run "production" {
   assert {
     condition     = alltrue([for role, d in digitalocean_droplet.host : jsondecode(d.user_data).role == role && length(d.ssh_keys) > 0])
     error_message = "Each droplet names its role in user data and carries the admin keys."
+  }
+  assert {
+    condition     = alltrue([for role, d in digitalocean_droplet.host : startswith(jsondecode(d.user_data).ageIdentity, "AGE-SECRET-KEY-PQ-1${upper(role)}")])
+    error_message = "Each droplet gets its own role's age identity, which its secret bundle is sealed to."
   }
   assert {
     condition     = tostring(digitalocean_reserved_ip_assignment.hqn.droplet_id) == digitalocean_droplet.host["mqtt"].id
