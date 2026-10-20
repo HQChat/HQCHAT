@@ -5,6 +5,7 @@ import * as crypto from "node:crypto";
 import { test } from "node:test";
 import { setLogLevel } from "../../src/common/logger";
 import { createAuthHandler } from "../../src/server/auth";
+import { DB } from "../../src/server/db/api";
 import { q } from "../../src/server/db/pg";
 import { call as request } from "../helpers/http";
 import { closePg, requirePg } from "../pg-helper";
@@ -51,6 +52,7 @@ async function cleanup(): Promise<void> {
     `DELETE FROM sessions WHERE id = ANY($1::text[])`,
     `DELETE FROM friendships WHERE id_lo = ANY($1::text[]) OR id_hi = ANY($1::text[])`,
     `DELETE FROM auth_challenges WHERE id = ANY($1::text[])`,
+    `DELETE FROM banned_ids WHERE id = ANY($1::text[])`,
     `DELETE FROM users WHERE id = ANY($1::text[])`,
   ]) {
     await q(sql, [ids]);
@@ -390,6 +392,21 @@ test("a login is idempotent — the same key twice is one account", async () => 
   );
   const users = await q(`SELECT 1 FROM users WHERE id = $1`, [first.me.id]);
   assert.equal(users.rows.length, 1, "one row per identity");
+});
+
+test("a banned key proves possession and is still refused, before any session", async () => {
+  const seed = crypto.randomBytes(32);
+  const first = await handshake(seed);
+  assert.equal(first.verify.status, 200, first.verify.text);
+  await DB.banUser(first.me.id);
+
+  const again = await handshake(seed);
+  assert.equal(again.verify.status, 403, again.verify.text);
+  assert.equal(again.verify.body.error, "BANNED");
+  assert.ok(!again.verify.body.sessionToken, "a banned key was handed a session");
+  assert.equal((await q(`SELECT 1 FROM users WHERE id = $1`, [first.me.id])).rows.length, 0, "the account came back");
+  assert.equal((await q(`SELECT 1 FROM sessions WHERE id = $1`, [first.me.id])).rows.length, 0);
+  await assert.rejects(DB.ensureUser(first.me.id, first.me.pkHex), /BANNED/);
 });
 
 test("a run of failed proofs raises exactly one alert, and a success clears it", async () => {

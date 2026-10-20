@@ -58,7 +58,8 @@ export async function queue(limit = 100): Promise<number> {
   console.log(`  hqcat-ops reports <report-id> <${DISPOSITIONS.join("|")}>`);
   console.log("");
   console.log("  ejected  disconnects their live session");
-  console.log("  banned   deletes their account and disconnects it (a reinstall is a new identity)");
+  console.log("  banned   deletes their account, refuses their key from then on, and disconnects it");
+  console.log("           (a reinstall is a new key, and so a new identity)");
   console.log("");
   return rows.length;
 }
@@ -66,10 +67,10 @@ export async function queue(limit = 100): Promise<number> {
 /** What a disposition does to the reported account; injectable for tests. */
 export interface Enforcement {
   kick(id: string): Promise<boolean>;
-  deleteUser(id: string): Promise<void>;
+  ban(id: string): Promise<void>;
 }
 
-const live: Enforcement = { kick: (id) => EMQX.kick(id), deleteUser: (id) => DB.deleteUser(id) };
+const live: Enforcement = { kick: (id) => EMQX.kick(id), ban: (id) => DB.banUser(id) };
 
 /** Records a decision and enforces it. Refuses to overwrite a decision somebody already made. */
 export async function resolve(id: string, disposition: string, enforce: Enforcement = live): Promise<boolean> {
@@ -82,7 +83,7 @@ export async function resolve(id: string, disposition: string, enforce: Enforcem
     console.log(`⛔️ ${id} is not an open report — unknown id, or somebody has already handled it`);
     return false;
   }
-  if (disposition === "banned") await enforce.deleteUser(reported);
+  if (disposition === "banned") await enforce.ban(reported);
   if (disposition === "banned" || disposition === "ejected") {
     if (!(await enforce.kick(reported))) console.log(`⚠️ could not disconnect ${short(reported)}; it may be offline`);
   }

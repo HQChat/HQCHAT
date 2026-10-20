@@ -147,6 +147,8 @@ async function handleVerify(req: http.IncomingMessage, res: http.ServerResponse)
   }
   await DB.clearCounter(`verify:fail:${id}`);
 
+  // Checked only after the proof, so only the key's holder learns of a ban.
+  if (await DB.isBanned(id)) return send(res, 403, { error: "BANNED" });
   await DB.ensureUser(id, pkHex);
   await befriendBot(id);
 

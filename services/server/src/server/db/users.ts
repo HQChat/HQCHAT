@@ -1,3 +1,4 @@
+import type { PoolClient } from "pg";
 import { isPeerId } from "../../common/core";
 import { one, q, tx } from "./pg";
 
@@ -24,14 +25,55 @@ const RESERVED_USERNAMES = new Set([
   "hqchat",
 ]);
 
-/** Accounts: identities, usernames and account deletion. */
+/**
+ * Deletes everything stored about an account, except reports filed against it
+ * and blocks other users placed on it: those are the other users' data, and
+ * dropping them would let a blocked account lift every block on it by
+ * deleting itself and signing back in with the same key.
+ */
+async function deleteAccountRows(c: PoolClient, id: string): Promise<void> {
+  await c.query(`DELETE FROM friendships WHERE id_lo = $1 OR id_hi = $1`, [id]);
+  await c.query(`DELETE FROM invites WHERE to_id = $1 OR from_id = $1`, [id]);
+  await c.query(`DELETE FROM mqtt_session_keys WHERE id = $1`, [id]);
+  await c.query(`DELETE FROM sessions WHERE id = $1`, [id]);
+  await c.query(`DELETE FROM push_tokens WHERE id = $1`, [id]);
+  await c.query(`DELETE FROM prekeys_medium WHERE id = $1`, [id]);
+  await c.query(`DELETE FROM prekeys_onetime WHERE id = $1`, [id]);
+  await c.query(`DELETE FROM blocks WHERE blocker_id = $1`, [id]);
+  await c.query(`UPDATE reports SET reporter_id = NULL WHERE reporter_id = $1`, [id]);
+  await c.query(`DELETE FROM users WHERE id = $1`, [id]);
+}
+
+/** Accounts: identities, usernames, account deletion and bans. */
 export const users = {
-  /** Records an identity: its id and the public key it names. Idempotent. */
+  /**
+   * Records an identity: its id and the public key it names. Idempotent.
+   * Throws `BANNED` for an id an operator banned, and records nothing.
+   */
   async ensureUser(id: string, identityPk: string): Promise<void> {
-    await q(`INSERT INTO users (id, identity_pk) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING`, [
-      id,
-      identityPk.toLowerCase(),
-    ]);
+    const res = await q(
+      `INSERT INTO users (id, identity_pk)
+       SELECT $1, $2 WHERE NOT EXISTS (SELECT 1 FROM banned_ids WHERE id = $1)
+       ON CONFLICT (id) DO NOTHING`,
+      [id, identityPk.toLowerCase()],
+    );
+    if (!res.rowCount && (await users.isBanned(id))) throw new Error("BANNED");
+  },
+
+  /** Whether an operator banned this id. */
+  async isBanned(id: string): Promise<boolean> {
+    return (await one(`SELECT 1 FROM banned_ids WHERE id = $1`, [id])) !== null;
+  },
+
+  /**
+   * Bans an id: records it, so its key cannot sign in again, and deletes the
+   * account as `deleteUser` does, in one transaction.
+   */
+  async banUser(id: string): Promise<void> {
+    await tx(async (c) => {
+      await c.query(`INSERT INTO banned_ids (id) VALUES ($1) ON CONFLICT DO NOTHING`, [id]);
+      await deleteAccountRows(c, id);
+    });
   },
 
   async getUsername(id: string): Promise<string | null> {
@@ -74,19 +116,11 @@ export const users = {
     if (!res.rowCount) throw new Error("UNKNOWN_IDENTITY");
   },
 
-  /** Deletes an account and everything stored about it, except reports filed against it. */
+  /**
+   * Deletes an account and everything stored about it, except reports filed
+   * against it and blocks other users placed on it.
+   */
   async deleteUser(id: string): Promise<void> {
-    await tx(async (c) => {
-      await c.query(`DELETE FROM friendships WHERE id_lo = $1 OR id_hi = $1`, [id]);
-      await c.query(`DELETE FROM invites WHERE to_id = $1 OR from_id = $1`, [id]);
-      await c.query(`DELETE FROM mqtt_session_keys WHERE id = $1`, [id]);
-      await c.query(`DELETE FROM sessions WHERE id = $1`, [id]);
-      await c.query(`DELETE FROM push_tokens WHERE id = $1`, [id]);
-      await c.query(`DELETE FROM prekeys_medium WHERE id = $1`, [id]);
-      await c.query(`DELETE FROM prekeys_onetime WHERE id = $1`, [id]);
-      await c.query(`DELETE FROM blocks WHERE blocker_id = $1 OR blocked_id = $1`, [id]);
-      await c.query(`UPDATE reports SET reporter_id = NULL WHERE reporter_id = $1`, [id]);
-      await c.query(`DELETE FROM users WHERE id = $1`, [id]);
-    });
+    await tx((c) => deleteAccountRows(c, id));
   },
 };

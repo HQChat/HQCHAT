@@ -55,7 +55,8 @@ report that should no longer exist because the routine sweep was not running.
 
 The reporter has almost certainly blocked them as well — the app offers both from
 one gesture, and blocking already ends the friendship, revokes both members'
-access to the conversation topic, and cannot be walked around by re-inviting. So
+access to the conversation topic, and cannot be walked around by re-inviting,
+nor by the blocked account deleting itself and signing back in. So
 the question here is not "can this person still reach the reporter" (they cannot)
 but **"should this account keep using the server at all"**.
 
@@ -73,13 +74,17 @@ dispositions act on the reported account as they are recorded:
 | disposition | effect |
 |---|---|
 | `ejected` | disconnects their live MQTT session now. Blocking already revoked the pair's topics; this ends a connection that is still open. |
-| `banned` | deletes the account (friendships, invites, prekeys, push tokens, sessions) and disconnects it. Reports filed against it are kept. |
+| `banned` | records the id in `banned_ids`, deletes the account (friendships, invites, prekeys, push tokens, sessions) and disconnects it. The same key is refused at sign-in from then on. Reports filed against it, and blocks other people placed on it, are kept. |
+
+A ban is lifted by hand, and only on purpose:
+`DELETE FROM banned_ids WHERE id = '<id>';`
 
 ### ⚠️ What a ban cannot do
 
 An identity here is `sha256(public key)` and the key is generated on the device.
-Somebody removed can reinstall the app and arrive as a **new person with a new
-id**, and nothing on this architecture follows a human being across that. Do not
+The ban refuses that key, but somebody removed can reinstall the app and arrive
+as a **new person with a new id**, and nothing on this architecture follows a
+human being across that. Do not
 tell a reporter that someone has been "banned from the service"; what actually
 happened is that an account was ended, its conversations were broken, and anyone
 who wants to reach them has to be added by them again.

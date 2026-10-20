@@ -85,6 +85,7 @@ const created: string[] = [];
 
 interface Account {
   id: string;
+  pkHex: string;
   token: string;
   username: string;
 }
@@ -103,7 +104,7 @@ async function account(): Promise<Account> {
   await DB.ensureUser(id, pkHex);
   await DB.setUsername(id, username);
   created.push(id);
-  return { id, token: await DB.mintSessionToken(id), username };
+  return { id, pkHex, token: await DB.mintSessionToken(id), username };
 }
 
 /** Two accounts that are already friends. */
@@ -535,13 +536,17 @@ test("deleting an account leaves no row anywhere, and ends the live connection",
     ["prekeys_medium", "id"],
     ["prekeys_onetime", "id"],
     ["friendships", "id_lo"],
-    // Both directions: a block this user placed and a block placed on them.
+    // The blocks this user placed. A block placed ON them is the blocker's, below.
     ["blocks", "blocker_id"],
-    ["blocks", "blocked_id"],
   ] as const) {
     const rows = await q(`SELECT 1 FROM ${table} WHERE ${col} = $1`, [a.id]);
     assert.equal(rows.rows.length, 0, `${table}.${col} still holds a row for the deleted account`);
   }
+
+  // The second exception: b's block on a is b's data, and it outlives a. The
+  // same key signs back in to the same id, so dropping it would let a blocked
+  // account lift every block on it by deleting itself.
+  assert.deepEqual(await DB.blockedIds(b.id), [a.id], "deleting the blocked account lifted the block on it");
 
   // The exception, and its limit. A report ABOUT the deleted user survives —
   // otherwise deleting an account erases the complaints against it, which makes
@@ -589,6 +594,26 @@ test("deleting an account leaves no row anywhere, and ends the live connection",
   assert.equal((await q(`SELECT 1 FROM users WHERE id = $1`, [b.id])).rows.length, 1);
   const left = (await call("GET", "/friends", undefined, b.token)).body.friends as Array<{ id: string }>;
   assert.ok(!left.some((f) => f.id === a.id), "the remaining friend is still handed the deleted account's topics");
+});
+
+test("a blocked account that deletes itself and signs back in is still blocked", async () => {
+  const [victim, abuser] = await friends();
+  assert.equal((await call("POST", "/friends/block", { peer: abuser.id }, victim.token)).status, 200);
+  assert.equal((await call("POST", "/account/delete", {}, abuser.token)).status, 200);
+
+  // What /auth/verify does for a returning key: the same id, a new session.
+  assert.equal(await DB.identityKey(abuser.id), null, "the account is gone");
+  await DB.ensureUser(abuser.id, abuser.pkHex);
+  const token = await DB.mintSessionToken(abuser.id);
+
+  assert.deepEqual(
+    (await call("GET", "/friends/blocked", undefined, victim.token)).body.blocked,
+    [abuser.id],
+    "the victim's block list was emptied by the abuser's delete",
+  );
+  const again = await call("POST", "/friends/invite", { to: victim.id }, token);
+  assert.equal(again.status, 404, "the same id invites its blocker again");
+  assert.deepEqual((await call("GET", "/friends/invites", undefined, victim.token)).body.invites, []);
 });
 
 test("deletion needs a session, like everything else", async () => {
