@@ -85,6 +85,7 @@ impl ForgedInit {
                 ct_mt: self.ct_mt.clone(),
             }),
             one_time: None,
+            padded: false,
         };
         envelope::encode(&Frame {
             header,
@@ -109,6 +110,7 @@ pub fn forged_msg(sender: &PeerId, to: &PeerId, msg_id: &str) -> Vec<u8> {
         kem_ct: None,
         init: None,
         one_time: None,
+        padded: false,
     };
     envelope::encode(&Frame {
         header,

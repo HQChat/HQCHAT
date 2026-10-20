@@ -304,3 +304,26 @@ fn only_a_message_one_wrote_can_be_retried() {
         "nothing was sent back"
     );
 }
+
+#[test]
+fn the_server_sees_a_size_class_not_a_length() {
+    let (s, mut a, mut b) = pair();
+    send(&mut a, &b, "first");
+    settle(&mut [&mut a, &mut b]);
+    let mut sizes = Vec::new();
+    for text in ["hi", &"x".repeat(200)] {
+        let before = s.borrow().broker.routed.len();
+        send(&mut a, &b, text);
+        settle(&mut [&mut a, &mut b]);
+        let routed = &s.borrow().broker.routed;
+        let (_, raw) = routed[before..]
+            .iter()
+            .find(|(t, _)| t.starts_with("cv/"))
+            .unwrap();
+        let (frame, _) = hqchat_protocol::envelope::decode(raw).unwrap();
+        assert!(frame.header.padded);
+        sizes.push(frame.payload.len());
+    }
+    assert_eq!(sizes[0], sizes[1], "2 and 200 characters look the same");
+    assert_eq!(texts(&b, &a).last().unwrap().len(), 200);
+}
