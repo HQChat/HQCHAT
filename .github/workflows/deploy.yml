@@ -1,5 +1,7 @@
 # One click: deploy the selected ref ("Use workflow from") to an environment,
-# from an empty DigitalOcean account or over a running one.
+# from an empty DigitalOcean account or over a running one. The ref is main, or
+# an app-store/<version> tag on a commit of main (app-store.yml); any other is
+# refused before a job that holds a secret starts.
 #
 #   ci        the full CI suite, the two-VM stack test included; skipped when
 #             this exact commit already passed CI (push to main), so a deploy
@@ -56,7 +58,34 @@ env:
   ENVIRONMENT: ${{ inputs.environment }}
 
 jobs:
+  # Fails, never skips: the jobs below run on `!failure()`, and a skipped
+  # ancestor would let them through.
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: The ref is main, or an App Store tag on main
+        run: |
+          case "$GITHUB_REF" in
+            refs/heads/main) ;;
+            refs/tags/app-store/*)
+              git merge-base --is-ancestor "$GITHUB_SHA" origin/main || {
+                echo "::error::$GITHUB_REF ($GITHUB_SHA) is not a commit on main"
+                exit 1
+              }
+              ;;
+            *)
+              echo "::error::deploys run from main or an app-store/ tag, not $GITHUB_REF"
+              exit 1
+              ;;
+          esac
+
   ci-passed:
+    needs: source
     runs-on: ubuntu-latest
     timeout-minutes: 2
     permissions:
@@ -84,7 +113,7 @@ jobs:
   # `!cancelled() && !failure()` lets a skipped `ci` through; GitHub would
   # otherwise skip every job downstream of a skipped one.
   build:
-    needs: [ci-passed, ci]
+    needs: [source, ci-passed, ci]
     if: ${{ !cancelled() && !failure() }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
