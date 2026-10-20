@@ -17,6 +17,7 @@ pub mod kem;
 pub mod mqtt;
 pub mod mqtt_proof;
 pub mod noise;
+pub mod padding;
 pub mod ratchet;
 pub mod topics;
 pub mod wire;

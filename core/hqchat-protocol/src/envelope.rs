@@ -4,6 +4,7 @@
 //!
 //! ```text
 //! 0   magic "HQCE" · 4 version u8 (3) · 5 kind u8 · 6 flags u8
+//!     (bit0 rk, bit1 kemCt, bit2 one-time, bit3 padded payload)
 //! 7   sender 32 B · 39 to 32 B · 71 cid 16 B · 87 n u32 · 91 pn u32
 //! 95  msgIdLen u8 (1..128) · 96 msgId UTF-8
 //!     [rk] [kemCt] [init: senderPk, ctId, ctMt] [oneTime: ctOt, otId u32]
@@ -30,7 +31,8 @@ const MAGIC: &[u8; 4] = b"HQCE";
 const FLAG_RK: u8 = 0x01;
 const FLAG_KEMCT: u8 = 0x02;
 const FLAG_ONE_TIME: u8 = 0x04;
-const ALL_FLAGS: u8 = FLAG_RK | FLAG_KEMCT | FLAG_ONE_TIME;
+const FLAG_PADDED: u8 = 0x08;
+const ALL_FLAGS: u8 = FLAG_RK | FLAG_KEMCT | FLAG_ONE_TIME | FLAG_PADDED;
 /// Where the message id starts: everything before it has a fixed size.
 const OFF_MSGID: usize = 96;
 
@@ -109,6 +111,8 @@ pub struct Header {
     pub init: Option<InitFields>,
     /// While the responder's one-time pool lasted.
     pub one_time: Option<OneTime>,
+    /// The sealed plaintext is padded (`padding::pad`).
+    pub padded: bool,
 }
 
 /// A whole frame: header and sealed payload.
@@ -181,7 +185,8 @@ pub fn header_bytes(h: &Header) -> Result<Vec<u8>, Error> {
             FLAG_ONE_TIME
         } else {
             0
-        });
+        })
+        | (if h.padded { FLAG_PADDED } else { 0 });
     let mut out = Vec::with_capacity(OFF_MSGID.saturating_add(h.msg_id.len()));
     out.extend_from_slice(MAGIC);
     out.push(FRAME_VERSION);
@@ -248,6 +253,7 @@ pub fn decode(raw: &[u8]) -> Result<(Frame, Vec<u8>), Error> {
     let has_rk = flags & FLAG_RK != 0;
     let has_kem_ct = flags & FLAG_KEMCT != 0;
     let has_one_time = flags & FLAG_ONE_TIME != 0;
+    let padded = flags & FLAG_PADDED != 0;
     match kind {
         Kind::Init if !has_rk || has_kem_ct => {
             return Err(Error::Malformed("an init carries rk and no kemCt"));
@@ -319,6 +325,7 @@ pub fn decode(raw: &[u8]) -> Result<(Frame, Vec<u8>), Error> {
         kem_ct,
         init,
         one_time,
+        padded,
     };
     Ok((Frame { header, payload }, aad))
 }
@@ -359,6 +366,7 @@ mod tests {
             kem_ct: None,
             init: None,
             one_time: None,
+            padded: false,
         }
     }
 

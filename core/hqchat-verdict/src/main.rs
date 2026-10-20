@@ -204,6 +204,7 @@ fn wire_frame(line: &str) -> Option<Frame> {
         kem_ct: blob(obj, "kemCt")?,
         init,
         one_time,
+        padded: obj.get("padded").and_then(Value::as_bool).unwrap_or(false),
     };
     Some(Frame {
         header,

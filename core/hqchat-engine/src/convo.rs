@@ -26,8 +26,9 @@ use hqchat_protocol::envelope::{self, Frame, Header, InitFields, Kind, OneTime};
 use hqchat_protocol::handshake::{self, HandshakeFrame};
 use hqchat_protocol::ratchet::{self, InitHeader, MessageHeader, PrekeyBundle, SessionState};
 use hqchat_protocol::topics;
-use hqchat_protocol::{Kem, OsEntropy, PeerId, aead};
+use hqchat_protocol::{Kem, OsEntropy, PeerId, aead, padding};
 use serde_json::json;
+use zeroize::Zeroizing;
 
 use crate::core::Core;
 use crate::effect::{Effect, Method};
@@ -352,9 +353,12 @@ impl Core {
                     ct_ot: ct.as_bytes().to_vec(),
                     ot_id: *id,
                 }),
+            padded: true,
         };
         let aad = envelope::header_bytes(&header)?;
-        let payload = aead::seal_payload(text.as_bytes(), &sealed.key.0, &aad, &mut OsEntropy)?;
+        // Padded, so what the server sees is a size class, not a length.
+        let plain = Zeroizing::new(padding::pad(text.as_bytes()));
+        let payload = aead::seal_payload(&plain, &sealed.key.0, &aad, &mut OsEntropy)?;
         let bytes = envelope::encode(&Frame { header, payload })?;
         self.save_session(peer)?;
         if init.is_some() {
@@ -1171,7 +1175,13 @@ fn open_with(
         aad,
     ) {
         Ok(plain) => {
-            text = String::from_utf8(plain).ok();
+            let plain = Zeroizing::new(plain);
+            let body = if frame.header.padded {
+                padding::unpad(&plain).ok()
+            } else {
+                Some(plain.as_slice())
+            };
+            text = body.and_then(|b| String::from_utf8(b.to_vec()).ok());
             text.is_some()
         }
         Err(_) => false,
