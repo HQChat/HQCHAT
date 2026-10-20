@@ -306,6 +306,7 @@ private struct AddFriendSheet: View {
             Form {
                 Section {
                     TextField("Username", text: $username)
+                        .hqPrivateTextEntry(ascii: true)
                 } header: {
                     Text("Friend's username")
                 } footer: {
