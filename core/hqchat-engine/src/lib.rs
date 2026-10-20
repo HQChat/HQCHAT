@@ -5,8 +5,10 @@
 //! [`Effect`]s each returns: HTTP requests, socket opens and writes, timers,
 //! UI updates. The engine never touches a socket, a file or the clock; it
 //! reaches the hardware key and storage through two synchronous callbacks,
-//! [`KeyVault`] and [`Store`]. No secret key, ratchet state or root key
-//! crosses this API.
+//! [`KeyVault`] and [`Store`]. In normal use no secret key, ratchet state or
+//! root key crosses this API; the exceptions are an import (the old app's
+//! secrets come in, once), the vault's ECDH result, and the Node software
+//! vault's `deviceKey`, which the bot must keep somewhere.
 
 mod auth;
 mod convo;

@@ -4,8 +4,10 @@
 //! commands and carry out the [`Effect`]s it returns.
 //!
 //! The types mirror `hqchat-engine`'s one for one, so this crate is the only
-//! one that knows about bindings. No secret key, ratchet state or root key
-//! crosses this API.
+//! one that knows about bindings. In normal use no secret key, ratchet state
+//! or root key crosses this API; the exceptions are an import (the old app's
+//! secrets come in, once) and the vault's ECDH result, which the shell
+//! computes for the engine.
 
 use std::sync::Arc;
 
