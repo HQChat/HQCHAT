@@ -9,7 +9,7 @@ import { DB } from "../../src/server/db/api";
 import { q } from "../../src/server/db/pg";
 import { call as request } from "../helpers/http";
 import { closePg, requirePg } from "../pg-helper";
-import { authProof } from "../reference/protocol/auth-proof";
+import { signInProof } from "../reference/protocol/auth-proof";
 import { peerId } from "../reference/protocol/identity";
 
 test.before(requirePg);
@@ -17,6 +17,9 @@ test.before(requirePg);
 setLogLevel("silent"); // the failure path logs per attempt; see the alert test
 // Callers are told apart by X-Real-IP, as behind the production nginx.
 process.env.TRUSTED_PROXY = "x-real-ip";
+// The origin these clients sign in at; the proof is bound to it.
+const ORIGIN = "https://hqchat.test";
+process.env.AUTH_ORIGINS = ORIGIN;
 
 const handler = createAuthHandler();
 
@@ -30,11 +33,16 @@ function identity(seed?: Buffer) {
   return { pk, sk, pkHex: pk.toString("hex"), id: peerId(pk.toString("hex")) };
 }
 
+/** The proof for a challenge `ct` to `sk`'s key (an HQC secret key starts with its public key). */
+function proofOf(ss: Buffer, sk: Buffer, ct: Buffer): Buffer {
+  return signInProof(ss, ORIGIN, sk.subarray(0, 7237), ct);
+}
+
 /** What a client does with the server's challenge: decapsulate, then HKDF. */
 function solve(sk: Buffer, ctB64: string): string {
   const { HqcWrapper } = require("../reference/protocol/hqc") as typeof import("../reference/protocol/hqc");
-  const ss = HqcWrapper.decapsulate(sk, Buffer.from(ctB64, "base64"));
-  return authProof(ss).toString("base64");
+  const ct = Buffer.from(ctB64, "base64");
+  return proofOf(HqcWrapper.decapsulate(sk, ct), sk, ct).toString("base64");
 }
 
 /** A valid per-session Ed25519 public key; verify requires one. */
@@ -70,7 +78,7 @@ async function cleanup(): Promise<void> {
 async function handshake(seed?: Buffer) {
   const me = identity(seed);
   created.push(me.id);
-  const init = await call("/auth/init", { pk: me.pkHex });
+  const init = await call("/auth/init", { pk: me.pkHex, origin: ORIGIN });
   assert.equal(init.status, 200, `init failed: ${init.text}`);
   const verify = await call("/auth/verify", {
     mqttSigningKey: SIGNING_KEY,
@@ -106,14 +114,14 @@ test("a client that holds the key gets a session", async () => {
 test("the challenge never carries the secret, only something derived from it", async () => {
   const me = identity();
   created.push(me.id);
-  const init = await call("/auth/init", { pk: me.pkHex });
+  const init = await call("/auth/init", { pk: me.pkHex, origin: ORIGIN });
   const { HqcWrapper } = require("../reference/protocol/hqc") as typeof import("../reference/protocol/hqc");
   const ss = HqcWrapper.decapsulate(me.sk, Buffer.from(init.body.ct, "base64"));
 
   assert.ok(!init.text.includes(ss.toString("base64")), "the shared secret was returned");
   assert.ok(!init.text.includes(ss.toString("hex")));
 
-  const solution = authProof(ss);
+  const solution = proofOf(ss, me.sk, Buffer.from(init.body.ct, "base64"));
   assert.notDeepEqual(solution, ss, "the proof must not simply be the secret");
   const verify = await call("/auth/verify", {
     mqttSigningKey: SIGNING_KEY,
@@ -127,7 +135,7 @@ test("the challenge never carries the secret, only something derived from it", a
 test("the stored challenge is the proof, not the secret", async () => {
   const me = identity();
   created.push(me.id);
-  const init = await call("/auth/init", { pk: me.pkHex });
+  const init = await call("/auth/init", { pk: me.pkHex, origin: ORIGIN });
   const { HqcWrapper } = require("../reference/protocol/hqc") as typeof import("../reference/protocol/hqc");
   const ss = HqcWrapper.decapsulate(me.sk, Buffer.from(init.body.ct, "base64"));
 
@@ -135,13 +143,16 @@ test("the stored challenge is the proof, not the secret", async () => {
   assert.equal(rows.rows.length, 1, "one open challenge");
   const stored = JSON.stringify(rows.rows[0]);
   assert.ok(!stored.includes(ss.toString("hex")), "the shared secret is in the database");
-  assert.ok(stored.includes(authProof(ss).toString("hex")), "the expected proof should be");
+  assert.ok(
+    stored.includes(proofOf(ss, me.sk, Buffer.from(init.body.ct, "base64")).toString("hex")),
+    "the expected proof should be",
+  );
 });
 
 test("a wrong proof is refused, and mints nothing", async () => {
   const me = identity();
   created.push(me.id);
-  await call("/auth/init", { pk: me.pkHex });
+  await call("/auth/init", { pk: me.pkHex, origin: ORIGIN });
 
   const bad = await call("/auth/verify", {
     mqttSigningKey: SIGNING_KEY,
@@ -158,7 +169,7 @@ test("a wrong proof is refused, and mints nothing", async () => {
 test("a proof of the WRONG LENGTH is refused rather than throwing", async () => {
   const me = identity();
   created.push(me.id);
-  await call("/auth/init", { pk: me.pkHex });
+  await call("/auth/init", { pk: me.pkHex, origin: ORIGIN });
 
   for (const wrong of [
     Buffer.alloc(1).toString("base64"),
@@ -168,7 +179,7 @@ test("a proof of the WRONG LENGTH is refused rather than throwing", async () => 
     "",
     "not-base64-at-all!!",
   ]) {
-    await call("/auth/init", { pk: me.pkHex });
+    await call("/auth/init", { pk: me.pkHex, origin: ORIGIN });
     const res = await call("/auth/verify", { mqttSigningKey: SIGNING_KEY, pk: me.pkHex, solution: wrong });
     assert.equal(res.status, 401, `length ${wrong.length} produced ${res.status}: ${res.text}`);
   }
@@ -177,7 +188,7 @@ test("a proof of the WRONG LENGTH is refused rather than throwing", async () => 
 test("a challenge is single-use, so a captured proof cannot be replayed", async () => {
   const me = identity();
   created.push(me.id);
-  const init = await call("/auth/init", { pk: me.pkHex });
+  const init = await call("/auth/init", { pk: me.pkHex, origin: ORIGIN });
   const solution = solve(me.sk, init.body.ct);
 
   const first = await call("/auth/verify", { mqttSigningKey: SIGNING_KEY, pk: me.pkHex, solution });
@@ -190,8 +201,8 @@ test("a challenge is single-use, so a captured proof cannot be replayed", async 
 test("a second init opens a second challenge, and each verifies once", async () => {
   const me = identity();
   created.push(me.id);
-  const a = await call("/auth/init", { pk: me.pkHex });
-  const b = await call("/auth/init", { pk: me.pkHex });
+  const a = await call("/auth/init", { pk: me.pkHex, origin: ORIGIN });
+  const b = await call("/auth/init", { pk: me.pkHex, origin: ORIGIN });
   assert.equal(a.status, 200, a.text);
   assert.equal(b.status, 200, b.text);
   assert.notEqual(a.body.ct, b.body.ct, "each init must encapsulate afresh");
@@ -213,7 +224,7 @@ test("one address keeps only its newest few challenges", async () => {
   const me = identity();
   created.push(me.id);
   const inits = [];
-  for (let i = 0; i < 5; i++) inits.push(await call("/auth/init", { pk: me.pkHex }));
+  for (let i = 0; i < 5; i++) inits.push(await call("/auth/init", { pk: me.pkHex, origin: ORIGIN }));
   const rows = await q(`SELECT 1 FROM auth_challenges WHERE id = $1`, [me.id]);
   assert.equal(rows.rows.length, 4, "five inits from one address leave its four newest");
   const oldest = await call("/auth/verify", {
@@ -227,12 +238,12 @@ test("one address keeps only its newest few challenges", async () => {
 test("a stranger's inits from other addresses neither refuse nor displace the owner's", async () => {
   const me = identity();
   created.push(me.id);
-  const mine = await call("/auth/init", { pk: me.pkHex }, { "x-real-ip": "198.51.100.10" });
+  const mine = await call("/auth/init", { pk: me.pkHex, origin: ORIGIN }, { "x-real-ip": "198.51.100.10" });
   for (let i = 0; i < 12; i++) {
-    const r = await call("/auth/init", { pk: me.pkHex }, { "x-real-ip": `203.0.113.${i + 1}` });
+    const r = await call("/auth/init", { pk: me.pkHex, origin: ORIGIN }, { "x-real-ip": `203.0.113.${i + 1}` });
     assert.equal(r.status, 200, r.text);
   }
-  const again = await call("/auth/init", { pk: me.pkHex }, { "x-real-ip": "198.51.100.10" });
+  const again = await call("/auth/init", { pk: me.pkHex, origin: ORIGIN }, { "x-real-ip": "198.51.100.10" });
   assert.equal(again.status, 200, "the owner's init budget was spent by strangers");
   const verify = await call(
     "/auth/verify",
@@ -245,7 +256,7 @@ test("a stranger's inits from other addresses neither refuse nor displace the ow
 test("a wrong proof spends nothing, so a stranger's junk verify cannot lock the owner out", async () => {
   const me = identity();
   created.push(me.id);
-  const init = await call("/auth/init", { pk: me.pkHex });
+  const init = await call("/auth/init", { pk: me.pkHex, origin: ORIGIN });
   const good = solve(me.sk, init.body.ct);
 
   const wrong = await call(
@@ -270,8 +281,8 @@ test("a wrong proof spends nothing, so a stranger's junk verify cannot lock the 
 test("a verify that names its challenge is held to that one", async () => {
   const me = identity();
   created.push(me.id);
-  const a = await call("/auth/init", { pk: me.pkHex });
-  const b = await call("/auth/init", { pk: me.pkHex });
+  const a = await call("/auth/init", { pk: me.pkHex, origin: ORIGIN });
+  const b = await call("/auth/init", { pk: me.pkHex, origin: ORIGIN });
   assert.match(a.body.challenge, /^[0-9a-f]{32}$/);
 
   const crossed = await call("/auth/verify", {
@@ -320,7 +331,7 @@ test("a proof solved with another key does not authenticate", async () => {
   const attacker = identity();
   created.push(victim.id, attacker.id);
 
-  const victimInit = await call("/auth/init", { pk: victim.pkHex });
+  const victimInit = await call("/auth/init", { pk: victim.pkHex, origin: ORIGIN });
   const res = await call("/auth/verify", {
     mqttSigningKey: SIGNING_KEY,
     pk: victim.pkHex,
@@ -342,7 +353,7 @@ test("verifying without an open challenge is refused", async () => {
 
 test("a malformed public key is refused before anything expensive runs", async () => {
   for (const pk of ["", "zz", "0x1234", "ABCDEF".repeat(10), "12 34", null, 12345, {}]) {
-    const res = await call("/auth/init", { pk });
+    const res = await call("/auth/init", { pk, origin: ORIGIN });
     assert.equal(res.status, 400, `${JSON.stringify(pk)} produced ${res.status}`);
     assert.match(res.body.error, /public key/);
   }
@@ -350,7 +361,7 @@ test("a malformed public key is refused before anything expensive runs", async (
 
 test("hex of the right shape but the wrong length is still refused", async () => {
   for (const pk of ["ab", "00".repeat(100), "ff".repeat(7236), "ab".repeat(7238)]) {
-    const res = await call("/auth/init", { pk });
+    const res = await call("/auth/init", { pk, origin: ORIGIN });
     assert.equal(res.status, 400, `${pk.length / 2} bytes produced ${res.status}: ${res.text}`);
   }
 });
@@ -358,7 +369,7 @@ test("hex of the right shape but the wrong length is still refused", async () =>
 test("an uppercase key is the same identity as its lowercase form", async () => {
   const me = identity();
   created.push(me.id);
-  const init = await call("/auth/init", { pk: me.pkHex.toUpperCase() });
+  const init = await call("/auth/init", { pk: me.pkHex.toUpperCase(), origin: ORIGIN });
   assert.equal(init.status, 200, init.text);
   const verify = await call("/auth/verify", {
     mqttSigningKey: SIGNING_KEY,
@@ -437,7 +448,7 @@ test("a run of failed proofs raises exactly one alert, and a success clears it",
   assert.equal(raised.length, 1, `eight failures raised ${raised.length} alerts:\n${alerts.join("\n")}`);
   assert.match(raised[0]!, /5 failed key-possession proofs in 15m/);
 
-  const init = await call("/auth/init", { pk: me.pkHex });
+  const init = await call("/auth/init", { pk: me.pkHex, origin: ORIGIN });
   const ok = await call("/auth/verify", {
     mqttSigningKey: SIGNING_KEY,
     pk: me.pkHex,
@@ -453,7 +464,7 @@ test("one key cannot open unlimited challenges from one address", async () => {
   created.push(me.id);
   const statuses: number[] = [];
   for (let i = 0; i < 8; i++) {
-    statuses.push((await call("/auth/init", { pk: me.pkHex })).status);
+    statuses.push((await call("/auth/init", { pk: me.pkHex, origin: ORIGIN })).status);
   }
   assert.deepEqual(
     statuses.slice(0, 6),
@@ -466,7 +477,7 @@ test("one key cannot open unlimited challenges from one address", async () => {
 test("the rate-limit key is the id, not the 14 kB public key", async () => {
   const me = identity();
   created.push(me.id);
-  await call("/auth/init", { pk: me.pkHex });
+  await call("/auth/init", { pk: me.pkHex, origin: ORIGIN });
 
   const rows = await q<{ key: string }>(`SELECT key FROM rate_counters WHERE key LIKE 'init:pk:%'`);
   assert.ok(rows.rows.length >= 1, "no per-key counter was written");
@@ -483,10 +494,10 @@ test("the rate-limit key is the id, not the 14 kB public key", async () => {
 test("a refused init does not open a challenge", async () => {
   const me = identity();
   created.push(me.id);
-  for (let i = 0; i < 6; i++) await call("/auth/init", { pk: me.pkHex });
+  for (let i = 0; i < 6; i++) await call("/auth/init", { pk: me.pkHex, origin: ORIGIN });
   await q(`DELETE FROM auth_challenges WHERE id = $1`, [me.id]);
 
-  const refused = await call("/auth/init", { pk: me.pkHex });
+  const refused = await call("/auth/init", { pk: me.pkHex, origin: ORIGIN });
   assert.equal(refused.status, 429, refused.text);
   const rows = await q(`SELECT 1 FROM auth_challenges WHERE id = $1`, [me.id]);
   assert.equal(rows.rows.length, 0, "a refused init wrote a challenge anyway");
@@ -495,7 +506,7 @@ test("a refused init does not open a challenge", async () => {
 test("a malformed key costs nothing — not even a counter row", async () => {
   await q(`DELETE FROM rate_counters WHERE key LIKE 'init:ip:%' OR key LIKE 'init:pk:%'`);
   for (const pk of ["zz", "0x1234", "not a key", "12 34"]) {
-    const res = await call("/auth/init", { pk });
+    const res = await call("/auth/init", { pk, origin: ORIGIN });
     assert.equal(res.status, 400, `${pk} -> ${res.status}`);
   }
   const rows = await q<{ key: string }>(
@@ -506,4 +517,25 @@ test("a malformed key costs nothing — not even a counter row", async () => {
     [],
     `a malformed key reached the rate counters: ${rows.rows.map((r) => r.key).join(", ")}`,
   );
+});
+
+test("an origin that is not this server's is refused, so a relayed sign-in gains nothing", async () => {
+  const me = identity();
+  created.push(me.id);
+  const elsewhere = await call("/auth/init", { pk: me.pkHex, origin: "https://relay.example" });
+  assert.equal(elsewhere.status, 400);
+  assert.equal(elsewhere.body.error, "BAD_ORIGIN");
+  const none = await call("/auth/init", { pk: me.pkHex });
+  assert.equal(none.status, 400, "a client that binds no origin is refused");
+  // A proof made for another origin does not answer this server's challenge.
+  const init = await call("/auth/init", { pk: me.pkHex, origin: ORIGIN });
+  const { HqcWrapper } = require("../reference/protocol/hqc") as typeof import("../reference/protocol/hqc");
+  const ct = Buffer.from(init.body.ct, "base64");
+  const ss = HqcWrapper.decapsulate(me.sk, ct);
+  const verify = await call("/auth/verify", {
+    mqttSigningKey: SIGNING_KEY,
+    pk: me.pkHex,
+    solution: signInProof(ss, "https://relay.example", me.pk, ct).toString("base64"),
+  });
+  assert.equal(verify.status, 401);
 });

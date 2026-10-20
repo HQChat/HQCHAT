@@ -1,4 +1,4 @@
-import { authProof } from "../protocol/auth-proof";
+import { originOf, signInProof } from "../protocol/auth-proof";
 import { HqcWrapper } from "../protocol/hqc";
 import { newSigningKey, type SigningKey, signConnect } from "../protocol/mqtt-proof";
 import { ApiError, requestJson } from "./http";
@@ -38,18 +38,21 @@ export class Auth {
 
   /** Runs the KEM sign-in and registers a new MQTT signing key. */
   async signIn(): Promise<void> {
+    const origin = originOf(this.baseUrl);
+    if (!origin) throw new Error(`not an http(s) origin: ${this.baseUrl}`);
     const init = await requestJson<{ ct?: string }>(`${this.baseUrl}/auth/init`, {
       method: "POST",
-      body: { pk: this.identity.pkHex },
+      body: { pk: this.identity.pkHex, origin },
     });
     if (typeof init.ct !== "string") throw new Error("/auth/init returned no challenge");
-    const ss = HqcWrapper.decapsulate(this.identity.sk, Buffer.from(init.ct, "base64"));
+    const ct = Buffer.from(init.ct, "base64");
+    const ss = HqcWrapper.decapsulate(this.identity.sk, ct);
     const signing = newSigningKey();
     const grant = await requestJson<Grant>(`${this.baseUrl}/auth/verify`, {
       method: "POST",
       body: {
         pk: this.identity.pkHex,
-        solution: authProof(ss).toString("base64"),
+        solution: signInProof(ss, origin, Buffer.from(this.identity.pkHex, "hex"), ct).toString("base64"),
         mqttSigningKey: signing.publicKeyB64,
       },
     });

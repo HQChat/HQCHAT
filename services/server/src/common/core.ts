@@ -211,7 +211,10 @@ export interface CoreAddon {
   hqcKeypairFromSeed(seed: Buffer): HqcKeyPair;
   hqcEncapsulate(pk: Buffer): Encapsulation;
   hqcDecapsulate(sk: Buffer, ct: Buffer): Buffer;
-  authProof(ss: Buffer): Buffer;
+  /** A sign-in challenge to `pk` at `origin`; the shared secret never reaches JS. */
+  authChallenge(pk: Buffer, origin: string): { ct: Buffer; proof: Buffer };
+  /** `scheme://host[:port]` of a URL, as the sign-in proof binds it, or null. */
+  originOf(url: string): string | null;
   authProofMatches(expected: Buffer, offered: Buffer): boolean;
   parseConnectProof(password: string): ConnectProof | null;
   /** 32 bytes, a canonical Ed25519 point, not of small order. */
@@ -241,7 +244,8 @@ export const CORE_EXPORTS: readonly (keyof CoreAddon)[] = [
   "hqcKeypairFromSeed",
   "hqcEncapsulate",
   "hqcDecapsulate",
-  "authProof",
+  "authChallenge",
+  "originOf",
   "authProofMatches",
   "parseConnectProof",
   "isSigningKey",

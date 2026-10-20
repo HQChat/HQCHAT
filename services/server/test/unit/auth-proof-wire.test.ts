@@ -19,7 +19,12 @@
 import assert from "node:assert/strict";
 import * as crypto from "node:crypto";
 import { test } from "node:test";
-import { authProof } from "../reference/protocol/auth-proof";
+import { originOf, signInProof } from "../reference/protocol/auth-proof";
+
+// A fixed key and challenge: the encoding is what is under test here.
+const PK = crypto.randomBytes(7237);
+const CT = crypto.randomBytes(14421);
+const authProof = (ss: Buffer) => signInProof(ss, "https://hqchat.test", PK, CT);
 
 /** Exactly what `handleVerify` in auth/main.ts does with the field. */
 function serverParse(solution: unknown): string {
@@ -86,4 +91,27 @@ test("authProof is deterministic and domain-separated", () => {
 
   const other = crypto.randomBytes(32);
   assert.notEqual(authProof(other).toString("hex"), authProof(ss).toString("hex"));
+});
+
+test("the proof matches the core's vector, with Node's own HKDF", () => {
+  // core/hqchat-protocol/src/auth_proof.rs: the_proof_matches_its_vector.
+  const { HqcWrapper } = require("../reference/protocol/hqc") as typeof import("../reference/protocol/hqc");
+  const { pk } = HqcWrapper.keypairFromSeed(Buffer.alloc(32, 3));
+  const ss = Buffer.from(Array.from({ length: 32 }, (_, i) => 255 - i));
+  const proof = signInProof(ss, "https://api.hqchat.app", pk, Buffer.alloc(14421, 7));
+  assert.equal(proof.toString("hex"), "ec47c5b474c9250f750aef96ad5c2161160eedd167a9c04bc6d2aa1f30f83fd4");
+});
+
+test("an origin has the core's one form", () => {
+  for (const [url, origin] of [
+    ["https://API.hqchat.app/", "https://api.hqchat.app"],
+    ["https://api.hqchat.app:443/x?y", "https://api.hqchat.app"],
+    ["http://127.0.0.1:8090", "http://127.0.0.1:8090"],
+    ["http://127.0.0.1:80", "http://127.0.0.1"],
+    ["ftp://x", null],
+    ["https://user@host", null],
+    ["https://", null],
+  ] as const) {
+    assert.equal(originOf(url), origin, url);
+  }
 });

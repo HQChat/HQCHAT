@@ -1,7 +1,7 @@
 //! What `src/server/auth.ts`, `api.ts`, `emqx.ts` and the gateway's key
 //! loading call, replacing `src/protocol/{hqc,auth-proof,mqtt-proof,identity,topics}.ts`.
 
-use hqc::{Ciphertext, PublicKey, SecretKey, Seed, SharedSecret};
+use hqc::{Ciphertext, PublicKey, SecretKey, Seed};
 use hqchat_protocol::topics::{self, TopicId};
 use hqchat_protocol::{PeerId, auth_proof, mqtt_proof};
 use napi::bindgen_prelude::Buffer;
@@ -64,16 +64,32 @@ pub fn hqc_decapsulate(sk: Buffer, ct: Buffer) -> napi::Result<Buffer> {
         .into())
 }
 
-/// `HKDF(ss, "auth")`, what `/auth/verify` expects (`authProof`).
+/// What `/auth/init` returns, and the proof `/auth/verify` must present.
+#[napi(object)]
+pub struct AuthChallenge {
+    /// The HQC ciphertext to the account's key.
+    pub ct: Buffer,
+    /// The proof that answers it, to keep until the verify.
+    pub proof: Buffer,
+}
+
+/// A sign-in challenge to `pk` (raw bytes) for a sign-in at `origin`
+/// (`scheme://host[:port]`). The shared secret never reaches JS: only the
+/// proof that answers the challenge comes back.
 #[napi(catch_unwind)]
-pub fn auth_proof(ss: Buffer) -> napi::Result<Buffer> {
-    let ss: [u8; 32] = ss
-        .as_ref()
-        .try_into()
-        .map_err(|_| err("a shared secret is 32 bytes"))?;
-    Ok(auth_proof::auth_proof(&SharedSecret::from_bytes(ss))
-        .to_vec()
-        .into())
+pub fn auth_challenge(pk: Buffer, origin: String) -> napi::Result<AuthChallenge> {
+    let pk = PublicKey::from_bytes(&pk).map_err(err)?;
+    let (ct, proof) = auth_proof::challenge(&pk, &origin).map_err(err)?;
+    Ok(AuthChallenge {
+        ct: ct.as_bytes().to_vec().into(),
+        proof: proof.to_vec().into(),
+    })
+}
+
+/// `scheme://host[:port]` of `url`, as the sign-in proof binds it, or null.
+#[napi(catch_unwind)]
+pub fn origin_of(url: String) -> Option<String> {
+    auth_proof::origin_of(&url)
 }
 
 /// Constant-time comparison of a presented proof with the expected one.

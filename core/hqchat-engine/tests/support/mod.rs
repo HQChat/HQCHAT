@@ -176,11 +176,12 @@ impl FakeServer {
                 else {
                     return err(400, "bad public key");
                 };
-                let (ct, ss) = hqc::encapsulate(&pk).unwrap();
-                self.challenges.insert(
-                    PeerId::of_hex(&pk_hex).to_string(),
-                    auth_proof::auth_proof(&ss),
-                );
+                if body["origin"].as_str() != Some("https://hqchat.test") {
+                    return err(400, "BAD_ORIGIN");
+                }
+                let (ct, proof) = auth_proof::challenge(&pk, "https://hqchat.test").unwrap();
+                self.challenges
+                    .insert(PeerId::of_hex(&pk_hex).to_string(), proof);
                 (200, json!({ "ct": STANDARD.encode(ct.as_bytes()) }))
             }
             (Method::Post, "/auth/verify") => {

@@ -10,7 +10,7 @@ import { resolveTransportInfo } from "./transport-config";
 /**
  * The auth service.
  *
- *   POST /auth/init        { pk }                          → { ct, challenge }  KEM challenge to the public key
+ *   POST /auth/init        { pk, origin }                  → { ct, challenge }  KEM challenge to the public key
  *   POST /auth/verify      { pk, solution, mqttSigningKey, challenge? } → session and MQTT signing-key id
  *   POST /auth/refresh     (Bearer) { mqttSigningKey }     → a new MQTT signing-key id
  *   POST /auth/logout      (Bearer) { everywhere? }        → ends this session, or every session and MQTT key
@@ -38,11 +38,35 @@ function safeEqual(a: string, b: string): boolean {
 }
 
 /**
- * The sign-in proof the client must return for the KEM shared secret `ss`, as
- * stored and compared (hex). The only place the proof is derived.
+ * The origins a client may sign in at (`scheme://host[:port]`). The proof is
+ * bound to the one it names, so a server that relays a client's sign-in here
+ * gains nothing: its own origin is refused, and ours makes the client's proof
+ * the wrong one. Outside production, unset means the request's own Host.
  */
-function expectedProof(ss: Buffer): string {
-  return core.authProof(ss).toString("hex");
+function allowedOrigins(): string[] {
+  return (process.env.AUTH_ORIGINS || "")
+    .split(",")
+    .map((o) => core.originOf(o.trim()))
+    .filter((o): o is string => o !== null);
+}
+
+function originAllowed(origin: string | null, req: http.IncomingMessage): boolean {
+  if (!origin) return false;
+  const allowed = allowedOrigins();
+  if (allowed.length) return allowed.includes(origin);
+  if (process.env.NODE_ENV === "production") return false;
+  const own = core.originOf(`${req.headers["x-forwarded-proto"] === "https" ? "https" : "http"}://${req.headers.host || ""}`);
+  return origin === own;
+}
+
+/**
+ * A challenge to `pk` for a sign-in at `origin`, and the proof that answers
+ * it, in the stored form (hex). The only place the proof is derived; the
+ * shared secret stays inside the core.
+ */
+function newChallenge(pk: Buffer, origin: string): { ct: Buffer; proof: string } {
+  const { ct, proof } = core.authChallenge(pk, origin);
+  return { ct, proof: proof.toString("hex") };
 }
 
 /** The client's proof from the verify body (base64 on the wire), in the stored form. */
@@ -104,8 +128,11 @@ async function signingKeyFields(id: string, signingKey: Buffer) {
 }
 
 async function handleInit(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-  const pkHex = textField(await readJson(req), "pk").toLowerCase();
+  const body = await readJson(req);
+  const pkHex = textField(body, "pk").toLowerCase();
   if (!/^[0-9a-f]+$/.test(pkHex)) return send(res, 400, { error: "bad public key" });
+  const origin = core.originOf(typeof body.origin === "string" ? body.origin : "");
+  if (!originAllowed(origin, req)) return send(res, 400, { error: "BAD_ORIGIN" });
   const id = core.peerId(pkHex);
   const ip = clientIp(req);
 
@@ -123,8 +150,8 @@ async function handleInit(req: http.IncomingMessage, res: http.ServerResponse): 
   }
 
   if (pkHex.length !== core.HQC_PUBLIC_KEY_BYTES * 2) return send(res, 400, { error: "bad public key" });
-  const { ct, ss } = core.hqcEncapsulate(Buffer.from(pkHex, "hex"));
-  const challenge = await DB.startAuthChallenge(id, sourceOf(req), expectedProof(ss));
+  const { ct, proof } = newChallenge(Buffer.from(pkHex, "hex"), origin as string);
+  const challenge = await DB.startAuthChallenge(id, sourceOf(req), proof);
   return send(res, 200, { ct: ct.toString("base64"), challenge });
 }
 
