@@ -24,7 +24,7 @@ pub fn device_key_from_seed(seed: Buffer) -> napi::Result<Buffer> {
         .as_ref()
         .try_into()
         .map_err(|_| napi::Error::from_reason("a seed is 32 bytes"))?;
-    hqchat_engine::software::SoftwareVault::key_from_seed(&seed)
+    SoftwareVault::key_from_seed(&seed)
         .map(|k| k.to_vec().into())
         .ok_or_else(|| napi::Error::from_reason("no device key derives from this seed"))
 }
