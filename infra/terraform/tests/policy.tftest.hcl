@@ -115,6 +115,14 @@ run "production" {
     error_message = "TLS to the origin must be verified (strict), and 0-RTT stays off."
   }
   assert {
+    condition     = cloudflare_zone_settings_override.this[0].settings[0].min_tls_version == "1.3"
+    error_message = "The edge speaks TLS 1.3 only."
+  }
+  assert {
+    condition     = length(cloudflare_zone_dnssec.this) == 1 && length(cloudflare_record.caa) > 0
+    error_message = "The zone owner signs the zone (DNSSEC) and limits issuance (CAA)."
+  }
+  assert {
     condition     = alltrue([for k, _ in cloudflare_workers_route.site : !strcontains(k, "*")])
     error_message = "Worker routes are exact paths; a glob would route the API to the site."
   }
