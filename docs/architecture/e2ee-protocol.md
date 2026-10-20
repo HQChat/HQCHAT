@@ -153,7 +153,7 @@ receiver authenticates exactly the bytes it received.
 | 0 | magic `HQCE` | 4 |
 | 4 | version (3) | 1 |
 | 5 | kind (0 msg, 1 init, 2 receipt) | 1 |
-| 6 | flags: bit0 `rk`, bit1 `kemCt`, bit2 one-time | 1 |
+| 6 | flags: bit0 `rk`, bit1 `kemCt`, bit2 one-time, bit3 padded payload (ISO/IEC 7816-4, 256-byte classes) | 1 |
 | 7 | sender (raw client id) | 32 |
 | 39 | to (raw client id) | 32 |
 | 71 | cid (raw) | 16 |
@@ -221,5 +221,7 @@ makes its rows permanently unreadable.
 
 ## Not provided
 
-Read receipts, typing indicators, disappearing messages, attachments, multi-device
-for one identity, and padding against size analysis.
+Read receipts, typing indicators, disappearing messages, attachments, and
+multi-device for one identity. Padding hides a message's length within its
+256-byte size class only, and a frame's kind (message or receipt) is in its
+header.
