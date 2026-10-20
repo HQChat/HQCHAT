@@ -492,9 +492,34 @@ test("the copy names client ids where the server stores ids", async () => {
       `${path}: friendships store client ids (sha256 of the key), not the keys`,
     );
   }
-  // The topic derivation is spelled out on /crypto only.
+  // How topics come to be is spelled out on /crypto only: the server mints
+  // them at random (001_baseline.sql), and the broker's ACL is a static file.
   const crypto = await (await get("/crypto")).text();
-  assert.match(crypto, /sorted client ids/i, "the conversation topic hashes ids, not raw public keys");
+  assert.match(crypto, /244\s+random bits/i, "conversation topics are random ids, with their real entropy");
+  assert.doesNotMatch(crypto, /sorted client ids/i, "topics are not derived from the two ids");
+  assert.doesNotMatch(crypto, /ACL in Postgres/i, "the broker's ACL is a static file, not a database lookup");
+});
+
+/** The broker keeps an offline session two hours and 1000 messages (EMQX's defaults). */
+test("the copy states how long the broker holds undelivered messages", async () => {
+  for (const path of ["/", "/privacy"]) {
+    const body = await (await get(path)).text();
+    assert.doesNotMatch(
+      body,
+      /until (your device|you) reconnects?/i,
+      `${path}: an offline session does not wait forever`,
+    );
+    assert.match(body, /1000\s+messages/i, `${path}: names the queue limit`);
+    assert.match(body, /two\s+hours/i, `${path}: names the session expiry`);
+  }
+});
+
+/** Observability.swift sends crash and hang reports only. */
+test("the privacy policy describes what Sentry receives", async () => {
+  const body = await (await get("/privacy")).text();
+  assert.doesNotMatch(body, /performance (diagnostics|signals)/i, "the app sends no performance data");
+  assert.match(body, /no user or installation identifier/i, "reports carry no user or installation id");
+  assert.match(body, /no screenshots\s+or screen recordings/i, "and no screen images");
 });
 
 /* ────────────────────────────────────────────────────────────────────────────
