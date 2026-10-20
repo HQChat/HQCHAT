@@ -35,6 +35,17 @@ final class FileStoreTests: XCTestCase {
         XCTAssertEqual(store.list(prefix: "").count, 3)
     }
 
+    func testAPutLeavesOnlyTheBlobBehindOwnerOnly() throws {
+        let store = try FileStore(root: dir)
+        try store.put(key: "session/aa", value: Data([1]))
+        try store.put(key: "session/aa", value: Data([2, 3]))
+        XCTAssertEqual(store.get(key: "session/aa"), Data([2, 3]), "a put replaces")
+        let names = try FileManager.default.contentsOfDirectory(atPath: dir.appendingPathComponent("session").path)
+        XCTAssertEqual(names, ["aa"], "no temporary file is left beside the blob")
+        let mode = try FileManager.default.attributesOfItem(atPath: dir.appendingPathComponent("session/aa").path)[.posixPermissions] as? Int
+        XCTAssertEqual(mode, 0o600)
+    }
+
     func testAKeyThatCouldLeaveTheDirectoryHasNoFile() throws {
         let store = try FileStore(root: dir)
         for key in ["", "../escape", "a//b", "a/./b", "/abs", "a b", "é"] {
