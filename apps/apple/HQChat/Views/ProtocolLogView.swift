@@ -9,9 +9,11 @@
 //
 // Nothing on this screen is sensitive by construction — see ProtocolLog's
 // header. It carries ids truncated to eight characters, counts, and reasons;
-// no payloads, keys, tokens or message text pass through the type.
+// no payloads, keys, tokens or message text pass through the type. The copy
+// still stays on this device and expires: a trace says who talked to whom.
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ProtocolLogView: View {
     @Environment(\.dismiss) private var dismiss
@@ -114,13 +116,30 @@ struct ProtocolLogView: View {
         .padding(.vertical, 12)
     }
 
+    /// How long the copied transcript stays on the pasteboard.
+    private static let pasteboardLifetime: TimeInterval = 120
+
+    /// On this device's pasteboard only, never handed to Universal Clipboard,
+    /// and gone after `pasteboardLifetime`: long enough to paste it into a
+    /// message, not long enough to sit there for whatever reads it next.
     private func copyTranscript() {
         let text = ProtocolLog.transcript()
         #if os(iOS)
-        UIPasteboard.general.string = text
+        UIPasteboard.general.setItems(
+            [[UTType.utf8PlainText.identifier: text]],
+            options: [.localOnly: true,
+                      .expirationDate: Date().addingTimeInterval(Self.pasteboardLifetime)]
+        )
         #else
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
+        let board = NSPasteboard.general
+        // `.currentHostOnly` keeps it off Universal Clipboard. macOS has no
+        // expiry, so the copy is cleared later unless something replaced it.
+        board.prepareForNewContents(with: .currentHostOnly)
+        board.setString(text, forType: .string)
+        let generation = board.changeCount
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.pasteboardLifetime) {
+            if board.changeCount == generation { board.clearContents() }
+        }
         #endif
     }
 }

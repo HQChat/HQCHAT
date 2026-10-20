@@ -90,6 +90,44 @@ for l in ProtocolLog.entries().map(\.line) {
     check(l.contains("—"), "a missing id renders as a placeholder: \(l)")
 }
 
+// ── Ids inside a reason are truncated too ────────────────────────────────────
+
+// The core's drop reasons are built elsewhere and name what they dropped, a
+// conversation topic among them. Knowing `cv/<id>` is the permission to read
+// and write that conversation, so a full one must not reach the trace, which
+// the diagnostics screen copies out.
+let TOPIC = "cv/" + String(repeating: "5d", count: 32)
+ProtocolLog.clear()
+for e: ProtocolLog.Event in [
+    .dropped(stage: "core", peerID: nil, reason: "Msg on u/\(FULL_ID)/inbox, expected Some(\"\(TOPIC)\")"),
+    .disconnected(reason: "closed by \(FULL_ID)"),
+    .publishReplayed(topic: TOPIC, attempt: 1),
+    .publishAbandoned(topic: TOPIC, attempts: 5),
+    .keyRejected(peer: "x", reason: "expected \(FULL_ID)"),
+    .messageUndecryptable(peer: "x", reason: "on \(TOPIC)"),
+] { ProtocolLog.record(e) }
+let reasonLines = ProtocolLog.entries().map(\.line)
+check(reasonLines.count == 6, "every free-text event recorded a line")
+for line in reasonLines {
+    check(!line.contains(FULL_ID) && !line.contains(String(repeating: "5d", count: 32)),
+          "a full id inside a reason or topic reached the log: \(line)")
+}
+check(reasonLines[0].contains("cv/5d5d5d5d…") && reasonLines[0].contains("u/abababab…/inbox"),
+      "…and its 8-character prefix is kept, for correlation: \(reasonLines[0])")
+check(!ProtocolLog.transcript().contains(FULL_ID), "the transcript the screen copies holds no full id")
+
+// Short hex stays: a status code or a count is not an id.
+check(ProtocolLog.truncatingIDs("code 0x87, 12 frames, deadbeef") == "code 0x87, 12 frames, deadbeef",
+      "hex runs under 16 characters are left alone")
+check(ProtocolLog.truncatingIDs(String(repeating: "a", count: 16)) == "aaaaaaaa…",
+      "a run of 16 is cut")
+
+// Free text goes to the unified log as `.private`; the rest stays readable.
+check(ProtocolLog.Event.dropped(stage: "core", peerID: nil, reason: "x").carriesFreeText,
+      "a drop reason is free text")
+check(!ProtocolLog.Event.received(route: .inbox, bytes: 1).carriesFreeText,
+      "a byte count is not")
+
 // ── The buffer is bounded ────────────────────────────────────────────────────
 
 // It runs for the life of the process on a device nobody is watching. Unbounded
@@ -144,6 +182,8 @@ if let start = source.range(of: "enum Event {"),
     // change with it.
     check(source.contains("privacy: .public"),
           "the log call declares its privacy explicitly")
+    check(source.contains("privacy: .private"),
+          "an event carrying free text is logged as private")
 }
 
 finish()
