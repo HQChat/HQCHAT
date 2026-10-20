@@ -271,9 +271,14 @@ impl Core {
             .map(|(to, at)| crate::types::SentInviteView { to, at })
             .collect();
 
+        // A profile with no identity has nothing readable in the store: what
+        // a failed or interrupted import left is sealed under a data key that
+        // is gone, and would keep a conversation from ever opening again.
+        self.clear_data();
         let result = self.write_import(identity, prekeys, peers, sessions, messages, &pending);
         if result.is_err() {
             // Back to a profile with no identity, which can be imported again.
+            self.clear_data();
             self.unlocked = None;
             self.me = None;
             self.peers.clear();
@@ -284,6 +289,19 @@ impl Core {
             self.drain_pending(now);
         }
         Ok(())
+    }
+
+    /// Deletes every session, message and pending frame in the store.
+    fn clear_data(&self) {
+        for prefix in [
+            persist::SESSION_PREFIX,
+            persist::MESSAGE_PREFIX,
+            persist::PENDING_PREFIX,
+        ] {
+            for slot in self.store.list(prefix.into()) {
+                self.store.delete(slot);
+            }
+        }
     }
 
     fn write_import(
@@ -299,6 +317,7 @@ impl Core {
         let mut data_key = Zeroizing::new([0u8; 32]);
         getrandom::fill(data_key.as_mut()).map_err(|_| CoreError::State("no entropy".into()))?;
         self.me = Some(PeerId::of(&identity.public));
+        self.names = Some(persist::SlotNames::of(&data_key));
         self.unlocked = Some(Unlocked {
             identity,
             data_key,

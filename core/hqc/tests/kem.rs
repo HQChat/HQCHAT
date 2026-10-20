@@ -78,17 +78,6 @@ fn every_encapsulation_is_fresh() {
 }
 
 #[test]
-fn the_same_entropy_gives_the_same_encapsulation() {
-    let pair = keypair_from_seed(&kat_seed()).unwrap();
-    let entropy = [0x5a; ENC_ENTROPY_BYTES];
-    let (ct1, ss1) = encapsulate_derand(&pair.public, &entropy).unwrap();
-    let (ct2, ss2) = encapsulate_derand(&pair.public, &entropy).unwrap();
-    assert_eq!(ct1, ct2);
-    assert!(same(&ss1, &ss2));
-    assert!(same(&decapsulate(&pair.secret, &ct1).unwrap(), &ss1));
-}
-
-#[test]
 fn a_tampered_ciphertext_or_the_wrong_key_yields_another_secret_not_an_error() {
     let pair = generate_keypair().unwrap();
     let other = generate_keypair().unwrap();

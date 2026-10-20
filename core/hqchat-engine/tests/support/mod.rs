@@ -27,6 +27,7 @@ pub fn config(profile: &str) -> Config {
         profile_id: profile.into(),
         device: Device::Headless,
         allow_hqn: true,
+        hqn_pins: vec![],
     }
 }
 

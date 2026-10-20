@@ -25,6 +25,9 @@ impl KeyVault for Vault {
             .agree(ephemeral_public)
             .map_err(|_| VaultError::Locked)
     }
+    fn state_secret(&self) -> Result<Vec<u8>, VaultError> {
+        self.0.state_secret().map_err(|_| VaultError::Locked)
+    }
     fn tier(&self) -> Tier {
         Tier::Software
     }
@@ -54,6 +57,7 @@ fn config() -> Config {
         server_url: "https://hqchat.test".into(),
         profile_id: "p".into(),
         device: Device::Ios,
+        hqn_pins: vec![],
     }
 }
 

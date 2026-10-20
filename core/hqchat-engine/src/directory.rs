@@ -17,7 +17,6 @@ use sha2::{Digest, Sha256};
 use crate::core::{Core, Peer, Prekeys};
 use crate::effect::{Action, Effect, Method};
 use crate::http::{Answer, Pending};
-use crate::persist;
 use crate::types::{CoreError, InviteView, ReportInput, SentInviteView};
 
 /// One-time prekeys kept published.
@@ -302,7 +301,7 @@ impl Core {
     pub fn forget_peer(&mut self, id: &PeerId) {
         self.peers.remove(id);
         self.forget_session(id);
-        for slot in self.store.list(persist::messages_prefix(id)) {
+        for slot in self.message_slots(id) {
             self.store.delete(slot);
         }
     }

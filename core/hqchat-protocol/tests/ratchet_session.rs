@@ -405,3 +405,36 @@ fn stragglers_from_the_previous_chain_resolve_after_the_receiver_moved_on() {
     assert_eq!(receive(&mut bob, &old[1]).as_deref(), Some("old1"));
     assert_eq!(receive(&mut bob, &old[0]).as_deref(), Some("old0"));
 }
+
+#[test]
+fn a_step_that_is_not_the_first_of_its_chain_is_refused_untouched() {
+    let (mut alice, mut bob) = pair();
+    receive(&mut alice, &send(&mut bob, "hi", NOW)).unwrap();
+    let mut step = send(&mut alice, "step", NOW);
+    assert!(step.header.rk.is_some());
+    step.header.n = 5;
+    let root = bob.root.clone();
+    assert_eq!(receive(&mut bob, &step), None);
+    assert_eq!(bob.root, root, "nothing committed");
+}
+
+#[test]
+fn skipped_keys_expire_with_their_chain_after_enough_steps() {
+    let (mut alice, mut bob) = pair();
+    receive(&mut alice, &send(&mut bob, "hi", NOW)).unwrap();
+    // Alice's first turn steps; one of its messages goes missing.
+    let first = send(&mut alice, "a0", NOW);
+    let late = send(&mut alice, "late", NOW);
+    let after = send(&mut alice, "a2", NOW);
+    receive(&mut bob, &first).unwrap();
+    receive(&mut bob, &after).unwrap();
+    assert!(!bob.skipped.is_empty(), "the missing one's key is kept");
+    // Enough turns for that chain to be MAX_SKIPPED_CHAINS steps behind.
+    for i in 0..ratchet::MAX_SKIPPED_CHAINS {
+        let t = NOW + (i as i64 + 1) * ratchet::RATCHET_MIN_STEP_INTERVAL_MS;
+        receive(&mut alice, &send(&mut bob, "b", t)).unwrap();
+        receive(&mut bob, &send(&mut alice, "a", t)).unwrap();
+    }
+    assert!(bob.skipped.is_empty(), "the key went with its chain");
+    assert_eq!(receive(&mut bob, &late), None);
+}

@@ -170,10 +170,12 @@ pub enum Effect {
     Connection(ConnState),
     /// The device key's tier changed (a TPM appeared, biometrics removed).
     TierChanged(Tier),
-    /// Show a notification for `peer`. Never carries content.
+    /// Show a notification. Never carries content.
     Notify {
-        /// The friend's id.
-        peer: String,
+        /// The friend it is from, or `None` for a first contact that arrived
+        /// while locked: anyone can publish an init naming any friend, so it
+        /// names no one until the friend proves its key.
+        peer: Option<String>,
     },
     /// A user action the server refused or could not be reached for, or that
     /// the core refused before sending.

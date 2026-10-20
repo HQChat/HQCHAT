@@ -15,6 +15,11 @@ pub struct Config {
     /// it. The apps always allow it; a server-side client (the bot) that has
     /// a private path to the broker's WebSocket keeps to WSS.
     pub allow_hqn: bool,
+    /// Fingerprints ([`hqn_key_fingerprint`](crate::hqn_key_fingerprint)) of
+    /// the gateway keys this build trusts. Empty: the key `/auth/transport`
+    /// serves is taken on TLS alone; otherwise a key not listed is refused,
+    /// and the engine keeps to WSS.
+    pub hqn_pins: Vec<String>,
 }
 
 /// The kind of device, as the server's push registration names it.

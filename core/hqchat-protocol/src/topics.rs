@@ -90,9 +90,39 @@ pub fn route(topic: &str) -> Option<Route> {
     }
 }
 
+/// A topic as logs and diagnostics may show it. A conversation or handshake
+/// id is the permission to read that topic, so none of it is shown; a client
+/// id is public and is cut to its first 8 characters.
+pub fn redacted(topic: &str) -> String {
+    match route(topic) {
+        Some(Route::Conversation(_)) => "cv/…".into(),
+        Some(Route::Handshake(_)) => "hs/…".into(),
+        Some(Route::Inbox(id)) => format!("u/{}…/inbox", short(&id)),
+        Some(Route::Presence(id)) => format!("u/{}…/presence", short(&id)),
+        Some(Route::Graph(id)) => format!("u/{}…/graph", short(&id)),
+        None => "a topic outside the layout".into(),
+    }
+}
+
+/// The first 8 characters of a client id, for logs.
+pub fn short(id: &PeerId) -> &str {
+    id.as_str().get(..8).unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_redacted_topic_shows_no_topic_id() {
+        let t = TopicId::parse(T).unwrap();
+        let id = PeerId::parse(A).unwrap();
+        for topic in [conversation_topic(&t), handshake_topic(&t)] {
+            assert!(!redacted(&topic).contains(&T[..4]), "{topic}");
+        }
+        assert_eq!(redacted(&inbox_topic(&id)), "u/f25f3361…/inbox");
+        assert_eq!(redacted("cv/not-an-id"), "a topic outside the layout");
+    }
 
     const A: &str = "f25f33617a50eb83c2d695798e186e0ef2fb91018220e8383cf8577cc905e231";
     const T: &str = "8006188126a94e92a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718";

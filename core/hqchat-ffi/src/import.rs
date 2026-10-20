@@ -206,23 +206,32 @@ fn ciphertext(bytes: &[u8], what: &str) -> Result<Ciphertext, CoreError> {
 
 fn chain(c: Option<ImportChain>) -> Result<Option<Chain>, CoreError> {
     c.map(|c| {
+        let key = Zeroizing::new(c.key);
         Ok(Chain {
-            ck: SymmetricKey(array(&c.key, "a chain key")?),
+            ck: SymmetricKey(array(&key, "a chain key")?),
             n: c.n,
         })
     })
     .transpose()
 }
 
+/// The secret fields arrive from Swift as plain bytes: each is moved into
+/// `Zeroizing` first, so it is wiped whether or not the import succeeds.
 fn session(s: ImportSessionData) -> Result<SessionState, CoreError> {
-    let skipped = s
+    let root = Zeroizing::new(s.root);
+    let ratchet_secret_key = Zeroizing::new(s.ratchet_secret_key);
+    let skipped: Vec<(Vec<u8>, u32, Zeroizing<Vec<u8>>)> = s
         .skipped
+        .into_iter()
+        .map(|k| (k.chain, k.n, Zeroizing::new(k.key)))
+        .collect();
+    let skipped = skipped
         .iter()
-        .map(|k| {
+        .map(|(chain, n, key)| {
             Ok(SkippedKey {
-                chain: array(&k.chain, "a skipped key's chain id")?,
-                n: k.n,
-                key: SymmetricKey(array(&k.key, "a skipped message key")?),
+                chain: array(chain, "a skipped key's chain id")?,
+                n: *n,
+                key: Box::new(SymmetricKey(array(key, "a skipped message key")?)),
             })
         })
         .collect::<Result<Vec<_>, CoreError>>()?;
@@ -255,10 +264,10 @@ fn session(s: ImportSessionData) -> Result<SessionState, CoreError> {
         })
         .transpose()?;
     Ok(SessionState {
-        root: SymmetricKey(array(&s.root, "a root key")?),
+        root: SymmetricKey(array(&root, "a root key")?),
         rk: KeyPair {
             public: public_key(&s.ratchet_public_key, "a ratchet public key")?,
-            secret: secret_key(&s.ratchet_secret_key, "a ratchet secret key")?,
+            secret: secret_key(&ratchet_secret_key, "a ratchet secret key")?,
         },
         peer_rk: s
             .peer_ratchet_public_key

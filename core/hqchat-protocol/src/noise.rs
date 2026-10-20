@@ -73,9 +73,10 @@ impl core::fmt::Debug for X25519Secret {
 impl X25519Secret {
     /// A fresh secret from `entropy`.
     pub fn generate(entropy: &mut dyn Entropy) -> Result<Self, Error> {
-        let mut secret = [0u8; 32];
-        entropy.fill(&mut secret)?;
-        Ok(Self(secret))
+        // Filled in place: no unwiped copy of the secret is left behind.
+        let mut secret = Self([0u8; 32]);
+        entropy.fill(&mut secret.0)?;
+        Ok(secret)
     }
 
     /// Its public key (RFC 7748; the secret is clamped).
@@ -198,11 +199,11 @@ impl CipherState {
 
 /// The Noise HKDF (spec §4.3) with two outputs: HMAC-SHA256 chained, which
 /// is RFC 5869 HKDF with the chaining key as salt and empty info.
-pub fn hkdf2(chaining_key: &[u8; 32], ikm: &[u8]) -> ([u8; 32], [u8; 32]) {
+pub fn hkdf2(chaining_key: &[u8; 32], ikm: &[u8]) -> (Zeroizing<[u8; 32]>, Zeroizing<[u8; 32]>) {
     let temp_key = hmac_sha256(chaining_key, &[ikm]);
     let first = hmac_sha256(&temp_key, &[&[0x01]]);
     let second = hmac_sha256(&temp_key, &[first.as_slice(), &[0x02]]);
-    (*first, *second)
+    (first, second)
 }
 
 /// HMAC-SHA256 of the concatenated `parts` under a 32-byte key, wiped when
@@ -260,8 +261,8 @@ impl SymmetricState {
     /// MixKey: new chaining key and cipher key from `ikm`.
     pub fn mix_key(&mut self, ikm: &[u8]) {
         let (ck, k) = hkdf2(&self.ck.0, ikm);
-        self.ck = Ck(ck);
-        self.cs = CipherState::new(Some(k));
+        self.ck = Ck(*ck);
+        self.cs = CipherState::new(Some(*k));
     }
 
     /// MixHash: `h = SHA-256(h ‖ data)`.
@@ -289,7 +290,7 @@ impl SymmetricState {
     /// Split: the initiator's sending cipher, then the responder's.
     pub fn split(&self) -> (CipherState, CipherState) {
         let (k1, k2) = hkdf2(&self.ck.0, &[]);
-        (CipherState::new(Some(k1)), CipherState::new(Some(k2)))
+        (CipherState::new(Some(*k1)), CipherState::new(Some(*k2)))
     }
 }
 

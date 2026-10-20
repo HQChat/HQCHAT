@@ -19,6 +19,7 @@ use hqchat_protocol::noise::{self, FrameReader, HqnInitiator, ServerStaticPublic
 use hqchat_protocol::topics::{self, Route};
 use hqchat_protocol::{OsEntropy, PeerId};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use crate::core::Core;
 use crate::effect::{CloseReason, ConnState, Effect, Endpoint, Method};
@@ -33,6 +34,10 @@ const READ_TIMEOUT_MS: i64 = 2 * KEEP_ALIVE_MS;
 const BACKOFF_START_MS: i64 = 2_000;
 const BACKOFF_MAX_MS: i64 = 30_000;
 pub(crate) const DIRECTORY_POLL_MS: i64 = 60_000;
+/// QoS 1 publishes awaiting a PUBACK at once. Past it, messages wait in the
+/// outbox for the next PUBACK, so a broker that stops acknowledging (or a
+/// flood of challenges to answer) cannot exhaust the 16-bit packet ids.
+const MAX_IN_FLIGHT: usize = 128;
 
 /// What a QoS 1 publish of ours stands for, settled by its PUBACK.
 #[derive(Debug, Clone)]
@@ -138,6 +143,18 @@ impl Core {
 
     pub fn on_transport(&mut self, a: Answer, now: i64) {
         self.net.hqn = parse_hqn(&a);
+        if let Some(h) = &self.net.hqn
+            && !self.config.hqn_pins.is_empty()
+            && !self
+                .config
+                .hqn_pins
+                .contains(&hqn_key_fingerprint(&h.server))
+        {
+            self.net.hqn = None;
+            self.emit(Effect::Dropped {
+                reason: "the gateway key served is not one this build trusts".into(),
+            });
+        }
         self.open(now);
     }
 
@@ -303,10 +320,15 @@ impl Core {
                 packet_id,
                 ..
             } => {
-                if let (QoS::AtLeastOnce, Some(packet_id)) = (qos, packet_id) {
+                // Acknowledged once handled: a frame whose message or session
+                // could not be written comes again on the next connection.
+                self.write_failed = false;
+                self.on_publish(&topic, payload, now);
+                if let (QoS::AtLeastOnce, Some(packet_id), false) =
+                    (qos, packet_id, self.write_failed)
+                {
                     self.send_packet(&Packet::Puback { packet_id }, now);
                 }
-                self.on_publish(&topic, payload, now);
             }
             Packet::Oversized { qos, packet_id } => {
                 if let (QoS::AtLeastOnce, Some(packet_id)) = (qos, packet_id) {
@@ -384,7 +406,7 @@ impl Core {
                 self.on_frame(topic, payload, now);
             }
             None => self.emit(Effect::Dropped {
-                reason: format!("publish on {topic}, outside the layout"),
+                reason: format!("publish on {}", topics::redacted(topic)),
             }),
         }
     }
@@ -412,14 +434,21 @@ impl Core {
         true
     }
 
+    /// A packet id not in flight, or `None` when `MAX_IN_FLIGHT` publishes
+    /// already wait for their PUBACK: the caller keeps the message queued.
     fn packet_id(&mut self) -> Option<u16> {
         let c = self.net.conn.as_mut()?;
-        loop {
+        if c.inflight.len() >= MAX_IN_FLIGHT {
+            return None;
+        }
+        // Fewer than MAX_IN_FLIGHT ids are taken, so a free one is near.
+        for _ in 0..=MAX_IN_FLIGHT {
             c.next_packet_id = c.next_packet_id.wrapping_add(1);
             if c.next_packet_id != 0 && !c.inflight.contains_key(&c.next_packet_id) {
                 return Some(c.next_packet_id);
             }
         }
+        None
     }
 
     /// Publishes at QoS 1 on a live link; false when there is none.
@@ -597,6 +626,7 @@ impl Core {
             self.net.retry_at = None;
             self.connect(now);
         }
+        self.resend_unanswered(now);
         self.schedule(now);
     }
 
@@ -618,6 +648,9 @@ impl Core {
         if let Some(t) = self.net.next_poll {
             at(t);
         }
+        for (t, _) in self.convo.unanswered.values() {
+            at(*t);
+        }
         if let Some(at) = next
             && next != self.net.scheduled
         {
@@ -625,6 +658,17 @@ impl Core {
             self.emit(Effect::Timer { at });
         }
     }
+}
+
+/// A gateway key's fingerprint, as `Config::hqn_pins` lists them: hex of
+/// SHA-256 over a label, the key id, the X25519 key and the HQC key.
+pub fn hqn_key_fingerprint(key: &ServerStaticPublic) -> String {
+    let mut h = Sha256::new();
+    h.update(b"hqchat/hqn-key/v1");
+    h.update([key.key_id]);
+    h.update(key.x25519);
+    h.update(key.hqc.as_bytes());
+    hex::encode(h.finalize())
 }
 
 /// The gateway from `/auth/transport`, when enabled and well-formed.
