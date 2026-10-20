@@ -230,7 +230,11 @@ const authenticated: Record<string, Route> = {
       frame: optionalBase64(body, "frame", MAX_REPORT_FRAME_BYTES),
       messageId: reportMessageId(body),
     });
-    logger.event(`[report] filed ${reportId}: ${category} against ${reportedId.slice(0, 12)}…`);
+    // Every report is a journal line; Sentry gets the first and then a count per window.
+    logger.eventBatched(
+      "[report] reports filed",
+      `[report] filed ${reportId}: ${category} against ${reportedId.slice(0, 12)}…`,
+    );
     ok(res, { id: reportId });
   },
 

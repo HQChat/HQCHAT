@@ -94,9 +94,13 @@ durable per-human identifier, which is the thing this app exists not to hold.
 
 ## Where a report announces itself
 
-There is no mail path. A filed report calls `logger.event`, which is a **Sentry
-message**, deliberately unthrottled: every report is a distinct thing that needs
-a person. Without Sentry (`sentryDsn` empty in the environment file) the line
+There is no mail path. A filed report calls `logger.eventBatched`: the first
+report sends a **Sentry message** at once, and reports filed in the next 10
+minutes (`SENTRY_BATCH_MS`) are counted into one more message when that window
+closes ("N more since the last alert"), so a flood of reports cannot spend the
+Sentry quota and drown the alerts that matter. Every report is still its own
+journal line, and the queue is the list to work from: an alert means "open
+`hqcat-ops reports`", not "one report". Without Sentry (`sentryDsn` empty in the environment file) the line
 still reaches the journal (`journalctl -u hqcat-server`), and the 24-hour
 commitment then rests on somebody running `hqcat-ops reports`.
 

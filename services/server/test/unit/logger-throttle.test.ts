@@ -14,6 +14,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   fingerprint,
+  flushBatchedEvents,
   logger,
   registerSentrySink,
   resetSentryThrottle,
@@ -151,4 +152,30 @@ test("the console is not throttled", () => {
     setLogLevel("silent");
   }
   assert.equal(seen.length, 5, "every occurrence must still print");
+});
+
+// --- batched events: reports ---------------------------------------------------
+
+test("a burst of reports bills one event now and one count when the window closes", () => {
+  resetSentryThrottle();
+  const events = collector();
+  let now = 1_000_000;
+  setLoggerClock(() => now);
+  try {
+    logger.eventBatched("[report] reports filed", "[report] filed r1");
+    assert.deepEqual(events, ["[report] filed r1"], "the first report must reach Sentry at once");
+    for (let i = 2; i <= 50; i++) logger.eventBatched("[report] reports filed", `[report] filed r${i}`);
+    assert.equal(events.length, 1, "a burst spent the quota");
+    flushBatchedEvents();
+    assert.deepEqual(events.slice(1), ["[report] reports filed: 49 more since the last alert"]);
+    flushBatchedEvents();
+    assert.equal(events.length, 2, "an empty window sends nothing");
+
+    now += 10 * 60 * 1000;
+    logger.eventBatched("[report] reports filed", "[report] filed r51");
+    assert.equal(events.at(-1), "[report] filed r51", "after a quiet window the next report is immediate");
+  } finally {
+    setLoggerClock();
+    resetSentryThrottle();
+  }
 });

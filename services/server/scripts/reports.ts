@@ -4,8 +4,8 @@
 //   hqcat-ops reports <report-id> <disposition>
 //
 // App Store Guideline 1.2 requires acting on reported content within 24 hours.
-// A new report announces itself through `logger.event` (an unthrottled Sentry
-// message) and is worked through here.
+// A new report announces itself through `logger.eventBatched` (a Sentry
+// message at once, then one count per window) and is worked through here.
 //
 // ⚠️ Reading the queue deletes lapsed rows: `DB.listOpenReports` sweeps
 // `expires_at` first, because the 90-day deletion is a published promise.

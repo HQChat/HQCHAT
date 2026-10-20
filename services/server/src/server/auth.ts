@@ -142,7 +142,9 @@ async function handleVerify(req: http.IncomingMessage, res: http.ServerResponse)
   if (!matched || !(await DB.spendAuthChallenge(id, matched))) {
     const failures = await DB.bumpCounter(`verify:fail:${id}`, 15 * 60);
     if (failures === VERIFY_FAILURE_ALERT) {
-      logger.error(`[auth] ${failures} failed key-possession proofs in 15m for one public key (ip=${clientIp(req)})`);
+      // The alert carries nothing per key or address, so its throttle is global.
+      logger.warn(`[auth] repeated failed proofs for one public key from ip=${clientIp(req)}`);
+      logger.error(`[auth] ${failures} failed key-possession proofs in 15m for one public key`);
     }
     return send(res, 401, { error: "auth failed" });
   }

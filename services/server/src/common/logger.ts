@@ -184,6 +184,38 @@ function admit(message: string): { send: boolean; note: string } {
 /** Forgets every throttle window. */
 export function resetSentryThrottle(): void {
   seen.clear();
+  for (const b of batches.values()) if (b.timer) clearTimeout(b.timer);
+  batches.clear();
+}
+
+/** How often a batched event may reach Sentry (SENTRY_BATCH_MS, read per call; default 10 minutes). */
+function batchMs(): number {
+  const raw = Number(process.env.SENTRY_BATCH_MS);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 10 * 60 * 1000;
+}
+
+interface Batch {
+  until: number;
+  held: number;
+  timer: NodeJS.Timeout | null;
+}
+const batches = new Map<string, Batch>();
+
+/** Sends the summary of what a batch held back, if anything, and opens a new window. */
+function flushBatch(key: string): void {
+  const b = batches.get(key);
+  if (!b) return;
+  if (b.timer) clearTimeout(b.timer);
+  b.timer = null;
+  if (b.held === 0) return;
+  sink?.captureMessage(`${key}: ${b.held} more since the last alert`, "warning");
+  b.held = 0;
+  b.until = clock() + batchMs();
+}
+
+/** Sends every held-back batch summary now (tests, shutdown). */
+export function flushBatchedEvents(): void {
+  for (const key of [...batches.keys()]) flushBatch(key);
 }
 
 export const logger = {
@@ -220,6 +252,30 @@ export const logger = {
     const msg = fmt(args);
     sink?.breadcrumb("warning", msg);
     sink?.captureMessage(msg, "warning");
+  },
+  /**
+   * An event that can arrive in bursts, such as a filed report. The console
+   * and breadcrumbs get every one; Sentry gets the first at once, then at most
+   * one summary per SENTRY_BATCH_MS counting the rest, sent when the window
+   * closes, so a flood cannot spend the quota and a quiet hour after it still
+   * reports what arrived.
+   */
+  eventBatched(key: string, ...args: unknown[]) {
+    if (currentLevel !== "silent") console.warn(...scrubArgs(args));
+    const msg = fmt(args);
+    sink?.breadcrumb("warning", msg);
+    const now = clock();
+    const b = batches.get(key);
+    if (!b || (now >= b.until && b.held === 0)) {
+      batches.set(key, { until: now + batchMs(), held: 0, timer: null });
+      sink?.captureMessage(msg, "warning");
+      return;
+    }
+    b.held++;
+    if (!b.timer) {
+      b.timer = setTimeout(() => flushBatch(key), Math.max(0, b.until - now));
+      b.timer.unref();
+    }
   },
   /** Operational lines printed at every level except silent. */
   startup(...args: unknown[]) {
