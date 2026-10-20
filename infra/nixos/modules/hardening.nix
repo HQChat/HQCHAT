@@ -60,6 +60,16 @@ in
         LoginGraceTime = 30;
         ClientAliveInterval = 300;
         ClientAliveCountMax = 2;
+        # Hybrid post-quantum key exchange only (OpenSSH 9.9+ or 9.0+ clients),
+        # AES-256-GCM and SHA-512: no classical-only fallback. OpenSSH offers no
+        # ML-KEM-1024 or ML-DSA host key, which CNSA 2.0 asks for.
+        KexAlgorithms = [
+          "mlkem768x25519-sha256"
+          "sntrup761x25519-sha512"
+          "sntrup761x25519-sha512@openssh.com"
+        ];
+        Ciphers = [ "aes256-gcm@openssh.com" ];
+        Macs = [ "hmac-sha2-512-etm@openssh.com" ];
       };
       hostKeys = [
         {
