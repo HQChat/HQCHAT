@@ -38,7 +38,7 @@ on:
         type: environment
         required: true
       allow_replace:
-        description: Allow destroying or replacing droplets, the volume, the database or the reserved IP
+        description: Allow destroying or replacing protected resources (droplets, volume, database, address, firewalls, zone settings, DNS, keys; infra/scripts/tf-guard.sh)
         type: boolean
         default: false
       ship_apple:
