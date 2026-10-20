@@ -278,6 +278,34 @@ test("a ban removes the account but keeps the report against it", async () => {
   );
 });
 
+test("nothing a user typed reaches the operator's terminal as a control sequence", async () => {
+  // A note or excerpt is user text printed on the app host's shell. Raw, it can
+  // clear the screen, set the clipboard (OSC 52), or forge whole queue lines.
+  // The route refuses most of it, so these rows are written directly, as an
+  // older row or a future writer could.
+  await q(`DELETE FROM reports`);
+  const [a, b] = [await account(), await account()];
+  const ESC = "\x1b";
+  const BEL = "\x07";
+  const forged = `${ESC}[2J${ESC}[H${ESC}]52;c;${Buffer.from("rm -rf ~").toString("base64")}${BEL}\n\nno open reports.\n`;
+  await DB.createReport({
+    reporterId: a,
+    reportedId: b,
+    conversationId: topicId(a, b),
+    category: "spam",
+    note: forged,
+    excerpt: `line one\u009b31m\r\u202eevil\nno open reports.`,
+  });
+
+  const out = await captured(() => queue());
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting none reach the terminal
+  assert.ok(!/[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(out), JSON.stringify(out));
+  assert.match(out, /\\x1b\[2J/, "the escape is shown, so the operator can see what was sent");
+  for (const line of out.split("\n").filter((l) => l.includes("no open reports."))) {
+    assert.match(line, /^ {6}[>|] /, `a forged line stands on its own: ${JSON.stringify(line)}`);
+  }
+});
+
 test("a ban refuses the key from then on and keeps the blocks others placed on it", async () => {
   const [a, b] = [await account(), await account()];
   await DB.block(a, b);

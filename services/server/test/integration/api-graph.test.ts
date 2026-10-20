@@ -769,10 +769,20 @@ test("a report takes any message id the wire format allows, and refuses what it 
   assert.equal(controlChars.status, 400, controlChars.text);
   assert.equal(controlChars.body.error, "INVALID_FIELD");
 
+  // C1 as well: U+009B is CSI on terminals that honour 8-bit controls.
+  const c1 = await call(
+    "POST",
+    "/report",
+    { conversation: hash, peer: b.id, category: "spam", messageId: "abc\u009b2Jdef" },
+    a.token,
+  );
+  assert.equal(c1.status, 400, c1.text);
+  assert.equal(c1.body.error, "INVALID_FIELD");
+
   assert.equal(
     (await q(`SELECT 1 FROM reports WHERE reporter_id = $1`, [a.id])).rows.length,
     3,
-    "the two refusals must not have written rows",
+    "the refusals must not have written rows",
   );
 });
 
@@ -865,6 +875,34 @@ test("an ended friendship stops being reportable when its window lapses, and goe
   await call("POST", "/friends/remove", { peer: d.id }, c.token);
   assert.equal((await call("POST", "/account/delete", {}, d.token)).status, 200);
   assert.equal((await q(`SELECT 1 FROM ended_friendships WHERE convo_id = $1`, [other])).rows.length, 0);
+});
+
+test("a report note with control characters is refused, and an excerpt's are neutralised", async () => {
+  // Both are printed on the operator's terminal. The note is the reporter's own
+  // text, so it is refused; the excerpt quotes the reported person, whose
+  // control characters must not make the report fail.
+  const [a, b] = await friends();
+  const hash = await convoId(a.id, b.id);
+  for (const note of ["\x1b[2Jcleared", "bell\x07", "c1\u009b31m", "cr\rover"]) {
+    const res = await call("POST", "/report", { conversation: hash, peer: b.id, category: "spam", note }, a.token);
+    assert.equal(res.status, 400, `${JSON.stringify(note)}: ${res.text}`);
+  }
+  const fine = await call(
+    "POST",
+    "/report",
+    {
+      conversation: hash,
+      peer: b.id,
+      category: "spam",
+      note: "line one\n\tline two",
+      excerpt: "hi\x1b]52;c;x\x07 there",
+    },
+    a.token,
+  );
+  assert.equal(fine.status, 200, fine.text);
+  const row = await reportRow(fine.body.id);
+  assert.equal(row!.reporter_note, "line one\n\tline two");
+  assert.equal(row!.message_excerpt, "hi\ufffd]52;c;x\ufffd there");
 });
 
 test("a `peer` that is not the other member is refused rather than ignored", async () => {

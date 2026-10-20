@@ -57,10 +57,39 @@ async function friendCapReached(id: string): Promise<boolean> {
   return (await DB.countFriends(id)) >= FRIEND_CAP;
 }
 
+/** C0 except tab and newline, DEL, C1. */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: matching control characters is the purpose
+const REPORT_TEXT_CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/;
+
+/**
+ * The reporter's own note. Control characters other than tab and newline are
+ * refused: the note is printed on the operator's terminal, where an escape
+ * sequence could rewrite the queue or the clipboard.
+ */
+function reportNote(body: Record<string, unknown>): string | null {
+  const value = optionalString(body, "note", { max: MAX_REPORT_NOTE });
+  if (value !== null && REPORT_TEXT_CONTROL.test(value)) {
+    throw new HttpError(400, "INVALID_FIELD", "note must not contain control characters");
+  }
+  return value;
+}
+
+/**
+ * The quoted message. Its text is the reported person's, so a control
+ * character in it must not make the report fail: each becomes U+FFFD.
+ */
+function reportExcerpt(body: Record<string, unknown>): string | null {
+  const value = optionalString(body, "excerpt", { max: MAX_REPORT_EXCERPT });
+  return value === null ? null : value.replace(new RegExp(REPORT_TEXT_CONTROL.source, "g"), "\ufffd");
+}
+
 function reportMessageId(body: Record<string, unknown>): string | null {
   const value = optionalString(body, "messageId", { max: MAX_REPORT_MESSAGE_ID_BYTES });
   if (value === null) return null;
-  const hasControl = [...value].some((c) => c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f);
+  // C1 too: the database's [[:cntrl:]] check refuses it, and a 400 says why.
+  const hasControl = [...value].some(
+    (c) => c.charCodeAt(0) < 0x20 || (c.charCodeAt(0) >= 0x7f && c.charCodeAt(0) <= 0x9f),
+  );
   if (Buffer.byteLength(value, "utf8") > MAX_REPORT_MESSAGE_ID_BYTES || hasControl) {
     throw new HttpError(400, "INVALID_FIELD", "messageId must be at most 128 bytes with no control characters");
   }
@@ -182,8 +211,8 @@ const authenticated: Record<string, Route> = {
       reportedId,
       conversationId: conversation,
       category: category as ReportCategory,
-      note: optionalString(body, "note", { max: MAX_REPORT_NOTE }),
-      excerpt: optionalString(body, "excerpt", { max: MAX_REPORT_EXCERPT }),
+      note: reportNote(body),
+      excerpt: reportExcerpt(body),
       frame: optionalBase64(body, "frame", MAX_REPORT_FRAME_BYTES),
       messageId: reportMessageId(body),
     });
