@@ -35,6 +35,9 @@ let
 
   cred = name: "${name}:${secrets}/${name}";
 
+  # Where the bot reaches the server, and so the origin its sign-in proves.
+  botBaseUrl = "http://127.0.0.1:8090";
+
   common = {
     NODE_ENV = "production";
     # nginx resolves CF-Connecting-IP (set_real_ip_from Cloudflare only) and
@@ -118,6 +121,9 @@ let
       LISTEN_HOST = "127.0.0.1,${wg.app}";
       SERVER_VERSION = server.version;
       PUBLIC_BASE_URL = "https://${env.domain}";
+      # The origins a sign-in proof may be bound to: the apps' API host and the
+      # bot's own (its BASE_URL below).
+      AUTH_ORIGINS = "https://${lib.toLower (env.apiHost or env.domain)},${botBaseUrl}";
       BOT_ID_FILE = "%d/bot_id";
       EMQX_API_URL = "http://${wg.mqtt}:18083";
       EMQX_API_KEY = "hqcat-svc";
@@ -239,7 +245,7 @@ lib.mkIf (cfg.role == "app") {
     crit = 460;
     creds = [ "bot_seed" ];
     env = {
-      BASE_URL = "http://127.0.0.1:8090";
+      BASE_URL = botBaseUrl;
       MQTT_URL = "ws://${wg.mqtt}:8083/mqtt";
       BOT_USERNAME = "helper";
       BOT_STATE_DIR = "/var/lib/hqcat-bot";
