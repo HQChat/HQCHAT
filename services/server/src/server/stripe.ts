@@ -106,6 +106,25 @@ export function displayNameFromSession(session: CheckoutCustomFields): string | 
   return value.length > 0 ? value.slice(0, 60) : null;
 }
 
+/** The part of a webhook event that decides whether it names a supporter. */
+export interface SupporterEvent {
+  type: string;
+  data: { object: CheckoutCustomFields & { payment_status?: string | null } };
+}
+
+/**
+ * The name to put on the supporters page for a webhook event, or null. Only a
+ * paid checkout names anyone: a completed session whose payment is still
+ * pending (an asynchronous method) is named when Stripe reports it succeeded,
+ * and never if it fails.
+ */
+export function supporterFromEvent(event: SupporterEvent): string | null {
+  const paid =
+    (event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded") &&
+    event.data.object.payment_status === "paid";
+  return paid ? displayNameFromSession(event.data.object) : null;
+}
+
 export const StripeService = {
   /** The Checkout URL for the website's donate button. */
   async createCheckout(baseUrl: string, choice: DonationChoice): Promise<string> {

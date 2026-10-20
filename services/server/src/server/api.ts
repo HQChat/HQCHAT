@@ -16,7 +16,7 @@ import {
   requireString,
   send,
 } from "./http";
-import { displayNameFromSession, StripeService } from "./stripe";
+import { StripeService, type SupporterEvent, supporterFromEvent } from "./stripe";
 
 const HQC_PUBLIC_KEY_BYTES = 7237;
 const MAX_ONETIME_PER_UPLOAD = 8;
@@ -343,10 +343,8 @@ function stripeWebhook(req: http.IncomingMessage, res: http.ServerResponse): voi
   req.on("end", async () => {
     try {
       const event = StripeService.constructEvent(Buffer.concat(chunks), String(req.headers["stripe-signature"] || ""));
-      if (event.type === "checkout.session.completed") {
-        const name = displayNameFromSession(event.data.object);
-        if (name) await DB.recordSupporter(name);
-      }
+      const name = supporterFromEvent(event as unknown as SupporterEvent);
+      if (name) await DB.recordSupporter(name);
       res.writeHead(200).end("ok");
     } catch (e) {
       logger.error(`[stripe-webhook] ${(e as Error).message}`);

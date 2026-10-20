@@ -36,6 +36,7 @@ const {
   monthlyTiersAvailable,
   oneTimeAvailable,
   displayNameFromSession,
+  supporterFromEvent,
   DISPLAY_NAME_FIELD_KEY,
 } = require("../../src/server/stripe") as typeof import("../../src/server/stripe");
 const { CSP, CHECKOUT_ORIGIN } = require("../../src/server/donate") as typeof import("../../src/server/donate");
@@ -153,6 +154,21 @@ test("nothing but the name is read off a completed session", () => {
     custom_fields: [{ key: DISPLAY_NAME_FIELD_KEY, text: { value: "Ada" } }],
   };
   assert.equal(displayNameFromSession(session), "Ada");
+});
+
+test("only a paid checkout puts a name on the supporters page", () => {
+  // An asynchronous payment completes the session before the money arrives,
+  // and can still fail; its name waits for async_payment_succeeded.
+  const object = (payment_status: string) => ({
+    payment_status,
+    custom_fields: [{ key: DISPLAY_NAME_FIELD_KEY, text: { value: "Ada" } }],
+  });
+  const ev = (type: string, status: string) => ({ type, data: { object: object(status) } });
+  assert.equal(supporterFromEvent(ev("checkout.session.completed", "paid")), "Ada");
+  assert.equal(supporterFromEvent(ev("checkout.session.completed", "unpaid")), null);
+  assert.equal(supporterFromEvent(ev("checkout.session.async_payment_succeeded", "paid")), "Ada");
+  assert.equal(supporterFromEvent(ev("checkout.session.async_payment_failed", "unpaid")), null);
+  assert.equal(supporterFromEvent(ev("checkout.session.expired", "paid")), null);
 });
 
 // --- the CSP half of the same outage ----------------------------------------
