@@ -281,3 +281,26 @@ fn rotating_keys_steps_the_ratchet_and_the_conversation_goes_on() {
     assert_eq!(texts(&b, &a), ["one", "three", "four"]);
     assert_eq!(texts(&a, &b), ["two", "five"]);
 }
+
+#[test]
+fn only_a_message_one_wrote_can_be_retried() {
+    let (_s, mut a, mut b) = pair();
+    send(&mut a, &b, "from a");
+    settle(&mut [&mut a, &mut b]);
+    let received = b.engine.history(a.id(), None, 10).unwrap()[0]
+        .msg_id
+        .clone();
+    let routed = _s.borrow().broker.routed.len();
+    let e = b.engine.retry(received, NOW);
+    assert!(
+        e.is_empty() || !e.iter().any(|x| matches!(x, Effect::MessageStatus { .. })),
+        "{e:?}"
+    );
+    b.pump(e);
+    settle(&mut [&mut a, &mut b]);
+    assert_eq!(
+        _s.borrow().broker.routed.len(),
+        routed,
+        "nothing was sent back"
+    );
+}

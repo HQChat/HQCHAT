@@ -215,11 +215,16 @@ impl Core {
 
     pub fn retry(&mut self, msg_id: &str, now: i64) -> Result<(), CoreError> {
         self.unlocked()?;
-        let peer = self
-            .peers
-            .keys()
-            .find(|p| self.message_slot_of(p, msg_id).is_some())
-            .cloned()
+        // Only a message this user wrote: retrying a received one would seal
+        // the friend's text and send it back to them.
+        let peers: Vec<PeerId> = self.peers.keys().cloned().collect();
+        let peer = peers
+            .into_iter()
+            .find(|p| {
+                self.message_slot_of(p, msg_id)
+                    .and_then(|s| self.get_message(&s).ok().flatten())
+                    .is_some_and(|m| m.outgoing)
+            })
             .ok_or(CoreError::State("no such message".into()))?;
         if !self.convo.outbox.iter().any(|o| o.msg_id == msg_id) {
             self.convo.outbox.push(Outgoing {
