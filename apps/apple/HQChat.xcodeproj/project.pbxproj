@@ -45,6 +45,7 @@
 				Helpers/Design/Headers.swift,
 				Helpers/Design/Identity.swift,
 				Helpers/Design/Motion.swift,
+				Helpers/Design/PrivacyCover.swift,
 				Helpers/Design/Sheets.swift,
 				Helpers/Design/Tokens.swift,
 				Helpers/Log.swift,

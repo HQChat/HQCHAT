@@ -24,6 +24,8 @@ struct HQChatApp: App {
                         await appState.initialize()
                     }
             }
+            // Nothing readable in the app switcher's snapshot or a screen capture.
+            .hqPrivacyCover()
             .onChange(of: scenePhase) { _, phase in
                 switch phase {
                 case .background:
