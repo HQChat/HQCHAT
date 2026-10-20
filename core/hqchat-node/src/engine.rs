@@ -16,6 +16,19 @@ use napi_derive::napi;
 use crate::err;
 use crate::store::DirStore;
 
+/// The device key a headless owner derives from its 32-byte identity seed
+/// (the bot): nothing stored beside its data then opens that data.
+#[napi(catch_unwind)]
+pub fn device_key_from_seed(seed: Buffer) -> napi::Result<Buffer> {
+    let seed: [u8; 32] = seed
+        .as_ref()
+        .try_into()
+        .map_err(|_| napi::Error::from_reason("a seed is 32 bytes"))?;
+    hqchat_engine::software::SoftwareVault::key_from_seed(&seed)
+        .map(|k| k.to_vec().into())
+        .ok_or_else(|| napi::Error::from_reason("no device key derives from this seed"))
+}
+
 /// How a Node engine is set up.
 #[napi(object)]
 pub struct EngineOptions {

@@ -39,6 +39,16 @@ impl SoftwareVault {
         }
     }
 
+    /// The device key a headless owner (the bot) derives from its identity
+    /// seed instead of storing one: HKDF of the seed, the first output that
+    /// is a valid P-256 scalar. Nothing beside the store then opens it.
+    pub fn key_from_seed(seed: &[u8; 32]) -> Option<[u8; 32]> {
+        (0u8..=255).find_map(|i| {
+            let k = hkdf_sha256::<32>(b"hqchat/v1/headless-device-key", seed, &[i]);
+            SecretKey::from_slice(k.as_ref()).is_ok().then_some(*k)
+        })
+    }
+
     /// The key, for a headless owner (the bot) to keep in its own storage.
     pub fn export_key(&self) -> Option<[u8; 32]> {
         self.key

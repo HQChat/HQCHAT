@@ -218,6 +218,8 @@ export interface Engine {
 
 export interface CoreAddon {
   hqcKeypairFromSeed(seed: Buffer): HqcKeyPair;
+  /** The device key a headless owner (the bot) derives from its identity seed. */
+  deviceKeyFromSeed(seed: Buffer): Buffer;
   hqcEncapsulate(pk: Buffer): Encapsulation;
   hqcDecapsulate(sk: Buffer, ct: Buffer): Buffer;
   /** A sign-in challenge to `pk` at `origin`; the shared secret never reaches JS. */
@@ -253,6 +255,7 @@ export interface CoreAddon {
 /** Every name the addon exports, for the conformance test. */
 export const CORE_EXPORTS: readonly (keyof CoreAddon)[] = [
   "hqcKeypairFromSeed",
+  "deviceKeyFromSeed",
   "hqcEncapsulate",
   "hqcDecapsulate",
   "authChallenge",
