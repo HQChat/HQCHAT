@@ -27,6 +27,11 @@ final class SoftwareVault: KeyVault, @unchecked Sendable {
         return try key.sharedSecretFromKeyAgreement(with: peer).withUnsafeBytes { Data($0) }
     }
 
+    func stateSecret() throws -> Data {
+        guard let key = lock.withLock({ key }) else { throw VaultError.Missing }
+        return Data(SHA256.hash(data: key.rawRepresentation))
+    }
+
     func tier() -> Tier { .software }
 }
 
@@ -79,7 +84,7 @@ final class Prompts: @unchecked Sendable {
 }
 
 final class CoreShellTests: XCTestCase {
-    private let config = Config(serverUrl: "https://hqchat.test", profileId: "p", device: .ios)
+    private let config = Config(serverUrl: "https://hqchat.test", profileId: "p", device: .ios, hqnPins: [])
     private let network = NetworkInfo(key: "wifi", expensive: false)
     private let base = URL(string: "https://hqchat.test")!
 

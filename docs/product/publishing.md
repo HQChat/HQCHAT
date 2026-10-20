@@ -26,8 +26,10 @@ owner can do.
   macOS and **`NO` on iOS**, which is false for the target that ships. Set it to
   `YES` before submitting (see §3, export compliance).
 - ⚠️ **Crash reporting is always on.** The Sentry DSN is compiled into the app,
-  so every build sends crash reports, 10% performance samples and, on iOS,
-  masked session replays of errors. The privacy answers in §5 must declare it.
+  so every build sends crash and hang reports: no performance tracing, no
+  network data, no session replay, no user id (Helpers/Observability.swift).
+  The privacy answers in §5 must declare it, and the App Store Connect label
+  must match PrivacyInfo.xcprivacy.
 
 ## 1b. Release blocker — biometric re-enrolment destroys the account
 
@@ -153,10 +155,10 @@ Two answers a reviewer may want, both stated on `/eula`:
 
 **Data not linked to the user:**
 
-- **Diagnostics → Crash Data, Performance Data, Other Diagnostic Data**: Sentry
-  crash reports, sampled performance traces and, on iOS, session replays of
-  errors with every text and image masked. Scrubbed of keys, ids, handles,
-  addresses and tokens before sending.
+- **Diagnostics → Crash Data, Other Diagnostic Data**: Sentry crash and hang
+  reports, with no user or installation id, request URLs, traces or screen
+  replays. Scrubbed of keys, ids, handles, addresses and tokens before
+  sending.
 
 **Not collected:** contact info, location, photos, contacts, browsing,
 purchases (donations happen on the website), usage analytics, advertising
