@@ -91,6 +91,7 @@ const EXPIRING: Array<[table: string, column: string]> = [
   ["mqtt_nonces", "expires_at"],
   ["rate_counters", "window_ends_at"],
   ["reports", "expires_at"],
+  ["ended_friendships", "expires_at"],
 ];
 
 /**

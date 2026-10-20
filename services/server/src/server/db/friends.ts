@@ -8,6 +8,9 @@ export interface FriendshipTopics {
   handshakeId: string;
 }
 
+/** How long an ended friendship's conversation can still be reported. */
+const ENDED_REPORTABLE_SECONDS = 30 * 24 * 60 * 60;
+
 function pair(a: string, b: string): [string, string] {
   return a < b ? [a, b] : [b, a];
 }
@@ -106,14 +109,41 @@ export const friends = {
     return (await one(`SELECT 1 FROM friendships WHERE id_lo = $1 AND id_hi = $2`, [lo, hi])) !== null;
   },
 
-  /** Ends a friendship and returns the topic ids it retired, or null when there was none. */
+  /**
+   * Ends a friendship and returns the topic ids it retired, or null when there
+   * was none. The conversation stays reportable by either member for
+   * ENDED_REPORTABLE_SECONDS (`reportableMembers`).
+   */
   async removeFriendship(a: string, b: string): Promise<FriendshipTopics | null> {
     const [lo, hi] = pair(a, b);
     const row = await one<{ convo_id: string; handshake_id: string }>(
-      `DELETE FROM friendships WHERE id_lo = $1 AND id_hi = $2 RETURNING convo_id, handshake_id`,
-      [lo, hi],
+      `WITH ended AS (
+         DELETE FROM friendships WHERE id_lo = $1 AND id_hi = $2 RETURNING id_lo, id_hi, convo_id, handshake_id
+       ),
+       kept AS (
+         INSERT INTO ended_friendships (convo_id, id_lo, id_hi, expires_at)
+         SELECT convo_id, id_lo, id_hi, now() + $3::interval FROM ended
+         ON CONFLICT (convo_id) DO NOTHING
+       )
+       SELECT convo_id, handshake_id FROM ended`,
+      [lo, hi, `${ENDED_REPORTABLE_SECONDS} seconds`],
     );
     return row ? { convoId: row.convo_id, handshakeId: row.handshake_id } : null;
+  },
+
+  /**
+   * The two members of conversation `convoId` for a report: the live
+   * friendship, or one that ended within ENDED_REPORTABLE_SECONDS.
+   */
+  async reportableMembers(convoId: string): Promise<string[]> {
+    const row = await one<{ id_lo: string; id_hi: string }>(
+      `SELECT id_lo, id_hi FROM friendships WHERE convo_id = $1
+       UNION ALL
+       SELECT id_lo, id_hi FROM ended_friendships WHERE convo_id = $1 AND expires_at > now()
+       LIMIT 1`,
+      [convoId],
+    );
+    return row ? [row.id_lo, row.id_hi] : [];
   },
 
   /** The two members of the friendship whose conversation topic is `cv/{convoId}`. */

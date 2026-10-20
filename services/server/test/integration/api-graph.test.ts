@@ -124,6 +124,7 @@ async function cleanup(): Promise<void> {
     `DELETE FROM sessions WHERE id = ANY($1::text[])`,
     `DELETE FROM invites WHERE from_id = ANY($1::text[]) OR to_id = ANY($1::text[])`,
     `DELETE FROM friendships WHERE id_lo = ANY($1::text[]) OR id_hi = ANY($1::text[])`,
+    `DELETE FROM ended_friendships WHERE id_lo = ANY($1::text[]) OR id_hi = ANY($1::text[])`,
     `DELETE FROM prekeys_onetime WHERE id = ANY($1::text[])`,
     `DELETE FROM prekeys_medium WHERE id = ANY($1::text[])`,
     `DELETE FROM push_tokens WHERE id = ANY($1::text[])`,
@@ -536,6 +537,8 @@ test("deleting an account leaves no row anywhere, and ends the live connection",
     ["prekeys_medium", "id"],
     ["prekeys_onetime", "id"],
     ["friendships", "id_lo"],
+    ["ended_friendships", "id_lo"],
+    ["ended_friendships", "id_hi"],
     // The blocks this user placed. A block placed ON them is the blocker's, below.
     ["blocks", "blocker_id"],
   ] as const) {
@@ -809,6 +812,61 @@ test("a report for a conversation that does not exist is a 404, not a row", asyn
   assert.equal((await q(`SELECT 1 FROM reports WHERE reporter_id = $1`, [me.id])).rows.length, 0);
 });
 
+test("a conversation stays reportable after the friendship ends, by either side", async () => {
+  // The abuser must not be able to make a conversation unreportable by
+  // unfriending first.
+  const [victim, abuser] = await friends();
+  const hash = await convoId(victim.id, abuser.id);
+  assert.equal((await call("POST", "/friends/remove", { peer: victim.id }, abuser.token)).status, 200);
+  assert.equal(await DB.getTopicMembers(hash).then((m) => m.length), 0, "the push bridge still sees members");
+
+  const res = await call(
+    "POST",
+    "/report",
+    { conversation: hash, peer: abuser.id, category: "harassment" },
+    victim.token,
+  );
+  assert.equal(res.status, 200, res.text);
+  assert.equal((await reportRow(res.body.id))!.reported_id, abuser.id);
+
+  // Ended by a block, the same.
+  const [other, blocked] = await friends();
+  const blockedHash = await convoId(other.id, blocked.id);
+  assert.equal((await call("POST", "/friends/block", { peer: blocked.id }, other.token)).status, 200);
+  const after = await call(
+    "POST",
+    "/report",
+    { conversation: blockedHash, peer: blocked.id, category: "spam" },
+    other.token,
+  );
+  assert.equal(after.status, 200, after.text);
+
+  // Still only the two members.
+  const outsider = await account();
+  const stranger = await call(
+    "POST",
+    "/report",
+    { conversation: hash, peer: victim.id, category: "spam" },
+    outsider.token,
+  );
+  assert.equal(stranger.status, 403, stranger.text);
+});
+
+test("an ended friendship stops being reportable when its window lapses, and goes with an account", async () => {
+  const [a, b] = await friends();
+  const hash = await convoId(a.id, b.id);
+  await call("POST", "/friends/remove", { peer: b.id }, a.token);
+  await q(`UPDATE ended_friendships SET expires_at = now() - interval '1 second' WHERE convo_id = $1`, [hash]);
+  const lapsed = await call("POST", "/report", { conversation: hash, peer: b.id, category: "spam" }, a.token);
+  assert.equal(lapsed.status, 404, lapsed.text);
+
+  const [c, d] = await friends();
+  const other = await convoId(c.id, d.id);
+  await call("POST", "/friends/remove", { peer: d.id }, c.token);
+  assert.equal((await call("POST", "/account/delete", {}, d.token)).status, 200);
+  assert.equal((await q(`SELECT 1 FROM ended_friendships WHERE convo_id = $1`, [other])).rows.length, 0);
+});
+
 test("a `peer` that is not the other member is refused rather than ignored", async () => {
   // `peer` is redundant — the subject is already derived — and that is why it is
   // required. A client that disagrees with the server about whose conversation
@@ -1004,11 +1062,10 @@ test("GET /friends/blocked is what stops the client deleting a blocked contact",
   );
 });
 
-test("report, THEN block — the order the client must use, and what happens if it does not", async () => {
-  // /report requires membership of the conversation it names and /friends/block
-  // tears that conversation down, so the two routes cannot enforce their own
-  // ordering between themselves. This pins the consequence so a client that gets
-  // it backwards fails here rather than in the field, silently filing nothing.
+test("report, then block, or block, then report: both file", async () => {
+  // /friends/block tears the conversation down, and an ended friendship stays
+  // reportable for a while, so the order the client uses does not decide
+  // whether the report is filed.
   const [a, b] = await friends();
   const hash = await convoId(a.id, b.id);
 
@@ -1022,7 +1079,8 @@ test("report, THEN block — the order the client must use, and what happens if 
   assert.equal((await call("POST", "/friends/block", { peer: b.id }, a.token)).status, 200);
 
   const after = await call("POST", "/report", { conversation: hash, peer: b.id, category: "harassment" }, a.token);
-  assert.equal(after.status, 404, "blocking first must fail loudly, not file a report about nobody");
+  assert.equal(after.status, 200, after.text);
+  assert.equal((await reportRow(after.body.id))!.reported_id, b.id);
 
   // The report filed BEFORE the block stands, with its content, which is the
   // property that makes the ordering workable at all.

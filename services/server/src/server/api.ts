@@ -165,7 +165,8 @@ const authenticated: Record<string, Route> = {
     }
     const body = await readJson(req);
     const conversation = requireHex(body, "conversation", 32).toLowerCase();
-    const members = await DB.getTopicMembers(conversation);
+    // An ended friendship still counts for a while, so unfriending first does not make abuse unreportable.
+    const members = await DB.reportableMembers(conversation);
     if (members.length !== 2) return send(res, 404, { error: "NO_CONVERSATION" });
     if (!members.includes(id)) return send(res, 403, { error: "NOT_A_MEMBER" });
     const reportedId = members[0] === id ? members[1]! : members[0]!;
