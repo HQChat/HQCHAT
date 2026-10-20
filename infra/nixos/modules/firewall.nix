@@ -1,7 +1,8 @@
 # nftables. The app host answers 80/443 to Cloudflare only, the broker host
 # answers hqn/1 on 443, and the two talk over WireGuard inside the
-# environment's VPC. SSH is rate-limited everywhere; everything else is
-# dropped. Only root may reach the metadata service, whose user data holds the
+# environment's VPC. SSH is rate-limited per source address, so a flood from
+# (or spoofed as) other addresses cannot use up the admin's share; everything
+# else is dropped. Only root may reach the metadata service, whose user data holds the
 # host key. The Cloudflare sets start from cloudflare-ips.nix and refresh daily.
 {
   config,
@@ -63,7 +64,8 @@ in
           iif lo accept
           ip protocol icmp accept
           ip6 nexthdr ipv6-icmp accept
-          tcp dport 22 ct state new limit rate 6/minute burst 6 packets accept
+          tcp dport 22 ct state new meter ssh4_new { ip saddr limit rate 6/minute burst 6 packets } accept
+          tcp dport 22 ct state new meter ssh6_new { ip6 saddr limit rate 6/minute burst 6 packets } accept
           ${cloudflareRules}
           ${wgRules}
           ${hqnRules}

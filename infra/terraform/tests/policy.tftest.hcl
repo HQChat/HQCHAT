@@ -86,6 +86,13 @@ run "production" {
   }
   assert {
     condition = alltrue([
+      for r in digitalocean_firewall.app.inbound_rule : toset(r.source_addresses) == toset(local.ssh_sources)
+      if r.port_range == "22"
+    ])
+    error_message = "The app host's SSH admits the environment's adminSshSources, or any address when it names none."
+  }
+  assert {
+    condition = alltrue([
       for r in digitalocean_firewall.mqtt.inbound_rule : toset(r.source_tags) == toset(["hqchat-production-app"])
       if r.port_range == "22" || r.protocol == "udp"
     ])

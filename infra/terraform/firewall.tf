@@ -2,7 +2,9 @@
 # the inner one and says the same. Rules name droplets by tag, so they hold for
 # whatever droplets the environment has.
 #
-#   app   80/443 from Cloudflare only; 22 from anywhere (rate-limited and key-only on the host)
+#   app   80/443 from Cloudflare only; 22 from the environment's adminSshSources,
+#         or from anywhere when it names none (rate-limited per source and
+#         key-only on the host)
 #   mqtt  443 (hqn/1) from anywhere; 22 from the app host only
 #   both  WireGuard from each other
 
@@ -11,6 +13,7 @@ data "cloudflare_ip_ranges" "edge" {}
 locals {
   cloudflare_ranges = concat(data.cloudflare_ip_ranges.edge.ipv4_cidr_blocks, data.cloudflare_ip_ranges.edge.ipv6_cidr_blocks)
   anywhere          = ["0.0.0.0/0", "::/0"]
+  ssh_sources       = try(local.env.adminSshSources, local.anywhere)
 }
 
 resource "digitalocean_firewall" "app" {
@@ -28,7 +31,7 @@ resource "digitalocean_firewall" "app" {
   inbound_rule {
     protocol         = "tcp"
     port_range       = "22"
-    source_addresses = local.anywhere
+    source_addresses = local.ssh_sources
   }
   inbound_rule {
     protocol    = "udp"
