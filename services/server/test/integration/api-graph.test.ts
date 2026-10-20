@@ -138,7 +138,7 @@ async function cleanup(): Promise<void> {
       /* a column this schema does not have */
     }
   }
-  await q(`DELETE FROM rate_counters WHERE key LIKE 'invite:day:%' OR key LIKE 'report:day:%'`);
+  await q(`DELETE FROM rate_counters WHERE key LIKE 'invite:day:%' OR key LIKE 'report:day:%' OR key LIKE 'prekeys:%'`);
   created.length = 0;
 }
 
@@ -350,6 +350,8 @@ test("a one-time prekey is handed out once and never again", async () => {
   // conversations derive from the same ephemeral secret, which is the property
   // the pool exists to avoid.
   const [a, b] = await friends();
+  const c = await account();
+  await DB.createFriendship(c.id, b.id);
   const upload = await call(
     "POST",
     "/prekeys",
@@ -366,11 +368,11 @@ test("a one-time prekey is handed out once and never again", async () => {
   assert.equal(upload.body.accepted, 2);
 
   const seen = new Set<number>();
-  for (let i = 0; i < 2; i++) {
-    const res = await call("POST", "/prekeys/claim", { peer: b.username }, a.token);
+  for (const claimer of [a, c]) {
+    const res = await call("POST", "/prekeys/claim", { peer: b.username }, claimer.token);
     assert.equal(res.status, 200, res.text);
     assert.equal(res.body.medium, KEY(0xaa), "the medium-term key comes with every claim");
-    assert.ok(res.body.oneTime, `claim ${i} returned no one-time key`);
+    assert.ok(res.body.oneTime, `a claim by ${claimer.username} returned no one-time key`);
     assert.ok(!seen.has(res.body.oneTime.id), `one-time key ${res.body.oneTime.id} was served twice`);
     seen.add(res.body.oneTime.id);
   }
@@ -425,6 +427,75 @@ test("a stranger cannot drain a pool, however many sessions they hold", async ()
     1,
     "the refused claim consumed a key anyway",
   );
+});
+
+test("one friend cannot drain another's one-time pool", async () => {
+  // Every account is the bot's friend, so without a per-pair allowance anyone
+  // could empty the bot's pool and leave every later initiator with the
+  // medium-term key alone.
+  const owner = await account();
+  const [greedy, honest] = [await account(), await account()];
+  await DB.createFriendship(owner.id, greedy.id);
+  await DB.createFriendship(owner.id, honest.id);
+  const oneTime = Array.from({ length: 8 }, (_, i) => ({ id: i, prekey: KEY(0xb0 + i) }));
+  assert.equal((await call("POST", "/prekeys", { medium: KEY(0xaa), oneTime }, owner.token)).status, 200);
+
+  const greedyClaims = [];
+  for (let i = 0; i < 8; i++) greedyClaims.push(await call("POST", "/prekeys/claim", { peer: owner.id }, greedy.token));
+  assert.ok(
+    greedyClaims.every((r) => r.status === 200 && r.body.medium === KEY(0xaa)),
+    "every claim still gets the bundle",
+  );
+  assert.equal(greedyClaims.filter((r) => r.body.oneTime).length, 1, "one friend took more than one one-time key");
+
+  const later = await call("POST", "/prekeys/claim", { peer: owner.id }, honest.token);
+  assert.ok(later.body.oneTime, "the honest initiator was left with the medium-term key only");
+  assert.equal((await call("GET", "/prekeys/count", undefined, owner.token)).body.remaining, 6);
+});
+
+test("the one-time pool is capped, keeping the newest", async () => {
+  const owner = await account();
+  for (let batch = 0; batch < 6; batch++) {
+    const oneTime = Array.from({ length: 8 }, (_, i) => ({ id: batch * 8 + i, prekey: KEY(0xb0 + i) }));
+    assert.equal((await call("POST", "/prekeys", { medium: KEY(0xaa), oneTime }, owner.token)).status, 200);
+  }
+  const count = (await call("GET", "/prekeys/count", undefined, owner.token)).body;
+  assert.equal(count.remaining, 32, "six uploads of eight were all kept");
+  assert.equal(count.maxId, 47, "the newest keys were the ones dropped");
+  const ids = await q<{ key_id: number }>(`SELECT min(key_id) AS key_id FROM prekeys_onetime WHERE id = $1`, [
+    owner.id,
+  ]);
+  assert.equal(ids.rows[0]!.key_id, 16, "the oldest sixteen go");
+});
+
+test("prekey uploads are limited per day", async () => {
+  const owner = await account();
+  await q(`INSERT INTO rate_counters (key, n, window_ends_at) VALUES ($1, 30, now() + interval '1 day')`, [
+    `prekeys:day:${owner.id}`,
+  ]);
+  const res = await call("POST", "/prekeys", { medium: KEY(0xaa), oneTime: [] }, owner.token);
+  assert.equal(res.status, 429, res.text);
+});
+
+test("a one-time prekey id past the column's range is a 400, not a 500", async () => {
+  const owner = await account();
+  for (const id of [2 ** 31, 2 ** 32, Number.MAX_SAFE_INTEGER]) {
+    const res = await call(
+      "POST",
+      "/prekeys",
+      { medium: KEY(0xaa), oneTime: [{ id, prekey: KEY(0xb1) }] },
+      owner.token,
+    );
+    assert.equal(res.status, 400, `${id}: ${res.text}`);
+    assert.equal(res.body.error, "INVALID_FIELD");
+  }
+  const top = await call(
+    "POST",
+    "/prekeys",
+    { medium: KEY(0xaa), oneTime: [{ id: 2 ** 31 - 1, prekey: KEY(0xb1) }] },
+    owner.token,
+  );
+  assert.equal(top.status, 200, top.text);
 });
 
 test("an upload larger than the cap is refused whole", async () => {

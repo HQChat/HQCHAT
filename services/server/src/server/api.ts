@@ -20,6 +20,13 @@ import { displayNameFromSession, StripeService } from "./stripe";
 
 const HQC_PUBLIC_KEY_BYTES = 7237;
 const MAX_ONETIME_PER_UPLOAD = 8;
+/** Largest one-time prekey id: the column is a Postgres integer. */
+const MAX_PREKEY_ID = 2 ** 31 - 1;
+const PREKEY_UPLOADS_PER_DAY = Number(process.env.PREKEY_UPLOADS_PER_DAY || 30);
+const PREKEY_CLAIMS_PER_HOUR = Number(process.env.PREKEY_CLAIMS_PER_HOUR || 120);
+/** One-time prekeys one friend may take from another per window; later claims get the medium-term key. */
+const ONETIME_CLAIMS_PER_PAIR = 1;
+const ONETIME_CLAIM_WINDOW_SECONDS = 10 * 60;
 const MAX_PEER_IDENTIFIER = 128;
 const FRIEND_CAP = Number(process.env.FRIEND_CAP || 150);
 const INVITES_PER_DAY = Number(process.env.INVITES_PER_DAY || 20);
@@ -221,6 +228,9 @@ const authenticated: Record<string, Route> = {
   },
 
   "POST /prekeys": async ({ req, res, id }) => {
+    if (!(await withinDailyLimit(`prekeys:day:${id}`, PREKEY_UPLOADS_PER_DAY))) {
+      return send(res, 429, { error: "RATE_LIMITED", limit: PREKEY_UPLOADS_PER_DAY });
+    }
     const body = await readJson(req);
     const medium = requireHex(body, "medium", HQC_PUBLIC_KEY_BYTES);
     const raw: unknown[] = Array.isArray(body.oneTime) ? body.oneTime : [];
@@ -229,19 +239,24 @@ const authenticated: Record<string, Route> = {
     }
     const oneTime = raw.map((entry, i) => {
       const item = entry as Record<string, unknown>;
-      if (!Number.isInteger(item?.id) || (item.id as number) < 0) {
-        throw new HttpError(400, "INVALID_FIELD", `oneTime[${i}].id must be a non-negative integer`);
+      if (!Number.isInteger(item?.id) || (item.id as number) < 0 || (item.id as number) > MAX_PREKEY_ID) {
+        throw new HttpError(400, "INVALID_FIELD", `oneTime[${i}].id must be an integer in 0..${MAX_PREKEY_ID}`);
       }
       return { id: item.id as number, prekey: requireHex(item, "prekey", HQC_PUBLIC_KEY_BYTES) };
     });
-    await DB.putPrekeyBundle(id, medium, oneTime);
-    ok(res, { accepted: oneTime.length });
+    ok(res, { accepted: await DB.putPrekeyBundle(id, medium, oneTime) });
   },
 
   "POST /prekeys/claim": async ({ req, res, id }) => {
+    if ((await DB.bumpCounter(`prekeys:claim:${id}`, 60 * 60)) > PREKEY_CLAIMS_PER_HOUR) {
+      return send(res, 429, { error: "RATE_LIMITED", limit: PREKEY_CLAIMS_PER_HOUR });
+    }
     const peer = await peerArg(req, "peer");
     if (!peer || !(await DB.areFriends(id, peer))) return send(res, 403, { error: "NOT_FRIENDS" });
-    const claimed = await DB.claimPrekey(peer);
+    // One friend cannot drain another's pool: past the per-pair allowance a
+    // claim still gets the medium-term key, and the one-time keys stay for others.
+    const pairClaims = await DB.bumpCounter(`prekeys:pair:${id}:${peer}`, ONETIME_CLAIM_WINDOW_SECONDS);
+    const claimed = await DB.claimPrekey(peer, pairClaims <= ONETIME_CLAIMS_PER_PAIR);
     if (!claimed) return send(res, 404, { error: "NO_PREKEYS" });
     send(res, 200, claimed);
   },
