@@ -31,6 +31,10 @@ pub const MAX_SKIPPED: usize = 2000;
 pub const RATCHET_MIN_STEP_INTERVAL_MS: i64 = 900_000;
 /// A sending chain steps after this many messages.
 pub const RATCHET_MAX_MESSAGES_PER_CHAIN: u32 = 32;
+/// Skipped keys are kept for the chains of the last this-many steps from the
+/// peer, then dropped: a message that late is not worth a key that, stolen
+/// later, would open it.
+pub const MAX_SKIPPED_CHAINS: usize = 8;
 /// Retired chains remembered for replay rejection. Older replays still
 /// decapsulate (to a secret that no longer matches the root), so the AEAD
 /// tag refuses them.
@@ -443,8 +447,6 @@ struct PendingStep {
     peer_rk: PublicKey,
     recv: Chain,
     entered: [u8; 16],
-    /// Keys left on the retiring chain (up to `pn`), cached once committed.
-    tail: Option<ChainTail>,
 }
 
 /// The step a header asks for into a new chain, or `None` unless it is a
@@ -453,26 +455,17 @@ fn compute_step(
     kem: &dyn Kem,
     state: &SessionState,
     header: &MessageHeader,
-    current: Option<[u8; 16]>,
 ) -> Option<PendingStep> {
     let (rk, kem_ct) = (header.rk.as_ref()?, header.kem_ct.as_ref()?);
-    if chain_id(rk.as_bytes()) != header.cid || state.seen_chains.contains(&header.cid) {
+    // A step is always the first message of its chain: anything else is
+    // refused before the decapsulation it would cost.
+    if header.n != 0
+        || chain_id(rk.as_bytes()) != header.cid
+        || state.seen_chains.contains(&header.cid)
+    {
         return None;
     }
     let ss = kem.decapsulate(&state.rk.secret, kem_ct).ok()?;
-
-    // `pn` is attacker-chosen and caching evicts, so the tail is only computed here.
-    let mut tail = None;
-    if let (Some(recv), Some(current)) = (&state.recv, current)
-        && header.pn > recv.n
-        && usize_from(header.pn.saturating_sub(recv.n)) <= MAX_SKIPPED
-        && let Some(last) = header.pn.checked_sub(1)
-    {
-        let walked = walk_chain(&recv.ck, recv.n, last).ok()?;
-        let mut keys = walked.skipped;
-        keys.push((last, walked.key));
-        tail = Some((current, keys));
-    }
     let next = root_step(&state.root, &ss);
     Some(PendingStep {
         root: next.root,
@@ -482,8 +475,22 @@ fn compute_step(
             n: 0,
         },
         entered: header.cid,
-        tail,
     })
+}
+
+/// Keys left on the retiring chain, up to `pn`. Walked only after the
+/// stepping message authenticated: `pn` is the sender's word, and a forged
+/// frame must not buy a walk of up to `MAX_SKIPPED` keys.
+fn chain_tail(state: &SessionState, pn: u32, current: Option<[u8; 16]>) -> Option<ChainTail> {
+    let (recv, current) = (state.recv.as_ref()?, current?);
+    if pn <= recv.n || usize_from(pn.saturating_sub(recv.n)) > MAX_SKIPPED {
+        return None;
+    }
+    let last = pn.checked_sub(1)?;
+    let walked = walk_chain(&recv.ck, recv.n, last).ok()?;
+    let mut keys = walked.skipped;
+    keys.push((last, walked.key));
+    Some((current, keys))
 }
 
 fn cache_skipped(state: &mut SessionState, chain: [u8; 16], keys: Vec<(u32, SymmetricKey)>) {
@@ -506,6 +513,11 @@ fn remember_chain(state: &mut SessionState, cid: [u8; 16]) {
         let excess = state.seen_chains.len().saturating_sub(MAX_SEEN_CHAINS);
         state.seen_chains.drain(..excess);
     }
+    // Skipped keys go with the chains they belong to, MAX_SKIPPED_CHAINS
+    // steps on.
+    let keep_from = state.seen_chains.len().saturating_sub(MAX_SKIPPED_CHAINS);
+    let recent = state.seen_chains.get(keep_from..).unwrap_or_default();
+    state.skipped.retain(|k| recent.contains(&k.chain));
 }
 
 /// The message key for an inbound header, or `None`: a replay, a retired
@@ -535,7 +547,7 @@ pub fn open(
     let step = if Some(header.cid) == current {
         None
     } else {
-        Some(compute_step(kem, state, header, current)?)
+        Some(compute_step(kem, state, header)?)
     };
     let recv = match &step {
         Some(step) => &step.recv,
@@ -550,12 +562,12 @@ pub fn open(
     }
 
     if let Some(step) = step {
+        if let Some((cid, keys)) = chain_tail(state, header.pn, current) {
+            cache_skipped(state, cid, keys);
+        }
         state.root = step.root;
         state.peer_rk = Some(step.peer_rk);
         state.peer_key_fresh = true;
-        if let Some((cid, keys)) = step.tail {
-            cache_skipped(state, cid, keys);
-        }
         remember_chain(state, step.entered);
     }
     cache_skipped(state, header.cid, walk.skipped);

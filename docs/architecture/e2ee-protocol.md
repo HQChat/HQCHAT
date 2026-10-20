@@ -126,7 +126,11 @@ chain id:         cid = first 16 bytes of SHA-256(rkPub), as hex
   run steps once per turn. "Rotate keys" lifts the bounds, never the turn.
   Sessions imported from 3.1.1 kept no turn: the lower id has it.
 - **Out of order:** keys skipped on the way to a later message are cached by
-  chain and index, at most 2,000 across all chains, oldest evicted.
+  chain and index, at most 2,000 across all chains, oldest evicted, and
+  dropped once their chain is 8 steps from the peer behind: a message that
+  late is lost rather than kept openable. A step is always the first message
+  of its chain (n = 0); the keys it leaves behind on the old chain (up to
+  `pn`) are walked only after it authenticates.
 - **Replays and forged steps:** a cached key is consumed only if its payload
   authenticates; a chain already left is never re-entered (the last 64 chain
   ids are remembered); everything a step would change is computed first and
