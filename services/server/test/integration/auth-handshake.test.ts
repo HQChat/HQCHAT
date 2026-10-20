@@ -55,7 +55,10 @@ async function cleanup(): Promise<void> {
   ]) {
     await q(sql, [ids]);
   }
-  await q(`DELETE FROM rate_counters WHERE key LIKE 'init:ip:%' OR key LIKE 'init:pk:%' OR key LIKE 'verify:fail:%'`);
+  await q(
+    `DELETE FROM rate_counters
+      WHERE key LIKE 'init:ip:%' OR key LIKE 'init:pk:%' OR key LIKE 'verify:fail:%' OR key LIKE 'verify:ip:%'`,
+  );
   created.length = 0;
 }
 
@@ -180,7 +183,7 @@ test("a challenge is single-use, so a captured proof cannot be replayed", async 
   assert.equal(replay.status, 401, "the same proof was accepted twice");
 });
 
-test("a second init replaces the first challenge, it does not add one", async () => {
+test("a second init opens a second challenge, and each verifies once", async () => {
   const me = identity();
   created.push(me.id);
   const a = await call("/auth/init", { pk: me.pkHex });
@@ -188,49 +191,124 @@ test("a second init replaces the first challenge, it does not add one", async ()
   assert.equal(a.status, 200, a.text);
   assert.equal(b.status, 200, b.text);
   assert.notEqual(a.body.ct, b.body.ct, "each init must encapsulate afresh");
+  assert.notEqual(a.body.challenge, b.body.challenge, "each init names its own challenge");
 
   const rows = await q(`SELECT 1 FROM auth_challenges WHERE id = $1`, [me.id]);
-  assert.equal(rows.rows.length, 1, "two inits must not leave two open challenges");
+  assert.equal(rows.rows.length, 2, "a later init must not replace an open challenge");
 
-  const current = await call("/auth/verify", {
-    mqttSigningKey: SIGNING_KEY,
-    pk: me.pkHex,
-    solution: solve(me.sk, b.body.ct),
-  });
-  assert.equal(current.status, 200, `the latest challenge should verify: ${current.text}`);
+  for (const init of [b, a]) {
+    const solution = solve(me.sk, init.body.ct);
+    const ok = await call("/auth/verify", { mqttSigningKey: SIGNING_KEY, pk: me.pkHex, solution });
+    assert.equal(ok.status, 200, `an open challenge should verify: ${ok.text}`);
+    const replay = await call("/auth/verify", { mqttSigningKey: SIGNING_KEY, pk: me.pkHex, solution });
+    assert.equal(replay.status, 401, "the same proof was accepted twice");
+  }
 });
 
-test("a superseded ciphertext no longer verifies", async () => {
+test("one address keeps only its newest few challenges", async () => {
   const me = identity();
   created.push(me.id);
-  const a = await call("/auth/init", { pk: me.pkHex });
-  await call("/auth/init", { pk: me.pkHex }); // supersedes it
-  const stale = await call("/auth/verify", {
+  const inits = [];
+  for (let i = 0; i < 5; i++) inits.push(await call("/auth/init", { pk: me.pkHex }));
+  const rows = await q(`SELECT 1 FROM auth_challenges WHERE id = $1`, [me.id]);
+  assert.equal(rows.rows.length, 4, "five inits from one address leave its four newest");
+  const oldest = await call("/auth/verify", {
     mqttSigningKey: SIGNING_KEY,
     pk: me.pkHex,
-    solution: solve(me.sk, a.body.ct),
+    solution: solve(me.sk, inits[0]!.body.ct),
   });
-  assert.equal(stale.status, 401, "a superseded challenge was still accepted");
+  assert.equal(oldest.status, 401, "the dropped challenge still verified");
 });
 
-test("a wrong proof BURNS the challenge — one guess per init", async () => {
+test("a stranger's inits from other addresses neither refuse nor displace the owner's", async () => {
+  const me = identity();
+  created.push(me.id);
+  const mine = await call("/auth/init", { pk: me.pkHex }, { "x-real-ip": "198.51.100.10" });
+  for (let i = 0; i < 12; i++) {
+    const r = await call("/auth/init", { pk: me.pkHex }, { "x-real-ip": `203.0.113.${i + 1}` });
+    assert.equal(r.status, 200, r.text);
+  }
+  const again = await call("/auth/init", { pk: me.pkHex }, { "x-real-ip": "198.51.100.10" });
+  assert.equal(again.status, 200, "the owner's init budget was spent by strangers");
+  const verify = await call(
+    "/auth/verify",
+    { mqttSigningKey: SIGNING_KEY, pk: me.pkHex, solution: solve(me.sk, mine.body.ct) },
+    { "x-real-ip": "198.51.100.10" },
+  );
+  assert.equal(verify.status, 200, `the owner's first challenge was displaced: ${verify.text}`);
+});
+
+test("a wrong proof spends nothing, so a stranger's junk verify cannot lock the owner out", async () => {
   const me = identity();
   created.push(me.id);
   const init = await call("/auth/init", { pk: me.pkHex });
   const good = solve(me.sk, init.body.ct);
 
-  const wrong = await call("/auth/verify", {
-    mqttSigningKey: SIGNING_KEY,
-    pk: me.pkHex,
-    solution: crypto.randomBytes(32).toString("base64"),
-  });
+  const wrong = await call(
+    "/auth/verify",
+    { mqttSigningKey: SIGNING_KEY, pk: me.pkHex, solution: crypto.randomBytes(32).toString("base64") },
+    { "x-real-ip": "203.0.113.99" },
+  );
   assert.equal(wrong.status, 401);
+  const junk = await call(
+    "/auth/verify",
+    { mqttSigningKey: SIGNING_KEY, pk: me.pkHex, solution: "AAAA" },
+    { "x-real-ip": "203.0.113.99" },
+  );
+  assert.equal(junk.status, 401);
 
   const retry = await call("/auth/verify", { mqttSigningKey: SIGNING_KEY, pk: me.pkHex, solution: good });
-  assert.equal(retry.status, 401, "the CORRECT proof after a wrong one — the challenge is gone");
-
+  assert.equal(retry.status, 200, `the correct proof after wrong ones was refused: ${retry.text}`);
   const rows = await q(`SELECT 1 FROM auth_challenges WHERE id = $1`, [me.id]);
-  assert.equal(rows.rows.length, 0, "…and nothing is left behind for a later attempt");
+  assert.equal(rows.rows.length, 0, "the answered challenge is spent");
+});
+
+test("a verify that names its challenge is held to that one", async () => {
+  const me = identity();
+  created.push(me.id);
+  const a = await call("/auth/init", { pk: me.pkHex });
+  const b = await call("/auth/init", { pk: me.pkHex });
+  assert.match(a.body.challenge, /^[0-9a-f]{32}$/);
+
+  const crossed = await call("/auth/verify", {
+    mqttSigningKey: SIGNING_KEY,
+    pk: me.pkHex,
+    solution: solve(me.sk, a.body.ct),
+    challenge: b.body.challenge,
+  });
+  assert.equal(crossed.status, 401, "a proof for one challenge verified under another's id");
+
+  const named = await call("/auth/verify", {
+    mqttSigningKey: SIGNING_KEY,
+    pk: me.pkHex,
+    solution: solve(me.sk, a.body.ct),
+    challenge: a.body.challenge,
+  });
+  assert.equal(named.status, 200, named.text);
+  const left = await q<{ challenge_id: string }>(`SELECT challenge_id FROM auth_challenges WHERE id = $1`, [me.id]);
+  assert.deepEqual(
+    left.rows.map((r) => r.challenge_id),
+    [b.body.challenge],
+    "only the answered challenge is spent",
+  );
+});
+
+test("verify is rate-limited per address", async () => {
+  const me = identity();
+  created.push(me.id);
+  const statuses: number[] = [];
+  for (let i = 0; i < 32; i++) {
+    const r = await call(
+      "/auth/verify",
+      { mqttSigningKey: SIGNING_KEY, pk: me.pkHex, solution: "AAAA" },
+      { "x-real-ip": "203.0.113.200" },
+    );
+    statuses.push(r.status);
+  }
+  assert.deepEqual(statuses.slice(0, 30), Array(30).fill(401), statuses.join(", "));
+  assert.deepEqual(statuses.slice(30), [429, 429], statuses.join(", "));
+  const elsewhere = await call("/auth/verify", { mqttSigningKey: SIGNING_KEY, pk: me.pkHex, solution: "AAAA" });
+  assert.equal(elsewhere.status, 401, "another address is not affected");
 });
 
 test("a proof solved with another key does not authenticate", async () => {
@@ -351,7 +429,7 @@ test("a run of failed proofs raises exactly one alert, and a success clears it",
   assert.equal(counter.rows.length, 0, "a success must clear the failure run");
 });
 
-test("one key cannot open unlimited challenges", async () => {
+test("one key cannot open unlimited challenges from one address", async () => {
   const me = identity();
   created.push(me.id);
   const statuses: number[] = [];

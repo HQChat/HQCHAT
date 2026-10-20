@@ -93,9 +93,12 @@ test("the ephemeral tier is keyed by id too", async () => {
   await DB.setPushToken(a, "ios", "production", "tok-2");
   assert.equal((await DB.getPushToken(a))?.token, "tok-2");
 
-  await DB.startAuthChallenge(a, "proof-1");
-  await DB.startAuthChallenge(a, "proof-2");
-  assert.equal(await DB.takeAuthChallenge(a), "proof-2");
+  const first = await DB.startAuthChallenge(a, "source", "proof-1");
+  const second = await DB.startAuthChallenge(a, "source", "proof-2");
+  assert.deepEqual((await DB.openAuthChallenges(a)).map((c) => c.proof).sort(), ["proof-1", "proof-2"]);
+  assert.ok(await DB.spendAuthChallenge(a, second));
+  assert.ok(!(await DB.spendAuthChallenge(a, second)));
+  assert.ok(await DB.spendAuthChallenge(a, first));
 
   const token = await DB.mintSessionToken(a);
   assert.equal((await DB.resolveSessionToken(token))?.id, a);

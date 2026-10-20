@@ -10,6 +10,14 @@ const REST_SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
 /** A session is only re-written once it is within this window of lapsing. */
 const SESSION_SLIDE_AFTER_SECONDS = 5 * 60;
 const AUTH_CHALLENGE_TTL_SECONDS = 60;
+/** Open challenges one source address keeps per identity; its older ones are dropped. */
+const AUTH_CHALLENGES_PER_SOURCE = 4;
+/**
+ * Open challenges a verify without a challenge id is compared against, newest
+ * first. Bounds the work strangers can add to the owner's verify; the owner's
+ * own challenge is seconds old, so it is among the newest.
+ */
+const AUTH_CHALLENGES_COMPARED = 256;
 
 /** The authenticated caller of a REST request. */
 export interface SessionInfo {
@@ -81,22 +89,50 @@ export const sessions = {
     return (res.rowCount ?? 0) === 1;
   },
 
-  /** Stores the expected KEM proof for an open sign-in challenge. */
-  async startAuthChallenge(id: string, proofHex: string): Promise<void> {
+  /**
+   * Opens a sign-in challenge for `id` with its expected KEM proof and returns
+   * the challenge id. Other open challenges stay open: `source` (a hash of the
+   * caller's address) keeps only its newest AUTH_CHALLENGES_PER_SOURCE, so one
+   * caller's inits never displace another's.
+   */
+  async startAuthChallenge(id: string, source: string, proofHex: string): Promise<string> {
+    const challengeId = crypto.randomBytes(16).toString("hex");
     await q(
-      `INSERT INTO auth_challenges (id, proof, expires_at) VALUES ($1, $2, now() + $3::interval)
-       ON CONFLICT (id) DO UPDATE SET proof = EXCLUDED.proof, expires_at = EXCLUDED.expires_at`,
-      [id, proofHex, secs(AUTH_CHALLENGE_TTL_SECONDS)],
+      `INSERT INTO auth_challenges (id, challenge_id, source, proof, expires_at)
+       VALUES ($1, $2, $3, $4, now() + $5::interval)`,
+      [id, challengeId, source, proofHex, secs(AUTH_CHALLENGE_TTL_SECONDS)],
     );
+    await q(
+      `DELETE FROM auth_challenges
+        WHERE id = $1
+          AND (expires_at <= now()
+               OR (source = $2
+                   AND challenge_id NOT IN (SELECT challenge_id FROM auth_challenges
+                                             WHERE id = $1 AND source = $2
+                                             ORDER BY created_at DESC, challenge_id LIMIT $3)))`,
+      [id, source, AUTH_CHALLENGES_PER_SOURCE],
+    );
+    return challengeId;
   },
 
-  /** Consumes the open challenge for `id` and returns its expected proof. */
-  async takeAuthChallenge(id: string): Promise<string | null> {
-    const row = await one<{ proof: string }>(
-      `DELETE FROM auth_challenges WHERE id = $1 AND expires_at > now() RETURNING proof`,
-      [id],
+  /** The open challenges for `id`, newest first and at most AUTH_CHALLENGES_COMPARED. */
+  async openAuthChallenges(id: string): Promise<Array<{ challengeId: string; proof: string }>> {
+    const res = await q<{ challenge_id: string; proof: string }>(
+      `SELECT challenge_id, proof FROM auth_challenges
+        WHERE id = $1 AND expires_at > now()
+        ORDER BY created_at DESC, challenge_id LIMIT $2`,
+      [id, AUTH_CHALLENGES_COMPARED],
     );
-    return row?.proof ?? null;
+    return res.rows.map((r) => ({ challengeId: r.challenge_id, proof: r.proof }));
+  },
+
+  /** Spends one open challenge; false when it was already spent or has lapsed. */
+  async spendAuthChallenge(id: string, challengeId: string): Promise<boolean> {
+    const res = await q(`DELETE FROM auth_challenges WHERE id = $1 AND challenge_id = $2 AND expires_at > now()`, [
+      id,
+      challengeId,
+    ]);
+    return (res.rowCount ?? 0) === 1;
   },
 
   /** Mints a REST session bearer; returns the raw token (stored only hashed). */
