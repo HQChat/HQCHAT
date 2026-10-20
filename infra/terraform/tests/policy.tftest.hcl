@@ -86,6 +86,13 @@ run "production" {
   }
   assert {
     condition = alltrue([
+      for r in digitalocean_firewall.app.outbound_rule :
+      contains(["443", "53", "123"], coalesce(r.port_range, "-")) || r.protocol == "icmp" || !contains(coalesce(r.destination_addresses, []), "0.0.0.0/0")
+    ])
+    error_message = "The app host reaches the internet on HTTPS, DNS and NTP only."
+  }
+  assert {
+    condition = alltrue([
       for r in digitalocean_firewall.app.inbound_rule : toset(r.source_addresses) == toset(local.ssh_sources)
       if r.port_range == "22"
     ])

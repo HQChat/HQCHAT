@@ -2,8 +2,12 @@
 # answers hqn/1 on 443, and the two talk over WireGuard inside the
 # environment's VPC. SSH is rate-limited per source address, so a flood from
 # (or spoofed as) other addresses cannot use up the admin's share; everything
-# else is dropped. Only root may reach the metadata service, whose user data holds the
-# host key. The Cloudflare sets start from cloudflare-ips.nix and refresh daily.
+# else is dropped. Only root may reach the metadata service, whose user data
+# holds the host key. Outbound is an allow-list too: DNS, NTP, HTTPS, WireGuard
+# and, from the app host, SSH to the broker and the database inside the VPC;
+# anything else is refused and logged, so a compromised service has no free
+# channel out. The Cloudflare sets start from cloudflare-ips.nix and refresh
+# daily.
 {
   config,
   lib,
@@ -34,6 +38,11 @@ let
   hqnRules = lib.optionalString (role == "mqtt") ''
     tcp dport 443 ct state new meter hqn_new { ip saddr limit rate ${perMinute}/minute burst ${perMinute} packets } accept
     tcp dport 443 ct state new drop
+  '';
+  vpc = cfg.environment.vpcRange;
+  # DigitalOcean's managed Postgres: 25060 for the cluster, 25061 for pools.
+  egressRules = lib.optionalString (role == "app") ''
+    ip daddr ${vpc} tcp dport { 22, 25060-25061 } accept
   '';
   cloudflareRules = lib.optionalString (role == "app") ''
     ip  saddr @cloudflare_v4 tcp dport { 80, 443 } accept
@@ -76,8 +85,22 @@ in
         }
 
         chain output {
-          type filter hook output priority filter; policy accept;
+          type filter hook output priority filter; policy drop;
+          ct state established,related accept
+          ct state invalid drop
+          oif lo accept
           ip daddr 169.254.169.254 meta skuid != 0 reject
+          ip daddr 169.254.169.254 tcp dport 80 accept
+          ip protocol icmp accept
+          ip6 nexthdr ipv6-icmp accept
+          oifname "wg0" accept
+          meta l4proto { tcp, udp } th dport 53 accept
+          udp dport 123 accept
+          tcp dport 443 accept
+          ip daddr ${vpc} udp dport 51820 accept
+          ${egressRules}
+          limit rate 10/minute log prefix "hqcat egress refused: "
+          reject with icmpx type admin-prohibited
         }
       }
     '';

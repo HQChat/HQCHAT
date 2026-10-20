@@ -43,13 +43,40 @@ resource "digitalocean_firewall" "app" {
     source_addresses = local.anywhere
   }
 
+  # Outbound as the host's nftables allows it: HTTPS (APNs, Stripe, Sentry,
+  # the caches), DNS, NTP, and inside the VPC the broker and the database.
+  outbound_rule {
+    protocol              = "tcp"
+    port_range            = "443"
+    destination_addresses = local.anywhere
+  }
   dynamic "outbound_rule" {
     for_each = ["tcp", "udp"]
     content {
       protocol              = outbound_rule.value
-      port_range            = "1-65535"
+      port_range            = "53"
       destination_addresses = local.anywhere
     }
+  }
+  outbound_rule {
+    protocol              = "udp"
+    port_range            = "123"
+    destination_addresses = local.anywhere
+  }
+  outbound_rule {
+    protocol         = "udp"
+    port_range       = "51820"
+    destination_tags = [digitalocean_tag.this["mqtt"].name]
+  }
+  outbound_rule {
+    protocol         = "tcp"
+    port_range       = "22"
+    destination_tags = [digitalocean_tag.this["mqtt"].name]
+  }
+  outbound_rule {
+    protocol              = "tcp"
+    port_range            = "25060-25061"
+    destination_addresses = [local.env.vpcRange]
   }
   outbound_rule {
     protocol              = "icmp"
