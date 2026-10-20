@@ -628,32 +628,51 @@ impl Core {
         let Some(init) = init_header(&frame.header) else {
             return self.drop_frame("init missing handshake fields or of the wrong sizes");
         };
-        let has_session = matches!(self.session(sender), Ok(Some(_)));
-        if has_session {
-            let heard = matches!(self.session(sender), Ok(Some(s)) if s.pending_init.is_none());
-            let Some(me) = self.me.clone() else {
-                return self.drop_frame("init before an identity exists");
-            };
-            if heard {
-                // An initiator repeats its init until answered: the payload is a message.
-                return self.open_message(sender, &frame, &aad, now);
-            }
-            if me < *sender {
-                return self.drop_frame("simultaneous init: keeping ours (lower id)");
-            }
-            // Yield: theirs wins; ours was never answered.
-            self.forget_session(sender);
-            self.convo.yielded.insert(sender.clone());
-        }
         let Some(me) = self.me.clone() else {
             return self.drop_frame("init before an identity exists");
         };
+        match self.session(sender) {
+            // An initiator repeats its init until answered: the payload is a
+            // message, and the session key authenticates it.
+            Ok(Some(s)) if s.pending_init.is_none() => {
+                return self.open_message(sender, &frame, &aad, now);
+            }
+            Ok(Some(_)) if me < *sender => {
+                return self.drop_frame("simultaneous init: keeping ours (lower id)");
+            }
+            // Ours would yield, but only to an init its sender proves: anyone
+            // can publish an init naming any friend (see `accept_init`).
+            _ => {}
+        }
         let transcript = handshake::init_transcript(sender, &me, &init);
         if self.convo.proven.contains(&transcript) {
-            self.open_init(sender, &frame, &aad, now);
+            self.accept_init(sender, &frame, &aad, now);
         } else {
             self.challenge(sender, frame, aad, transcript, &init, now);
         }
+    }
+
+    /// An init whose sender proved its key. On a simultaneous start the
+    /// higher id yields here, never before the proof.
+    fn accept_init(&mut self, sender: &PeerId, frame: &Frame, aad: &[u8], now: i64) {
+        let Some(me) = self.me.clone() else {
+            return self.drop_frame("init before an identity exists");
+        };
+        match self.session(sender) {
+            Ok(Some(s)) if s.pending_init.is_none() => {
+                return self.open_message(sender, frame, aad, now);
+            }
+            Ok(Some(_)) if me < *sender => {
+                return self.drop_frame("simultaneous init: keeping ours (lower id)");
+            }
+            Ok(Some(_)) => {
+                // Yield: theirs wins; ours was never answered.
+                self.forget_session(sender);
+                self.convo.yielded.insert(sender.clone());
+            }
+            _ => {}
+        }
+        self.open_init(sender, frame, aad, now);
     }
 
     fn challenge(
@@ -807,11 +826,7 @@ impl Core {
                 self.convo.proven.insert(transcript);
                 self.convo.challenges.retain(|_, c| c.peer != from);
                 for (frame, aad) in challenge.held {
-                    if matches!(self.session(&from), Ok(Some(_))) {
-                        self.open_message(&from, &frame, &aad, now);
-                    } else {
-                        self.open_init(&from, &frame, &aad, now);
-                    }
+                    self.accept_init(&from, &frame, &aad, now);
                 }
             }
         }
