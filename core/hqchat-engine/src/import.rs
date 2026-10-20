@@ -293,7 +293,11 @@ impl Core {
 
     /// Deletes every session, message and pending frame in the store.
     fn clear_data(&self) {
-        for prefix in ["session/", "msg/", persist::PENDING_PREFIX] {
+        for prefix in [
+            persist::SESSION_PREFIX,
+            persist::MESSAGE_PREFIX,
+            persist::PENDING_PREFIX,
+        ] {
             for slot in self.store.list(prefix.into()) {
                 self.store.delete(slot);
             }
@@ -313,6 +317,7 @@ impl Core {
         let mut data_key = Zeroizing::new([0u8; 32]);
         getrandom::fill(data_key.as_mut()).map_err(|_| CoreError::State("no entropy".into()))?;
         self.me = Some(PeerId::of(&identity.public));
+        self.names = Some(persist::SlotNames::of(&data_key));
         self.unlocked = Some(Unlocked {
             identity,
             data_key,

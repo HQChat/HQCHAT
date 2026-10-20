@@ -1136,7 +1136,7 @@ impl Core {
     /// After yielding a simultaneous start: every outgoing message to `peer`
     /// not yet delivered goes again, in order, under its id.
     fn resend_unconfirmed(&mut self, peer: &PeerId, now: i64) {
-        let slots = self.store.list(persist::messages_prefix(peer));
+        let slots = self.message_slots(peer);
         for slot in slots {
             let Ok(Some(m)) = self.get_message(&slot) else {
                 continue;

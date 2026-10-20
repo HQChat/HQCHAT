@@ -127,6 +127,8 @@ pub(crate) struct Core {
     /// A write failed while handling the current inbound frame: it is not
     /// acknowledged, so the broker delivers it again.
     pub write_failed: bool,
+    /// How slots are named, known from the first unlock on.
+    pub names: Option<persist::SlotNames>,
 }
 
 impl Core {
@@ -156,6 +158,7 @@ impl Core {
             net: Default::default(),
             out: Vec::new(),
             write_failed: false,
+            names: None,
         }
     }
 
@@ -188,6 +191,7 @@ impl Core {
         let mut data_key = Zeroizing::new([0u8; 32]);
         getrandom::fill(data_key.as_mut()).map_err(|_| CoreError::State("no entropy".into()))?;
         self.me = Some(PeerId::of(&identity.public));
+        self.names = Some(persist::SlotNames::of(&data_key));
         self.unlocked = Some(Unlocked {
             identity,
             data_key,
@@ -354,6 +358,7 @@ impl Core {
                 })
             })
             .collect();
+        self.names = Some(persist::SlotNames::of(&state.data_key));
         self.unlocked = Some(Unlocked {
             identity,
             data_key: Zeroizing::new(state.data_key),
@@ -365,17 +370,39 @@ impl Core {
 
     // ── Sessions ───────────────────────────────────────────────────────────
 
+    /// The slot of the session with `peer`.
+    pub fn session_slot(&self, peer: &PeerId) -> Result<String, CoreError> {
+        self.names
+            .as_ref()
+            .map(|n| n.session(peer))
+            .ok_or(CoreError::Vault(crate::ports::VaultError::Locked))
+    }
+
+    /// The prefix of every message slot with `peer`.
+    pub fn messages_prefix(&self, peer: &PeerId) -> Result<String, CoreError> {
+        self.names
+            .as_ref()
+            .map(|n| n.messages_prefix(peer))
+            .ok_or(CoreError::Vault(crate::ports::VaultError::Locked))
+    }
+
+    /// Every message slot with `peer`, oldest first; none before an unlock.
+    pub fn message_slots(&self, peer: &PeerId) -> Vec<String> {
+        self.messages_prefix(peer)
+            .map(|p| self.store.list(p))
+            .unwrap_or_default()
+    }
+
     /// The session with `peer`, read from the store on first use.
     pub fn session(&mut self, peer: &PeerId) -> Result<Option<&mut SessionState>, CoreError> {
         let store = self.store.clone();
+        let slot = self.session_slot(peer)?;
         let u = self.unlocked_mut()?;
-        if !u.sessions.contains_key(peer) {
-            let slot = persist::session_slot(peer);
-            if let Some(stored) =
+        if !u.sessions.contains_key(peer)
+            && let Some(stored) =
                 persist::get_data::<StoredSession>(store.as_ref(), &u.data_key, &slot)?
-            {
-                u.sessions.insert(peer.clone(), stored.to_session()?);
-            }
+        {
+            u.sessions.insert(peer.clone(), stored.to_session()?);
         }
         Ok(u.sessions.get_mut(peer))
     }
@@ -383,8 +410,8 @@ impl Core {
     /// Stores and keeps `session` as the session with `peer`.
     pub fn put_session(&mut self, peer: &PeerId, session: SessionState) -> Result<(), CoreError> {
         let store = self.store.clone();
+        let slot = self.session_slot(peer)?;
         let u = self.unlocked_mut()?;
-        let slot = persist::session_slot(peer);
         persist::put_data(
             store.as_ref(),
             &u.data_key,
@@ -406,9 +433,9 @@ impl Core {
     /// Writes the in-memory session with `peer` back after it advanced.
     pub fn save_session(&mut self, peer: &PeerId) -> Result<(), CoreError> {
         let store = self.store.clone();
+        let slot = self.session_slot(peer)?;
         let u = self.unlocked_mut()?;
         if let Some(s) = u.sessions.get(peer) {
-            let slot = persist::session_slot(peer);
             persist::put_data(
                 store.as_ref(),
                 &u.data_key,
@@ -422,7 +449,9 @@ impl Core {
     pub fn forget_session(&mut self, peer: &PeerId) {
         self.convo.proven.retain(|_, p| p != peer);
         self.convo.unanswered.remove(peer);
-        self.store.delete(persist::session_slot(peer));
+        if let Ok(slot) = self.session_slot(peer) {
+            self.store.delete(slot);
+        }
         if let Some(u) = self.unlocked.as_mut() {
             u.sessions.remove(peer);
         }
@@ -438,19 +467,22 @@ impl Core {
 
     pub fn put_message(&self, peer: &PeerId, m: &StoredMessage) -> Result<(), CoreError> {
         let u = self.unlocked()?;
+        let names = self
+            .names
+            .as_ref()
+            .ok_or(CoreError::Vault(crate::ports::VaultError::Locked))?;
         persist::put_data(
             self.store.as_ref(),
             &u.data_key,
-            &persist::message_slot(peer, m.at, &m.msg_id),
+            &names.message(peer, m.at, &m.msg_id),
             m,
         )
     }
 
     /// The slot of the message `msg_id` with `peer`, found by key alone.
     pub fn message_slot_of(&self, peer: &PeerId, msg_id: &str) -> Option<String> {
-        let suffix = format!("/{}", hex::encode(msg_id));
-        self.store
-            .list(persist::messages_prefix(peer))
+        let suffix = format!("/{}", self.names.as_ref()?.message_tag(msg_id));
+        self.message_slots(peer)
             .into_iter()
             .find(|k| k.ends_with(&suffix))
     }
@@ -467,9 +499,10 @@ impl Core {
         limit: u32,
     ) -> Result<Vec<Message>, CoreError> {
         self.unlocked()?;
-        let mut slots = self.store.list(persist::messages_prefix(peer));
+        let prefix = self.messages_prefix(peer)?;
+        let mut slots = self.store.list(prefix.clone());
         if let Some(before) = before {
-            let cut = format!("{}{:020}", persist::messages_prefix(peer), before.max(0));
+            let cut = format!("{prefix}{:020}", before.max(0));
             slots.retain(|s| *s < cut);
         }
         let limit = usize::try_from(limit).unwrap_or(usize::MAX);
@@ -507,7 +540,9 @@ impl Core {
                 id: p.id.to_string(),
                 username: p.username.clone(),
                 online: p.online,
-                has_session: self.store.get(persist::session_slot(&p.id)).is_some(),
+                has_session: self
+                    .session_slot(&p.id)
+                    .is_ok_and(|s| self.store.get(s).is_some()),
                 unread: p.unread.saturating_add(p.pending),
                 blocked_at: p.blocked_at,
                 vanished_at: p.vanished_at,

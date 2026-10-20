@@ -3,8 +3,8 @@
 //! | Key | Sealed with | Holds |
 //! |---|---|---|
 //! | `state` | the device key (ECIES) | identity, prekey secrets, friend directory, `data_key` |
-//! | `session/{peer}` | `data_key` | one ratchet session |
-//! | `msg/{peer}/{at}/{id}` | `data_key` | one message |
+//! | `session/{peer tag}` | `data_key` | one ratchet session |
+//! | `msg/{peer tag}/{at}/{id tag}` | `data_key` | one message |
 //! | `pending/{seq}` | the device key | an inbound frame that arrived while locked |
 //!
 //! Device sealing is ECIES on P-256: a fresh ephemeral key, ECDH with the
@@ -15,6 +15,11 @@
 //! its key as AAD, so blobs cannot be swapped between slots.
 //!
 //! Plaintext is `postcard`, versioned by the first field of each record.
+//!
+//! Slot names never hold a friend's id or a message id: a copy of the store
+//! would otherwise list who the user talks to, and the ids the server saw.
+//! Both are tagged with a key derived from `data_key` ([`SlotNames`]). The
+//! time of each message stays in its name, which orders the history.
 
 use hqc::{Ciphertext, KeyPair, PublicKey, SecretKey};
 use hqchat_protocol::kdf::hkdf_sha256;
@@ -35,17 +40,58 @@ const P256_POINT: usize = 65;
 
 pub(crate) const STATE: &str = "state";
 
-pub(crate) fn session_slot(peer: &PeerId) -> String {
-    format!("session/{peer}")
-}
+pub(crate) const SESSION_PREFIX: &str = "session/";
+pub(crate) const MESSAGE_PREFIX: &str = "msg/";
 
-pub(crate) fn messages_prefix(peer: &PeerId) -> String {
-    format!("msg/{peer}/")
-}
+/// Names slots by keyed tags of a friend's id and of message ids. Derived
+/// from `data_key`, and kept after a lock: a friend can be forgotten, and
+/// the list can tell who has a session, while locked.
+pub(crate) struct SlotNames(Zeroizing<[u8; 32]>);
 
-/// Sorted by time, then id: the store lists keys in order.
-pub(crate) fn message_slot(peer: &PeerId, at: i64, msg_id: &str) -> String {
-    format!("msg/{peer}/{:020}/{}", at.max(0), hex::encode(msg_id))
+impl SlotNames {
+    pub(crate) fn of(data_key: &[u8; 32]) -> Self {
+        Self(hkdf_sha256::<32>(
+            b"hqchat/v1/at-rest",
+            data_key,
+            b"hqchat/v1/slot-names",
+        ))
+    }
+
+    fn tag(&self, what: &str, value: &str) -> String {
+        hex::encode(*hkdf_sha256::<16>(
+            self.0.as_ref(),
+            value.as_bytes(),
+            what.as_bytes(),
+        ))
+    }
+
+    pub(crate) fn session(&self, peer: &PeerId) -> String {
+        format!(
+            "{SESSION_PREFIX}{}",
+            self.tag("hqchat/v1/slot/peer", peer.as_str())
+        )
+    }
+
+    pub(crate) fn messages_prefix(&self, peer: &PeerId) -> String {
+        format!(
+            "{MESSAGE_PREFIX}{}/",
+            self.tag("hqchat/v1/slot/peer", peer.as_str())
+        )
+    }
+
+    /// Sorted by time, then id: the store lists keys in order.
+    pub(crate) fn message(&self, peer: &PeerId, at: i64, msg_id: &str) -> String {
+        format!(
+            "{}{:020}/{}",
+            self.messages_prefix(peer),
+            at.max(0),
+            self.message_tag(msg_id)
+        )
+    }
+
+    pub(crate) fn message_tag(&self, msg_id: &str) -> String {
+        self.tag("hqchat/v1/slot/message", msg_id)
+    }
 }
 
 pub(crate) const PENDING_PREFIX: &str = "pending/";
@@ -502,10 +548,23 @@ mod tests {
 
     #[test]
     fn message_slots_sort_by_time() {
+        let names = SlotNames::of(&[3; 32]);
         let peer = PeerId::parse(&"a".repeat(64)).unwrap();
-        let early = message_slot(&peer, 5, "z");
-        let late = message_slot(&peer, 40, "a");
+        let early = names.message(&peer, 5, "z");
+        let late = names.message(&peer, 40, "a");
         assert!(early < late);
-        assert!(early.starts_with(&messages_prefix(&peer)));
+        assert!(early.starts_with(&names.messages_prefix(&peer)));
+    }
+
+    #[test]
+    fn slot_names_carry_no_friend_or_message_id() {
+        let names = SlotNames::of(&[3; 32]);
+        let peer = PeerId::parse(&"ab".repeat(32)).unwrap();
+        for slot in [names.session(&peer), names.message(&peer, 7, "msg-1234")] {
+            assert!(!slot.contains("abab"), "{slot}");
+            assert!(!slot.contains(&hex::encode("msg-1234")), "{slot}");
+        }
+        let other = SlotNames::of(&[4; 32]);
+        assert_ne!(names.session(&peer), other.session(&peer), "keyed");
     }
 }
