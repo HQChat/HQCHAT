@@ -53,6 +53,10 @@ lib.mkIf (cfg.role == "app") {
           default "";
       }
       limit_req_zone $checkout_limit_key zone=checkout:10m rate=10r/m;
+      # The broker's WebSocket: a client opens one connection and keeps it, and
+      # every opening costs the auth service a database lookup.
+      limit_req_zone $binary_remote_addr zone=mqtt:10m rate=2r/s;
+      limit_conn_zone $binary_remote_addr zone=mqtt_conn:10m;
 
       ${lib.concatMapStringsSep "\n" (r: "set_real_ip_from ${r};") (cf.v4 ++ cf.v6)}
       real_ip_header CF-Connecting-IP;
@@ -79,6 +83,8 @@ lib.mkIf (cfg.role == "app") {
           proxyPass = "http://${wg.mqtt}:8083";
           proxyWebsockets = true;
           extraConfig = ''
+            limit_req zone=mqtt burst=20 nodelay;
+            limit_conn mqtt_conn 50;
             ${fwd}
             proxy_read_timeout 3600s;
             proxy_send_timeout 3600s;
