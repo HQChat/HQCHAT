@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import { apnsGaps, apnsIntended, apnsSummary } from "../server/apns-config";
+import { clusterCa, isLocal } from "../server/db/ssl";
 import { donationGaps, donationSummary, resolvePrices } from "../server/donations-config";
 import { TRUSTED_PROXY_MODES } from "../server/http";
 
@@ -65,10 +66,13 @@ export function assertConfig(needs: ConfigNeed[] = []): void {
     errors.push(`TRUSTED_PROXY="${proxy}" is not one of ${TRUSTED_PROXY_MODES.join(", ")}.`);
   }
 
+  // A remote database is reached only with its certificate and hostname
+  // verified against the cluster CA (src/server/db/ssl.ts); in production a
+  // missing CA is a refusal to start, said here rather than at the first query.
   const databaseUrl = process.env.DATABASE_URL || "";
-  if (process.env.NODE_ENV === "production" && databaseUrl) {
+  if (process.env.NODE_ENV === "production" && databaseUrl && !isLocal(databaseUrl)) {
+    if (!clusterCa()) errors.push("PGSSLROOTCERT must name the cluster CA: a remote database is verified against it.");
     if (!/sslmode=verify-full/.test(databaseUrl)) warnings.push("DATABASE_URL does not request sslmode=verify-full.");
-    if (!process.env.PGSSLROOTCERT?.trim()) warnings.push("PGSSLROOTCERT is unset; the cluster CA cannot be verified.");
   }
 
   for (const w of warnings) console.warn(`config: ${w}`);

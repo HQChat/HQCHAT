@@ -39,3 +39,20 @@ test("outside production TRUSTED_PROXY may be unset, but never misspelt", () => 
   assert.notEqual(typo.code, 0, typo.out);
   assert.match(typo.out, /not one of/);
 });
+
+test("in production a remote database without its CA refuses to start", () => {
+  const remote = "postgres://u@db.example.com:25060/x?sslmode=verify-full";
+  const base = { NODE_ENV: "production", TRUSTED_PROXY: "x-real-ip", DATABASE_URL: remote };
+  const noCa = boot(base, ["proxy"]);
+  assert.notEqual(noCa.code, 0, noCa.out);
+  assert.match(noCa.out, /PGSSLROOTCERT must name the cluster CA/);
+
+  const missingFile = boot({ ...base, PGSSLROOTCERT: "/nonexistent/ca.pem" }, ["proxy"]);
+  assert.notEqual(missingFile.code, 0, missingFile.out);
+
+  const withCa = boot({ ...base, PGSSLROOTCERT: __filename }, ["proxy"]);
+  assert.equal(withCa.code, 0, withCa.out);
+
+  // A database on this machine needs no CA: plaintext never leaves the host.
+  assert.equal(boot({ NODE_ENV: "production", TRUSTED_PROXY: "x-real-ip" }, ["proxy"]).code, 0);
+});
