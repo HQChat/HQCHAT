@@ -333,6 +333,7 @@ impl JsEngine {
             profile_id: o.profile_id,
             device: Device::Headless,
             allow_hqn: o.hqn.unwrap_or(true),
+            hqn_pins: vec![],
         };
         Ok(Self {
             engine: Engine::new(config, vault.clone(), store).map_err(err)?,

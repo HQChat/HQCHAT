@@ -57,6 +57,7 @@ fn config() -> Config {
         server_url: "https://hqchat.test".into(),
         profile_id: "p".into(),
         device: Device::Ios,
+        hqn_pins: vec![],
     }
 }
 

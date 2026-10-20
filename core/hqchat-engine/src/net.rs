@@ -19,6 +19,7 @@ use hqchat_protocol::noise::{self, FrameReader, HqnInitiator, ServerStaticPublic
 use hqchat_protocol::topics::{self, Route};
 use hqchat_protocol::{OsEntropy, PeerId};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use crate::core::Core;
 use crate::effect::{CloseReason, ConnState, Effect, Endpoint, Method};
@@ -142,6 +143,18 @@ impl Core {
 
     pub fn on_transport(&mut self, a: Answer, now: i64) {
         self.net.hqn = parse_hqn(&a);
+        if let Some(h) = &self.net.hqn
+            && !self.config.hqn_pins.is_empty()
+            && !self
+                .config
+                .hqn_pins
+                .contains(&hqn_key_fingerprint(&h.server))
+        {
+            self.net.hqn = None;
+            self.emit(Effect::Dropped {
+                reason: "the gateway key served is not one this build trusts".into(),
+            });
+        }
         self.open(now);
     }
 
@@ -645,6 +658,17 @@ impl Core {
             self.emit(Effect::Timer { at });
         }
     }
+}
+
+/// A gateway key's fingerprint, as `Config::hqn_pins` lists them: hex of
+/// SHA-256 over a label, the key id, the X25519 key and the HQC key.
+pub fn hqn_key_fingerprint(key: &ServerStaticPublic) -> String {
+    let mut h = Sha256::new();
+    h.update(b"hqchat/hqn-key/v1");
+    h.update([key.key_id]);
+    h.update(key.x25519);
+    h.update(key.hqc.as_bytes());
+    hex::encode(h.finalize())
 }
 
 /// The gateway from `/auth/transport`, when enabled and well-formed.

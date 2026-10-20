@@ -28,6 +28,7 @@ pub use directory::safety_number;
 pub use effect::{Action, CloseReason, ConnState, Effect, Endpoint, Method, UnlockReason};
 pub use engine::Engine;
 pub use import::{Import, ImportIdentity, ImportMessage, ImportPeer, ImportPending, ImportPrekeys};
+pub use net::hqn_key_fingerprint;
 pub use ports::{KeyVault, Store, StoreError, Tier, VaultError};
 pub use types::{
     Config, CoreError, Delivery, Device, FriendView, InviteView, Message, NetworkInfo, PushToken,

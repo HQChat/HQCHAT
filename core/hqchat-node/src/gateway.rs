@@ -90,6 +90,12 @@ impl GatewayKeyPair {
             hqc: p.hqc.as_bytes().to_vec().into(),
         }
     }
+
+    /// The public half's fingerprint, as the apps' `hqnPins` list it.
+    #[napi(catch_unwind)]
+    pub fn fingerprint(&self) -> String {
+        hqchat_engine::hqn_key_fingerprint(&self.server.public())
+    }
 }
 
 /// msg1's exact length for a payload of `payloadLen` bytes.

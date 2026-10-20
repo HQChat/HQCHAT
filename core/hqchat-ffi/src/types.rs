@@ -170,6 +170,9 @@ pub struct Config {
     pub profile_id: String,
     /// What the engine runs on.
     pub device: Device,
+    /// Fingerprints of the gateway keys this build trusts (`hqnKeyFingerprint`
+    /// in the core's docs); empty takes the served key on TLS alone.
+    pub hqn_pins: Vec<String>,
 }
 
 impl From<Config> for core::Config {
@@ -179,6 +182,7 @@ impl From<Config> for core::Config {
             profile_id: c.profile_id,
             // The apps take hqn/1 whenever the server offers it.
             allow_hqn: true,
+            hqn_pins: c.hqn_pins,
             device: match c.device {
                 Device::Ios => core::Device::Ios,
                 Device::Macos => core::Device::Macos,
