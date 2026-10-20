@@ -39,6 +39,13 @@ pub trait KeyVault: Send + Sync {
     /// `Engine::unlock`. Returns the 32-byte shared secret.
     fn agree(&self, ephemeral_public: Vec<u8>) -> Result<Vec<u8>, VaultError>;
 
+    /// A 32-byte secret kept beside the device key, under the same
+    /// protection, and readable only under the same authenticated context as
+    /// [`KeyVault::agree`]. It joins the ECDH secret in sealing `state` (the
+    /// identity and the data key), so what is stored does not rest on P-256
+    /// alone: a quantum computer that breaks it still lacks this.
+    fn state_secret(&self) -> Result<Vec<u8>, VaultError>;
+
     /// The device key's tier, as stored next to it.
     fn tier(&self) -> Tier;
 }

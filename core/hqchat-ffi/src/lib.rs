@@ -42,6 +42,11 @@ pub trait KeyVault: Send + Sync {
     /// One ECDH with `ephemeral_public` (65 bytes), under the context the
     /// shell authenticated before `Engine::unlock`. Returns 32 bytes.
     fn agree(&self, ephemeral_public: Vec<u8>) -> Result<Vec<u8>, VaultError>;
+    /// A 32-byte secret kept beside the device key under the same access
+    /// control, read under the same authenticated context as `agree`. It
+    /// joins the ECDH secret in sealing `state`, so the identity does not
+    /// rest on P-256 alone.
+    fn state_secret(&self) -> Result<Vec<u8>, VaultError>;
     /// The device key's tier.
     fn tier(&self) -> Tier;
 }
@@ -70,6 +75,9 @@ impl core::KeyVault for VaultAdapter {
     }
     fn agree(&self, ephemeral_public: Vec<u8>) -> Result<Vec<u8>, core::VaultError> {
         self.0.agree(ephemeral_public).map_err(Into::into)
+    }
+    fn state_secret(&self) -> Result<Vec<u8>, core::VaultError> {
+        self.0.state_secret().map_err(Into::into)
     }
     fn tier(&self) -> core::Tier {
         self.0.tier().into()

@@ -249,7 +249,7 @@ impl Core {
                 .collect(),
         };
         let plain = persist::encode(&state)?;
-        let blob = persist::seal_device(&self.vault.device_public_key()?, persist::STATE, &plain)?;
+        let blob = persist::seal_state(self.vault.as_ref(), &plain)?;
         self.store.put(persist::STATE.into(), blob)?;
         Ok(())
     }
@@ -283,7 +283,7 @@ impl Core {
             .store
             .get(persist::STATE.into())
             .ok_or(CoreError::NoIdentity)?;
-        let plain = persist::open_device(self.vault.as_ref(), persist::STATE, &blob)?;
+        let plain = persist::open_state(self.vault.as_ref(), &blob)?;
         let state: StoredState = persist::decode(persist::STATE, &plain)?;
         if state.format != persist::FORMAT {
             return Err(CoreError::State(format!("state format {}", state.format)));

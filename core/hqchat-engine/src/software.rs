@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use hqchat_protocol::kdf::hkdf_sha256;
 use p256::SecretKey;
 use p256::elliptic_curve::sec1::ToEncodedPoint;
 use zeroize::Zeroizing;
@@ -99,6 +100,21 @@ impl KeyVault for SoftwareVault {
         let shared =
             p256::ecdh::diffie_hellman(self.secret()?.to_nonzero_scalar(), public.as_affine());
         Ok(shared.raw_secret_bytes().to_vec())
+    }
+
+    fn state_secret(&self) -> Result<Vec<u8>, VaultError> {
+        if self.locked.load(Ordering::SeqCst) {
+            return Err(VaultError::Locked);
+        }
+        // The software tier keeps nothing apart from its key: derived from it.
+        let guard = self.key.lock().unwrap_or_else(|e| e.into_inner());
+        let key = guard.as_ref().ok_or(VaultError::Missing)?;
+        Ok(hkdf_sha256::<32>(
+            b"hqchat/v2/software-vault",
+            key.as_ref(),
+            b"hqchat/v2/state-secret",
+        )
+        .to_vec())
     }
 
     fn tier(&self) -> Tier {

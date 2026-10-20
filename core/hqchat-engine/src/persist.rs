@@ -2,10 +2,15 @@
 //!
 //! | Key | Sealed with | Holds |
 //! |---|---|---|
-//! | `state` | the device key (ECIES) | identity, prekey secrets, friend directory, `data_key` |
+//! | `state` | the device key (ECIES) and the vault's state secret | identity, prekey secrets, friend directory, `data_key` |
 //! | `session/{peer tag}` | `data_key` | one ratchet session |
 //! | `msg/{peer tag}/{at}/{id tag}` | `data_key` | one message |
 //! | `pending/{seq}` | the device key | an inbound frame that arrived while locked |
+//!
+//! `state` joins the vault's 256-bit state secret to the ECDH secret in its
+//! KDF, so it does not rest on P-256 alone; it is only ever written while
+//! unlocked. Pending frames, sealed while locked, are ratchet ciphertext
+//! already, and need no more than the device key.
 //!
 //! Device sealing is ECIES on P-256: a fresh ephemeral key, ECDH with the
 //! device public key (no user needed, so it works while locked), HKDF-SHA256
@@ -36,6 +41,7 @@ use crate::types::{CoreError, Delivery};
 /// The version of every record this module writes.
 pub(crate) const FORMAT: u16 = 1;
 const SEAL_VERSION: u8 = 1;
+const STATE_SEAL_VERSION: u8 = 2;
 const P256_POINT: usize = 65;
 
 pub(crate) const STATE: &str = "state";
@@ -144,6 +150,85 @@ pub(crate) fn seal_device(
     out.extend_from_slice(&ephemeral_public);
     out.extend_from_slice(&sealed);
     Ok(out)
+}
+
+/// `state`'s key: the ECDH secret and the vault's state secret together, so
+/// breaking P-256 alone opens nothing (SP 800-56C: one KDF over both).
+fn state_kdf(
+    shared: &[u8],
+    state_secret: &[u8],
+    ephemeral: &[u8],
+    device: &[u8],
+) -> Result<Zeroizing<[u8; 32]>, CoreError> {
+    if state_secret.len() != 32 {
+        return Err(CoreError::State(
+            "the vault's state secret is not 32 bytes".into(),
+        ));
+    }
+    let mut ikm = Zeroizing::new(Vec::with_capacity(64));
+    ikm.extend_from_slice(shared);
+    ikm.extend_from_slice(state_secret);
+    let mut info = b"hqchat/at-rest/v2/state".to_vec();
+    info.extend_from_slice(ephemeral);
+    info.extend_from_slice(device);
+    Ok(hkdf_sha256::<32>(b"hqchat/at-rest/v2", &ikm, &info))
+}
+
+/// Seals `state` to the device key and the vault's state secret: needs the
+/// unlock, which every write of `state` has.
+pub(crate) fn seal_state(vault: &dyn KeyVault, plaintext: &[u8]) -> Result<Vec<u8>, CoreError> {
+    let device_public = vault.device_public_key()?;
+    let device = p256::PublicKey::from_sec1_bytes(&device_public)
+        .map_err(|_| CoreError::State("the device public key is not a P-256 point".into()))?;
+    let state_secret = Zeroizing::new(vault.state_secret()?);
+    let ephemeral = loop {
+        let mut bytes = Zeroizing::new([0u8; 32]);
+        getrandom::fill(bytes.as_mut()).map_err(|_| CoreError::State("no entropy".into()))?;
+        if let Ok(key) = p256::SecretKey::from_slice(bytes.as_ref()) {
+            break key;
+        }
+    };
+    let ephemeral_public = ephemeral
+        .public_key()
+        .to_encoded_point(false)
+        .as_bytes()
+        .to_vec();
+    let shared = p256::ecdh::diffie_hellman(ephemeral.to_nonzero_scalar(), device.as_affine());
+    let key = state_kdf(
+        shared.raw_secret_bytes(),
+        &state_secret,
+        &ephemeral_public,
+        &device_public,
+    )?;
+    let sealed =
+        aead::seal_payload(plaintext, &key, STATE.as_bytes(), &mut OsEntropy).map_err(protocol)?;
+    let mut out = Vec::with_capacity((1 + P256_POINT).saturating_add(sealed.len()));
+    out.push(STATE_SEAL_VERSION);
+    out.extend_from_slice(&ephemeral_public);
+    out.extend_from_slice(&sealed);
+    Ok(out)
+}
+
+/// Opens a [`seal_state`] blob: one ECDH and the state secret, both under
+/// the unlock. A blob sealed to the device key alone is refused: `state` is
+/// never read from a weaker seal.
+pub(crate) fn open_state(
+    vault: &dyn KeyVault,
+    blob: &[u8],
+) -> Result<Zeroizing<Vec<u8>>, CoreError> {
+    let not_sealed = || CoreError::State("state: not a sealed blob of this version".into());
+    let mut r = Reader::new(blob, "sealed blob too short");
+    if r.u8().map_err(|_| not_sealed())? != STATE_SEAL_VERSION {
+        return Err(not_sealed());
+    }
+    let ephemeral = r.take(P256_POINT).map_err(|_| not_sealed())?;
+    let device = vault.device_public_key()?;
+    let shared = Zeroizing::new(vault.agree(ephemeral.to_vec())?);
+    let state_secret = Zeroizing::new(vault.state_secret()?);
+    let key = state_kdf(&shared, &state_secret, ephemeral, &device)?;
+    aead::open_payload(r.rest(), &key, STATE.as_bytes())
+        .map(Zeroizing::new)
+        .map_err(|_| CoreError::State("state: does not open".into()))
 }
 
 /// Opens a [`seal_device`] blob: one hardware ECDH through the vault.
@@ -503,6 +588,41 @@ mod tests {
             open_device(&v, "pending/1", &blob).unwrap().as_slice(),
             b"frame"
         );
+    }
+
+    /// A vault that answers the ECDH but whose state secret is another's:
+    /// what a quantum attacker who broke P-256 would have.
+    struct EcdhOnly(SoftwareVault);
+
+    impl KeyVault for EcdhOnly {
+        fn create(&self) -> Result<crate::ports::Tier, crate::ports::VaultError> {
+            self.0.create()
+        }
+        fn device_public_key(&self) -> Result<Vec<u8>, crate::ports::VaultError> {
+            self.0.device_public_key()
+        }
+        fn agree(&self, e: Vec<u8>) -> Result<Vec<u8>, crate::ports::VaultError> {
+            self.0.agree(e)
+        }
+        fn state_secret(&self) -> Result<Vec<u8>, crate::ports::VaultError> {
+            Ok(vec![0; 32])
+        }
+        fn tier(&self) -> crate::ports::Tier {
+            self.0.tier()
+        }
+    }
+
+    #[test]
+    fn state_needs_the_state_secret_as_well_as_the_device_key() {
+        let v = vault();
+        let blob = seal_state(&v, b"identity").unwrap();
+        assert_eq!(open_state(&v, &blob).unwrap().as_slice(), b"identity");
+        let key = v.export_key().unwrap();
+        let ecdh_only = EcdhOnly(SoftwareVault::with_key(key));
+        assert!(open_state(&ecdh_only, &blob).is_err());
+        // Nor is a state sealed to the device key alone accepted.
+        let weak = seal_device(&v.device_public_key().unwrap(), STATE, b"identity").unwrap();
+        assert!(open_state(&v, &weak).is_err());
     }
 
     #[test]
