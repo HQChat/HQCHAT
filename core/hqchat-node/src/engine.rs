@@ -317,7 +317,7 @@ pub struct JsEngine {
 #[allow(missing_docs)]
 impl JsEngine {
     /// An engine over `dir`, with the device key of a previous run if given.
-    #[napi(constructor)]
+    #[napi(constructor, catch_unwind)]
     pub fn new(o: EngineOptions) -> napi::Result<Self> {
         let vault = Arc::new(match &o.device_key {
             Some(k) => SoftwareVault::with_key(
@@ -341,12 +341,12 @@ impl JsEngine {
     }
 
     /// The device key, to keep for the next run; null before `createIdentity`.
-    #[napi(getter)]
+    #[napi(getter, catch_unwind)]
     pub fn device_key(&self) -> Option<Buffer> {
         self.vault.export_key().map(|k| k.to_vec().into())
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn create_identity(&self) -> napi::Result<Vec<JsEffect>> {
         self.engine.create_identity().map(all).map_err(err)
     }
@@ -355,7 +355,7 @@ impl JsEngine {
     /// seed it always derived from, and the TS reference client's state file
     /// (`stateJson`, null when there was none) with its friends' sessions and
     /// its prekey secrets.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn import_legacy(
         &self,
         seed: Buffer,
@@ -374,72 +374,72 @@ impl JsEngine {
         })
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn start(&self, now: i64, network: String) -> Vec<JsEffect> {
         all(self.engine.start(now, net(network)))
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn unlock(&self, now: i64) -> napi::Result<Vec<JsEffect>> {
         self.engine.unlock(now).map(all).map_err(err)
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn lock(&self) -> Vec<JsEffect> {
         all(self.engine.lock())
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn tick(&self, now: i64) -> Vec<JsEffect> {
         all(self.engine.tick(now))
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn send_text(&self, peer: String, text: String, now: i64) -> napi::Result<Vec<JsEffect>> {
         self.engine.send_text(peer, text, now).map(all).map_err(err)
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn retry(&self, msg_id: String, now: i64) -> Vec<JsEffect> {
         all(self.engine.retry(msg_id, now))
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn invite(&self, username: String) -> Vec<JsEffect> {
         all(self.engine.invite(username))
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn accept(&self, peer: String) -> Vec<JsEffect> {
         all(self.engine.accept(peer))
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn remove(&self, peer: String) -> Vec<JsEffect> {
         all(self.engine.remove(peer))
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn block(&self, peer: String) -> Vec<JsEffect> {
         all(self.engine.block(peer))
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn set_presence(&self, online: bool, now: i64) -> Vec<JsEffect> {
         all(self.engine.set_presence(online, now))
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn my_id(&self) -> Option<String> {
         self.engine.my_id()
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn cancel(&self, peer: String) -> Vec<JsEffect> {
         all(self.engine.cancel(peer))
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn set_verified(&self, peer: String, verified: bool) -> napi::Result<Vec<JsEffect>> {
         self.engine
             .set_verified(peer, verified)
@@ -447,7 +447,7 @@ impl JsEngine {
             .map_err(err)
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn sent_invites(&self) -> Vec<JsSentInvite> {
         self.engine
             .sent_invites()
@@ -456,27 +456,27 @@ impl JsEngine {
             .collect()
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn unblock(&self, peer: String) -> Vec<JsEffect> {
         all(self.engine.unblock(peer))
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn forget(&self, peer: String) -> napi::Result<Vec<JsEffect>> {
         self.engine.forget(peer).map(all).map_err(err)
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn rotate_keys(&self, peer: String) -> napi::Result<Vec<JsEffect>> {
         self.engine.rotate_keys(peer).map(all).map_err(err)
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn mark_read(&self, peer: String) -> napi::Result<Vec<JsEffect>> {
         self.engine.mark_read(peer).map(all).map_err(err)
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn report(
         &self,
         peer: String,
@@ -494,25 +494,25 @@ impl JsEngine {
         }))
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn set_username(&self, username: String) -> Vec<JsEffect> {
         all(self.engine.set_username(username))
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn delete_account(&self) -> Vec<JsEffect> {
         all(self.engine.delete_account())
     }
 
     /// Registers an APNs token (the only push the server bridges today).
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn register_apns(&self, token: String, sandbox: bool) -> Vec<JsEffect> {
         all(self
             .engine
             .register_push(PushToken::Apns { token, sandbox }))
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn history(
         &self,
         peer: String,
@@ -528,7 +528,7 @@ impl JsEngine {
             .collect())
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn friends(&self) -> Vec<JsFriend> {
         self.engine
             .friends()
@@ -547,7 +547,7 @@ impl JsEngine {
             .collect()
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn invites(&self) -> Vec<JsInvite> {
         self.engine
             .invites()
@@ -559,12 +559,12 @@ impl JsEngine {
             .collect()
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn fingerprint(&self, peer: String) -> Option<String> {
         self.engine.fingerprint(peer)
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn on_http(
         &self,
         req: i64,
@@ -582,12 +582,12 @@ impl JsEngine {
         )))
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn on_opened(&self, conn: i64, now: i64) -> napi::Result<Vec<JsEffect>> {
         Ok(all(self.engine.on_opened(from_js(conn)?, now)))
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn on_bytes(&self, conn: i64, bytes: Buffer, now: i64) -> napi::Result<Vec<JsEffect>> {
         Ok(all(self.engine.on_bytes(
             from_js(conn)?,
@@ -597,7 +597,7 @@ impl JsEngine {
     }
 
     /// `reason`: `requested`, `remote`, or anything else for a failure.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn on_closed(&self, conn: i64, reason: String, now: i64) -> napi::Result<Vec<JsEffect>> {
         let reason = match reason.as_str() {
             "requested" => CloseReason::Requested,
@@ -607,7 +607,7 @@ impl JsEngine {
         Ok(all(self.engine.on_closed(from_js(conn)?, reason, now)))
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn on_network_changed(&self, network: String, now: i64) -> Vec<JsEffect> {
         all(self.engine.on_network_changed(net(network), now))
     }
