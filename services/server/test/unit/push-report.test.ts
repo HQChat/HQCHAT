@@ -186,17 +186,20 @@ test("rejected and error are different reasons for the same device", async () =>
   await withPush(CONFIGURED, async ({ push, warns }) => {
     const only = id();
     let outcome: SendOutcome = "rejected";
+    let clock = 0;
     const bridge = push.createPushBridge(
       {
         getTopicMembers: async () => [only],
         send: async () => outcome,
       },
       new Set(),
+      { now: () => clock },
     );
     warns.length = 0;
 
     await bridge.handleMessage(`cv/${hash()}`, Buffer.from("x"));
     outcome = "error";
+    clock += 60_000; // the next wake interval
     await bridge.handleMessage(`cv/${hash()}`, Buffer.from("x"));
     assert.equal(warns.filter((l) => /could not wake/.test(l)).length, 2, warns.join("\n"));
   });
