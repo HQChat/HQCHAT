@@ -106,10 +106,13 @@ class AppState: ObservableObject {
     }
 
     /// Going to the background: presence says offline (so the push bridge
-    /// wakes this device), then the core forgets its keys.
+    /// wakes this device), then the unlock is dropped: the core forgets its
+    /// keys, and the authenticated context goes too, so the next foreground
+    /// asks for Face ID or the passcode again.
     func enterBackground() async {
         // Nothing is on screen now, so every arrival is announced.
         NotificationService.shared.isForeground = false
+        defer { clearCachedKey() }
         guard let chat else { return }
         #if os(iOS)
         // Hold a background assertion until the presence frame is written.
@@ -119,7 +122,6 @@ class AppState: ObservableObject {
         #else
         await chat.enterBackground()
         #endif
-        chat.lock()
     }
 
     /// Back in front: online again, and the unlock that opens the history.

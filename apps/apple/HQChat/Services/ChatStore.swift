@@ -230,6 +230,9 @@ final class ChatStore: ObservableObject {
         _ = engine.lock()
         isUnlocked = false
         conversations = conversations.mapValues { _ in [] }
+        // The list's previews are message text too.
+        lastMessages = [:]
+        for i in contacts.indices { contacts[i].lastMessage = nil }
     }
 
     /// Going to the background: presence says offline, so the push bridge
