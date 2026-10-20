@@ -221,6 +221,9 @@ class AppState: ObservableObject {
                 }
             }
         }
+        // A move that died between the import and the purge never runs
+        // again, so what it left is deleted here, for every profile.
+        CoreMigration.sweepLeftovers(profiles: profileManager?.profiles ?? [profile], context: context)
         connect()
     }
 

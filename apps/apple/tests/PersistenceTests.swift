@@ -45,8 +45,30 @@ func run() {
     try? ctx.save()
     check((try? ctx.fetch(FetchDescriptor<Friend>()))?.count == 1, "the 3.1.1 contact is there")
 
-    CoreMigration.purge(profileID: legacy.id, context: ctx)
-    check((try? ctx.fetch(FetchDescriptor<Friend>()))?.count == 0, "the move's purge deletes the 3.1.1 contacts")
+    // A row from before message ids were kept is imported under an id derived
+    // from the row itself, so a retried import writes over the slots of the
+    // one that failed instead of leaving them beside its own.
+    let otherMsg = Message(timestamp: Date(), isOutgoing: true, friend: friend, profileID: legacy.id)
+    ctx.insert(otherMsg)
+    try? ctx.save()
+    let firstID = try? LegacySnapshot.legacyMessageID(for: msg)
+    check(firstID != nil && firstID == (try? LegacySnapshot.legacyMessageID(for: msg)),
+          "a row without an id gets the same one every time it is read")
+    check(firstID != (try? LegacySnapshot.legacyMessageID(for: otherMsg)), "…and two rows get two ids")
+
+    // The core holding the profile while its 3.1.1 rows are still there is a
+    // move that died before the purge: the launch's sweep finishes it.
+    check(!CoreMigration.hasLeftovers(profileID: legacy.id, context: ctx),
+          "rows the core has not taken are not leftovers: the move has not run")
+    let legacyRoot = try! ChatStore.storeDirectory(for: legacy.id)
+    try! FileManager.default.createDirectory(at: legacyRoot, withIntermediateDirectories: true)
+    try! Data([1]).write(to: legacyRoot.appendingPathComponent("state"))
+    check(CoreMigration.hasLeftovers(profileID: legacy.id, context: ctx),
+          "a profile the core holds, with 3.1.1 rows still there, has leftovers")
+    CoreMigration.sweepLeftovers(profiles: [legacy, fresh], context: ctx)
+    check(!CoreMigration.hasLeftovers(profileID: legacy.id, context: ctx), "the sweep deletes them")
+    try? FileManager.default.removeItem(at: legacyRoot)
+    check((try? ctx.fetch(FetchDescriptor<Friend>()))?.count == 0, "the sweep's purge deletes the 3.1.1 contacts")
     check((try? ctx.fetch(FetchDescriptor<Message>()))?.count == 0, "…their messages")
     check((try? ctx.fetch(FetchDescriptor<PendingFrame>()))?.count == 0, "…and the frames never opened")
     check((try? ctx.fetch(FetchDescriptor<Profile>()))?.count == 2, "but keeps the profile")
