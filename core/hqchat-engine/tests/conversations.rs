@@ -165,7 +165,7 @@ fn frames_that_arrive_locked_wait_for_the_unlock_with_a_notification_meanwhile()
     b.vault.lock();
     let id = send(&mut a, &b, "while you were locked");
     settle(&mut [&mut a, &mut b]);
-    assert!(b.seen.contains(&Effect::Notify { peer: a.id() }));
+    assert!(b.seen.contains(&Effect::Notify { peer: Some(a.id()) }));
     assert_eq!(
         b.engine.friends()[0].unread,
         2,

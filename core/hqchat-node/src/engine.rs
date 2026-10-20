@@ -208,7 +208,7 @@ fn js(effect: Effect) -> JsEffect {
             ..k("tierChanged")
         },
         Effect::Notify { peer } => JsEffect {
-            peer: Some(peer),
+            peer,
             ..k("notify")
         },
         Effect::ActionFailed {

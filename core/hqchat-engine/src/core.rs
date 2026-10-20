@@ -407,6 +407,8 @@ impl Core {
     }
 
     pub fn forget_session(&mut self, peer: &PeerId) {
+        self.convo.proven.retain(|_, p| p != peer);
+        self.convo.unanswered.remove(peer);
         self.store.delete(persist::session_slot(peer));
         if let Some(u) = self.unlocked.as_mut() {
             u.sessions.remove(peer);

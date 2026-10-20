@@ -597,6 +597,7 @@ impl Core {
             self.net.retry_at = None;
             self.connect(now);
         }
+        self.resend_unanswered(now);
         self.schedule(now);
     }
 
@@ -617,6 +618,9 @@ impl Core {
         }
         if let Some(t) = self.net.next_poll {
             at(t);
+        }
+        for (t, _) in self.convo.unanswered.values() {
+            at(*t);
         }
         if let Some(at) = next
             && next != self.net.scheduled

@@ -533,10 +533,10 @@ pub enum Effect {
         /// The tier.
         tier: Tier,
     },
-    /// Show a notification for a friend; never content.
+    /// Show a notification; never content.
     Notify {
-        /// The friend.
-        peer: String,
+        /// The friend, or none for a first contact not yet proven.
+        peer: Option<String>,
     },
     /// The server refused an action.
     ActionFailed {
