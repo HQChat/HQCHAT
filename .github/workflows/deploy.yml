@@ -204,7 +204,6 @@ jobs:
       TF_VAR_image_url: ${{ needs.build.outputs.image_url }}
       TF_VAR_image_name: ${{ needs.build.outputs.image_name }}
       ALLOW_REPLACE: ${{ inputs.allow_replace }}
-      TF_OUTPUTS: /tmp/tf-outputs.json
       AGE_IDENTITY_APP: ${{ secrets.AGE_IDENTITY_APP }}
       AGE_IDENTITY_MQTT: ${{ secrets.AGE_IDENTITY_MQTT }}
     steps:
@@ -226,9 +225,11 @@ jobs:
       - name: Terraform
         id: apply
         run: |
+          TF_OUTPUTS="$RUNNER_TEMP/tf-outputs.json"
+          echo "TF_OUTPUTS=$TF_OUTPUTS" >>"$GITHUB_ENV"
+          export TF_OUTPUTS
           # Handed to a new droplet in its user data; the bundles are sealed to them.
-          TF_VAR_age_identities="$(jq -cn --arg app "$AGE_IDENTITY_APP" --arg mqtt "$AGE_IDENTITY_MQTT" \
-            '{app: $app, mqtt: $mqtt} | with_entries(select(.value != ""))')"
+          TF_VAR_age_identities="$(jq -cn '{app: env.AGE_IDENTITY_APP, mqtt: env.AGE_IDENTITY_MQTT} | with_entries(select(.value != ""))')"
           export TF_VAR_age_identities
           infra/scripts/terraform.sh "$ENVIRONMENT" apply
           {
@@ -248,6 +249,9 @@ jobs:
           BOT_ID="$(nix shell .#hqcat-server --command hqcat-bot --print-id)"
           export BOT_ID
           nix shell --inputs-from . nixpkgs#age nixpkgs#awscli2 nixpkgs#openssl --command infra/scripts/publish-secrets.sh "$ENVIRONMENT"
+      - name: Remove the Terraform outputs
+        if: always()
+        run: rm -f "$TF_OUTPUTS"
 
   release:
     needs: [build, infra]

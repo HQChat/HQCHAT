@@ -4,7 +4,9 @@
 # state in R2, refusing destructive changes to stateful resources unless
 # ALLOW_REPLACE=true (tf-guard.sh). An apply first imports what the plan would
 # create but already exists (tf-adopt.sh). After an apply, writes the outputs as JSON
-# to $TF_OUTPUTS (default /tmp/tf-outputs.json).
+# to $TF_OUTPUTS (default: a new private temporary file, whose path it prints).
+# The outputs and the plan hold every generated secret in clear: both are
+# written 0600, and the plan is removed however the script ends.
 #
 #   infra/scripts/terraform.sh <environment> plan|apply
 #
@@ -17,6 +19,8 @@ action="${2:?usage: terraform.sh <environment> plan|apply}"
 # shellcheck source=lib.sh
 source "$(dirname "$0")/lib.sh"
 cd "$root/infra/terraform"
+umask 077
+trap 'rm -f tfplan tfplan.json' EXIT
 
 export AWS_ACCESS_KEY_ID="${R2_ACCESS_KEY_ID:?}" AWS_SECRET_ACCESS_KEY="${R2_SECRET_ACCESS_KEY:?}"
 export TF_VAR_environment="$ENVIRONMENT" TF_IN_AUTOMATION=1
@@ -49,6 +53,7 @@ fi
 
 if [[ "$action" == apply ]]; then
   terraform apply -input=false -lock-timeout=5m tfplan
-  terraform output -json >"${TF_OUTPUTS:-/tmp/tf-outputs.json}"
+  outputs="${TF_OUTPUTS:-$(mktemp)}"
+  terraform output -json >"$outputs"
+  [[ -n "${TF_OUTPUTS:-}" ]] || echo "outputs (secrets included) in $outputs: TF_OUTPUTS=$outputs for publish-secrets.sh, then delete it" >&2
 fi
-rm -f tfplan tfplan.json

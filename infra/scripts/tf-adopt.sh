@@ -25,7 +25,7 @@ creates="$(jq -c '[.resource_changes[]? | select(.change.actions == ["create"])
   exit 0
 }
 
-cf() { curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN:?}" "https://api.cloudflare.com/client/v4$1"; }
+cf() { curl -fsS -H @<(printf 'Authorization: Bearer %s\n' "${CLOUDFLARE_API_TOKEN:?}") "https://api.cloudflare.com/client/v4$1"; }
 
 imported=0
 adopt() {

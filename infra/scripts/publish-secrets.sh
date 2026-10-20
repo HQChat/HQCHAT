@@ -27,7 +27,7 @@ set -euo pipefail
 ENVIRONMENT="${1:?usage: publish-secrets.sh <environment>}"
 # shellcheck source=lib.sh
 source "$(dirname "$0")/lib.sh"
-outputs="${TF_OUTPUTS:-/tmp/tf-outputs.json}"
+outputs="${TF_OUTPUTS:?TF_OUTPUTS names the outputs terraform.sh wrote}"
 bucket="$(env_get "$ENVIRONMENT" .cache.bucket)"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -38,7 +38,8 @@ extra() {
   for name in "$@"; do
     var="${name^^}"
     [[ -n "${!var:-}" ]] || continue
-    json="$(jq -c --arg k "$name" --arg v "${!var}" '. + {($k): $v}' <<<"$json")"
+    # The value through a file descriptor, never on jq's command line.
+    json="$(jq -c --arg k "$name" --rawfile v <(printf '%s' "${!var}") '. + {($k): $v}' <<<"$json")"
   done
   printf '%s' "$json"
 }
