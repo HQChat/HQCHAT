@@ -47,6 +47,14 @@ test("GET /peer/:id/key shape-checks the id before touching the database", async
   }
 });
 
+test("GET /peer/:id/key answers a malformed %-escape with a 400, not a 500", async () => {
+  for (const bad of ["%E0%A4%A", "%", "%zz"]) {
+    const r = await call("GET", `/peer/${bad}/key`);
+    assert.equal(r.status, 400, `${bad}: ${r.text}`);
+    assert.equal(r.body.error, "INVALID_FIELD");
+  }
+});
+
 test("GET /peer/:id/key is a 404 for a malformed path", async () => {
   assert.equal((await call("GET", "/peer//key")).status, 404);
   assert.equal((await call("GET", `/peer/${someId()}`)).status, 404);

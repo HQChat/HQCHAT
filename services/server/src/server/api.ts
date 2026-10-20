@@ -322,7 +322,12 @@ async function publicRoute(res: http.ServerResponse, method: string, url: string
   } else {
     const peerKey = url.match(/^\/peer\/([^/?]+)\/key$/);
     if (!peerKey) return false;
-    const id = decodeURIComponent(peerKey[1]!).toLowerCase();
+    let id: string;
+    try {
+      id = decodeURIComponent(peerKey[1]!).toLowerCase();
+    } catch {
+      throw new HttpError(400, "INVALID_FIELD", "id is not a valid URL path segment");
+    }
     if (!isPeerId(id))
       throw new HttpError(400, "INVALID_FIELD", `id must be ${core.PEER_ID_LENGTH} lowercase hex characters`);
     const publicKey = await DB.identityKey(id);
