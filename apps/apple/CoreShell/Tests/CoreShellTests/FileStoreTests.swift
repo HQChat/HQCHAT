@@ -71,7 +71,7 @@ final class FileStoreTests: XCTestCase {
 
     func testAnEngineReopensItsIdentityFromTheFiles() throws {
         let vault = SoftwareVault()
-        let config = Config(serverUrl: "https://hqchat.test", profileId: "p", device: .ios)
+        let config = Config(serverUrl: "https://hqchat.test", profileId: "p", device: .ios, hqnPins: [])
         _ = try Engine(config: config, vault: vault, store: try FileStore(root: dir)).createIdentity()
         let restarted = try Engine(config: config, vault: vault, store: try FileStore(root: dir))
         XCTAssertEqual(try restarted.unlock(now: 0), [.friendsChanged])

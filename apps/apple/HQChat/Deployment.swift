@@ -46,6 +46,13 @@ enum Deployment {
     /// Overridable per build with the Info.plist array `ServerPinnedSPKIHashes`.
     static let pinnedSPKIHashes: [String] = []
 
+    /// Fingerprints of the hqn/1 gateway keys this build trusts, as the
+    /// gateway's key pair prints them (`GatewayKeyPair.fingerprint()`).
+    /// Empty: the key `/auth/transport` serves is taken on TLS alone. With
+    /// entries, a served key not listed is refused and the app keeps to WSS,
+    /// so list the next key here before the gateway rotates to it.
+    static let hqnKeyPins: [String] = []
+
     /// Sentry DSN for the app's project. Send-only, so it ships in the bundle
     /// ("" turns reporting off). Overridable per build with Info.plist
     /// `SENTRY_DSN`. The Deploy workflow warns when it is empty.

@@ -231,6 +231,7 @@ enum MessageKeyStore {
     /// Keychain account holding the public half, readable without authentication
     /// so sealing never prompts.
     private static func publicAccount(_ profileID: UUID) -> String { "pub.\(profileID.uuidString)" }
+    private static func stateAccount(_ profileID: UUID) -> String { "state.\(profileID.uuidString)" }
 
     private static func storePublicKey(_ pub: SecKey, for profileID: UUID) {
         guard let data = SecKeyCopyExternalRepresentation(pub, nil) as Data? else { return }
@@ -351,12 +352,14 @@ enum MessageKeyStore {
             kSecUseDataProtectionKeychain as String: true,
             kSecAttrApplicationTag as String: tag(profileID)
         ] as CFDictionary)
-        SecItemDelete([
-            kSecClass as String: kSecClassGenericPassword,
-            kSecUseDataProtectionKeychain as String: true,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: publicAccount(profileID)
-        ] as CFDictionary)
+        for account in [publicAccount(profileID), stateAccount(profileID)] {
+            SecItemDelete([
+                kSecClass as String: kSecClassGenericPassword,
+                kSecUseDataProtectionKeychain as String: true,
+                kSecAttrService as String: service,
+                kSecAttrAccount as String: account
+            ] as CFDictionary)
+        }
     }
 
     /// Forgets in-memory keys and the authentication (Keychain items survive).
@@ -614,6 +617,39 @@ extension MessageKeyStore {
     static func devicePublicKey(for profileID: UUID) -> Data? {
         guard let pub = publicKey(for: profileID) else { return nil }
         return SecKeyCopyExternalRepresentation(pub, nil) as Data?
+    }
+
+    /// The core's state secret: 32 random bytes in the data protection
+    /// Keychain, readable while the device is unlocked, on this device only,
+    /// never synced, made on first use. It needs no prompt of its own: the
+    /// user's gate stays on the Enclave key, whose ECDH every read of `state`
+    /// also needs. What it adds is that `state` does not rest on P-256 alone.
+    static func stateSecret(for profileID: UUID) throws -> Data {
+        let item: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecUseDataProtectionKeychain as String: true,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: stateAccount(profileID)
+        ]
+        var query = item
+        query[kSecReturnData as String] = true
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecSuccess, let data = result as? Data, data.count == 32 { return data }
+        guard status == errSecItemNotFound else { throw AgreementError.refused(Int(status)) }
+        var secret = Data(count: 32)
+        let drawn = secret.withUnsafeMutableBytes { buffer -> OSStatus in
+            guard let base = buffer.baseAddress else { return errSecAllocate }
+            return SecRandomCopyBytes(kSecRandomDefault, 32, base)
+        }
+        guard drawn == errSecSuccess else { throw AgreementError.refused(Int(drawn)) }
+        var add = item
+        add[kSecValueData as String] = secret
+        add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        add[kSecAttrSynchronizable as String] = false
+        let added = SecItemAdd(add as CFDictionary, nil)
+        guard added == errSecSuccess else { throw AgreementError.refused(Int(added)) }
+        return secret
     }
 
     /// One ECDH between the device key and `ephemeralPublic` (X9.63), under the

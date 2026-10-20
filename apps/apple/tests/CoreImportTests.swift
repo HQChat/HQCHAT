@@ -34,7 +34,7 @@ func peerID(_ pk: Data) -> String {
 }
 
 func engine() -> Engine {
-    try! Engine(config: Config(serverUrl: "https://hqchat.test", profileId: "p", device: .ios),
+    try! Engine(config: Config(serverUrl: "https://hqchat.test", profileId: "p", device: .ios, hqnPins: []),
                 vault: TestVault(), store: TestStore())
 }
 

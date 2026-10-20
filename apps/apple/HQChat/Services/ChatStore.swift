@@ -74,7 +74,8 @@ final class ChatStore: ObservableObject {
         let device = Device.macos
         #endif
         let engine = try Engine(
-            config: Config(serverUrl: server.absoluteString, profileId: profileID.uuidString, device: device),
+            config: Config(serverUrl: server.absoluteString, profileId: profileID.uuidString, device: device,
+                           hqnPins: Deployment.hqnKeyPins),
             vault: vault,
             store: try FileStore(root: root)
         )
@@ -467,6 +468,12 @@ final class ChatStore: ObservableObject {
                 knownInvites = Set(contacts.filter { $0.inviteStatus == .inviteReceived }.map(\.peerID))
             }
         case let .notify(peer):
+            // No peer: a first contact that arrived while locked, whose sender
+            // is not proven yet, so the notification names no one.
+            guard let peer else {
+                NotificationService.shared.notifyFirstContact()
+                break
+            }
             let name = contacts.first { $0.peerID == peer }?.username ?? String(peer.prefix(8))
             NotificationService.shared.notifyMessage(from: name)
         case let .actionDone(action):
