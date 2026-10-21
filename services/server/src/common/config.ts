@@ -63,7 +63,7 @@ export function assertConfig(needs: ConfigNeed[] = []): void {
     errors.push("TRUSTED_PROXY is required in production (x-real-ip behind nginx; see src/server/http.ts).");
   }
   if (proxy && !(TRUSTED_PROXY_MODES as readonly string[]).includes(proxy)) {
-    errors.push(`TRUSTED_PROXY="${proxy}" is not one of ${TRUSTED_PROXY_MODES.join(", ")}.`);
+    errors.push(`TRUSTED_PROXY is not one of ${TRUSTED_PROXY_MODES.join(", ")}.`);
   }
 
   // The sign-in proof binds the origin the client signed in at; only these are

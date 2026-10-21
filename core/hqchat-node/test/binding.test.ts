@@ -5,12 +5,13 @@
 //   node --import tsx --test ../../core/hqchat-node/test/*.test.ts
 
 import assert from "node:assert/strict";
-import { createHash, hkdfSync, randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import * as fs from "node:fs";
 import { createRequire } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
+import { originOf, signInProof } from "../../../services/server/test/reference/protocol/auth-proof";
 import { FrameReader, HqnInitiator, type Kem, x25519KeyPair } from "../../../services/server/test/reference/protocol/noise";
 
 const require = createRequire(__filename);
@@ -30,13 +31,17 @@ test("HQC matches the shipped known answers", () => {
   assert.throws(() => core.hqcEncapsulate(Buffer.alloc(10)), /7237/);
 });
 
-test("the sign-in proof is Node's HKDF", () => {
-  const ss = randomBytes(32);
-  const want = Buffer.from(hkdfSync("sha256", ss, Buffer.from("salt"), Buffer.from("auth"), 32));
-  assert.ok(core.authProof(ss).equals(want));
-  assert.equal(core.authProofMatches(want, want), true);
-  assert.equal(core.authProofMatches(want, Buffer.alloc(32)), false);
-  assert.equal(core.authProofMatches(want, want.subarray(1)), false);
+test("a sign-in challenge's proof is the TS reference's, bound to its origin", () => {
+  const { pk, sk } = core.hqcKeypairFromSeed(randomBytes(32));
+  const origin = core.originOf("https://api.hqchat.test/auth/init");
+  assert.equal(origin, originOf("https://api.hqchat.test/auth/init"));
+  const { ct, proof } = core.authChallenge(pk, origin);
+  const ss = core.hqcDecapsulate(sk, ct);
+  assert.ok(proof.equals(signInProof(ss, origin, pk, ct)));
+  assert.ok(!proof.equals(signInProof(ss, "https://elsewhere.test", pk, ct)), "another origin, another proof");
+  assert.equal(core.authProofMatches(proof, proof), true);
+  assert.equal(core.authProofMatches(proof, Buffer.alloc(32)), false);
+  assert.equal(core.authProofMatches(proof, proof.subarray(1)), false);
 });
 
 test("ids and topics match identity-vectors.json", () => {
@@ -68,11 +73,10 @@ test("CONNECT proofs from mqtt-proof-vectors.json parse and verify, and nothing 
   assert.equal(core.isFreshTimestamp(1000, 1061), false);
 });
 
-test("the Rust gateway completes a handshake with the TS initiator", () => {
+test("the Rust gateway completes a handshake with the TS initiator", async () => {
   const key = { keyId: 1, x25519: randomBytes(32), hqcSeed: randomBytes(32) };
   const pair = new core.GatewayKeyPair(key);
   const pub = pair.publicKey();
-  const { sk } = core.hqcKeypairFromSeed(key.hqcSeed);
   const kem: Kem = {
     encapsulate: (pk) => core.hqcEncapsulate(pk),
     decapsulate: (s, ct) => core.hqcDecapsulate(s, ct),
@@ -85,8 +89,8 @@ test("the Rust gateway completes a handshake with the TS initiator", () => {
   const gw = new core.HqnGatewayHandshake(pair);
   assert.ok(core.HqnGatewayHandshake.ephemeralOf(msg1).equals(msg1.subarray(0, 32)));
   const ct = gw.openMessage1(msg1);
-  // The decapsulation a worker would run, with the gateway's HQC secret.
-  assert.ok(gw.finishMessage1(core.hqcDecapsulate(sk, ct)).equals(connect));
+  // Off the event loop, with the secret kept in Rust.
+  assert.ok(gw.finishMessage1(await pair.decapsulate(ct)).equals(connect));
   const m2 = gw.writeMessage2(Buffer.alloc(0));
   const msg2 = m2.takeMessage();
   const gt = m2.takeTransport();
