@@ -561,12 +561,7 @@ impl Core {
             self.net.hqn_failed.insert(key);
             self.net.retry_at = Some(now);
         } else if retry {
-            self.net.backoff_ms = self
-                .net
-                .backoff_ms
-                .saturating_mul(2)
-                .clamp(BACKOFF_START_MS, BACKOFF_MAX_MS);
-            self.net.retry_at = Some(now.saturating_add(self.net.backoff_ms));
+            self.back_off(now);
         }
         self.net.next_poll = None;
         self.emit(Effect::Connection(ConnState::Offline));
@@ -589,6 +584,23 @@ impl Core {
         if self.net.retry_at == Some(now) {
             self.connect(now);
         }
+        self.schedule(now);
+    }
+
+    /// The next attempt, one backoff step later (2 s doubling to 30 s).
+    fn back_off(&mut self, now: i64) {
+        self.net.backoff_ms = self
+            .net
+            .backoff_ms
+            .saturating_mul(2)
+            .clamp(BACKOFF_START_MS, BACKOFF_MAX_MS);
+        self.net.retry_at = Some(now.saturating_add(self.net.backoff_ms));
+    }
+
+    /// A sign-in that failed on the way: [`Self::tick`] tries again once the
+    /// backoff has passed.
+    pub fn retry_later(&mut self, now: i64) {
+        self.back_off(now);
         self.schedule(now);
     }
 

@@ -80,7 +80,7 @@ impl Core {
 
     pub fn on_auth_init(&mut self, a: Answer, now: i64) {
         let Some(ct) = a.str("ct").and_then(|ct| STANDARD.decode(ct).ok()) else {
-            return self.auth_failed(&a);
+            return self.auth_failed(&a, now);
         };
         let Ok(u) = self.unlocked() else {
             self.auth.in_flight = false;
@@ -92,18 +92,18 @@ impl Core {
             hqc::Ciphertext::from_bytes(&ct),
             hex::encode(u.identity.public.as_bytes()),
         ) else {
-            return self.auth_failed(&a);
+            return self.auth_failed(&a, now);
         };
         let Ok(ss) = hqc::decapsulate(&u.identity.secret, &ct) else {
-            return self.auth_failed(&a);
+            return self.auth_failed(&a, now);
         };
         let Some(proof) = auth_proof::origin_of(&self.config.server_url)
             .and_then(|o| auth_proof::sign_in_proof(&ss, &o, &u.identity.public, &ct).ok())
         else {
-            return self.auth_failed(&a);
+            return self.auth_failed(&a, now);
         };
         let Ok(signing) = SigningKey::generate(&mut OsEntropy) else {
-            return self.auth_failed(&a);
+            return self.auth_failed(&a, now);
         };
         let body = json!({
             "pk": pk,
@@ -122,14 +122,14 @@ impl Core {
 
     pub fn on_auth_verify(&mut self, a: Answer, signing: SigningKey, now: i64) {
         let Some(token) = a.str("sessionToken").map(str::to_owned) else {
-            return self.auth_failed(&a);
+            return self.auth_failed(&a, now);
         };
         if self
             .me
             .as_ref()
             .is_none_or(|me| verified_id(&a, me).is_err())
         {
-            return self.auth_failed(&a);
+            return self.auth_failed(&a, now);
         }
         self.auth.token = Some(token);
         self.adopt(&a, signing, now);
@@ -166,7 +166,7 @@ impl Core {
     fn adopt(&mut self, a: &Answer, signing: SigningKey, now: i64) {
         self.auth.in_flight = false;
         let Some(key_id) = a.str("mqttKeyId").map(str::to_owned) else {
-            return self.auth_failed(a);
+            return self.auth_failed(a, now);
         };
         if let Some(server_time) = a.body.get("serverTime").and_then(|v| v.as_i64()) {
             self.auth.clock_offset_ms = server_time.saturating_mul(1000).saturating_sub(now);
@@ -185,10 +185,17 @@ impl Core {
         self.on_signed_in(now);
     }
 
-    fn auth_failed(&mut self, a: &Answer) {
+    fn auth_failed(&mut self, a: &Answer, now: i64) {
         self.auth.in_flight = false;
         self.emit(Effect::Connection(ConnState::Offline));
         self.fail(Action::SignIn, a);
+        // A server that is unreachable, overloaded or restarting is tried
+        // again on the reconnect backoff: a headless client (the bot, started
+        // before the server listens) has nothing else to wake it. A refusal
+        // waits for the user.
+        if a.status == 0 || a.status == 429 || a.status >= 500 {
+            self.retry_later(now);
+        }
     }
 
     /// What follows a sign-in or refresh: the directory, the prekeys and
