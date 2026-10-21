@@ -55,12 +55,19 @@ impl Core {
         match self.unlocked.as_ref() {
             Some(u) => {
                 let pk = hex::encode(u.identity.public.as_bytes());
+                let Some(origin) = auth_proof::origin_of(&self.config.server_url) else {
+                    return self.emit(Effect::Dropped {
+                        reason: "the server URL is not an http(s) origin".into(),
+                    });
+                };
                 self.auth.in_flight = true;
                 self.emit(Effect::Connection(ConnState::Authenticating));
+                // The origin is the one this client signs in at: the proof
+                // is bound to it, and the server refuses one it is not.
                 self.request(
                     Method::Post,
                     "/auth/init",
-                    Some(json!({ "pk": pk })),
+                    Some(json!({ "pk": pk, "origin": origin })),
                     false,
                     Pending::AuthInit,
                 );
@@ -90,12 +97,17 @@ impl Core {
         let Ok(ss) = hqc::decapsulate(&u.identity.secret, &ct) else {
             return self.auth_failed(&a);
         };
+        let Some(proof) = auth_proof::origin_of(&self.config.server_url)
+            .and_then(|o| auth_proof::sign_in_proof(&ss, &o, &u.identity.public, &ct).ok())
+        else {
+            return self.auth_failed(&a);
+        };
         let Ok(signing) = SigningKey::generate(&mut OsEntropy) else {
             return self.auth_failed(&a);
         };
         let body = json!({
             "pk": pk,
-            "solution": STANDARD.encode(auth_proof::auth_proof(&ss)),
+            "solution": STANDARD.encode(proof),
             "mqttSigningKey": STANDARD.encode(signing.public_key()),
         });
         let _ = now;

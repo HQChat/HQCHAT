@@ -55,7 +55,7 @@ export interface HqnMessage2 {
 
 export interface HqnGatewayHandshake {
   openMessage1(msg1: Buffer): Buffer;
-  finishMessage1(sharedSecret: Buffer): Buffer;
+  finishMessage1(secret: HqnSecret): Buffer;
   writeMessage2(payload: Buffer): HqnMessage2;
 }
 
@@ -63,6 +63,15 @@ export interface HqnGatewayHandshake {
 export interface GatewayKeyPair {
   readonly keyId: number;
   publicKey(): GatewayPublicKey;
+  /** The key's fingerprint, as the apps' `hqnKeyPins` list it. */
+  fingerprint(): string;
+  /** Decapsulates on libuv's thread pool; the secret stays in the core. */
+  decapsulate(ct: Buffer): Promise<HqnSecret>;
+}
+
+/** A decapsulated secret held by the core: a handle, never bytes. */
+export interface HqnSecret {
+  readonly __hqnSecret?: never;
 }
 
 export interface HqnGatewayHandshakeClass {
@@ -209,9 +218,14 @@ export interface Engine {
 
 export interface CoreAddon {
   hqcKeypairFromSeed(seed: Buffer): HqcKeyPair;
+  /** The device key a headless owner (the bot) derives from its identity seed. */
+  deviceKeyFromSeed(seed: Buffer): Buffer;
   hqcEncapsulate(pk: Buffer): Encapsulation;
   hqcDecapsulate(sk: Buffer, ct: Buffer): Buffer;
-  authProof(ss: Buffer): Buffer;
+  /** A sign-in challenge to `pk` at `origin`; the shared secret never reaches JS. */
+  authChallenge(pk: Buffer, origin: string): { ct: Buffer; proof: Buffer };
+  /** `scheme://host[:port]` of a URL, as the sign-in proof binds it, or null. */
+  originOf(url: string): string | null;
   authProofMatches(expected: Buffer, offered: Buffer): boolean;
   parseConnectProof(password: string): ConnectProof | null;
   /** 32 bytes, a canonical Ed25519 point, not of small order. */
@@ -231,6 +245,8 @@ export interface CoreAddon {
   readonly HQN_VERSION: number;
   GatewayKeyPair: new (key: GatewayKey) => GatewayKeyPair;
   HqnGatewayHandshake: HqnGatewayHandshakeClass;
+  /** `fromBytes` is for tests that drive the handshake with a stand-in KEM. */
+  HqnSecret: { fromBytes(ss: Buffer): HqnSecret };
   HqnMessage2: unknown;
   HqnTransport: unknown;
   Engine: new (options: EngineOptions) => Engine;
@@ -239,9 +255,11 @@ export interface CoreAddon {
 /** Every name the addon exports, for the conformance test. */
 export const CORE_EXPORTS: readonly (keyof CoreAddon)[] = [
   "hqcKeypairFromSeed",
+  "deviceKeyFromSeed",
   "hqcEncapsulate",
   "hqcDecapsulate",
-  "authProof",
+  "authChallenge",
+  "originOf",
   "authProofMatches",
   "parseConnectProof",
   "isSigningKey",
@@ -260,6 +278,7 @@ export const CORE_EXPORTS: readonly (keyof CoreAddon)[] = [
   "HQN_VERSION",
   "GatewayKeyPair",
   "HqnGatewayHandshake",
+  "HqnSecret",
   "HqnMessage2",
   "HqnTransport",
   "Engine",

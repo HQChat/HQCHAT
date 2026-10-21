@@ -19,12 +19,23 @@ export function sealPayload(plaintext: string, key: Buffer, aad: Buffer): Buffer
 }
 
 /** Decrypts a sealed payload; throws when it does not authenticate. */
-export function openPayload(data: Buffer, key: Buffer, aad: Buffer): string {
+export function openPayload(data: Buffer, key: Buffer, aad: Buffer, padded = false): string {
   if (data.length < IV_BYTES + TAG_BYTES) throw new Error("payload shorter than IV and tag");
   const decipher = crypto.createDecipheriv("aes-256-gcm", key, data.subarray(0, IV_BYTES), {
     authTagLength: TAG_BYTES,
   });
   decipher.setAAD(aad);
   decipher.setAuthTag(data.subarray(IV_BYTES, IV_BYTES + TAG_BYTES));
-  return Buffer.concat([decipher.update(data.subarray(IV_BYTES + TAG_BYTES)), decipher.final()]).toString("utf8");
+  const plain = Buffer.concat([decipher.update(data.subarray(IV_BYTES + TAG_BYTES)), decipher.final()]);
+  return (padded ? unpad(plain) : plain).toString("utf8");
+}
+
+/** Undoes the core's padding (ISO/IEC 7816-4 to 256-byte classes); throws on anything it could not produce. */
+export function unpad(p: Buffer): Buffer {
+  let end = p.length - 1;
+  while (end >= 0 && p[end] === 0) end--;
+  if (p.length === 0 || p.length % 256 !== 0 || end < 0 || p[end] !== 0x80 || p.length - end > 256) {
+    throw new Error("bad padding");
+  }
+  return p.subarray(0, end);
 }

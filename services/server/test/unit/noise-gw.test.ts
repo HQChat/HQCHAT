@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import * as crypto from "node:crypto";
 import * as net from "node:net";
 import { after, test } from "node:test";
-import { core } from "../../src/common/core";
+import { core, type GatewayKeyPair, type HqnSecret } from "../../src/common/core";
 import { createGateway, type GatewayEvent, type GatewayLimits } from "../../src/gateway/gateway";
 import { parseKeySeeds } from "../../src/gateway/keys";
 import { connectClientId } from "../../src/gateway/mqtt-connect";
@@ -77,7 +77,7 @@ async function fakeBroker() {
 async function gateway(opts: {
   limits?: Partial<GatewayLimits>;
   upstreamPort: number;
-  decapsulate?: (k: number, ct: Buffer) => Promise<Buffer>;
+  decapsulate?: (k: number, ct: Buffer) => Promise<HqnSecret>;
 }) {
   const events: GatewayEvent[] = [];
   let decaps = 0;
@@ -87,7 +87,7 @@ async function gateway(opts: {
       opts.decapsulate ??
       (async (_k, ct) => {
         decaps++;
-        return fakeKem.decapsulate(Buffer.alloc(0), ct);
+        return core.HqnSecret.fromBytes(fakeKem.decapsulate(Buffer.alloc(0), ct));
       }),
     upstream: { host: "127.0.0.1", port: opts.upstreamPort },
     ...(opts.limits ? { limits: opts.limits } : {}),
@@ -118,9 +118,9 @@ const closed = (s: net.Socket) =>
   });
 
 /** A full client: header, msg1 carrying a CONNECT, msg2, then a transport. */
-async function handshake(port: number, connect = connectPacket()) {
+async function handshake(port: number, connect = connectPacket(), kem: Kem = fakeKem) {
   const s = await dial(port);
-  const init = new HqnInitiator(KEY_PUB, { kem: fakeKem });
+  const init = new HqnInitiator(KEY_PUB, { kem });
   const msg1 = init.writeMessage1(connect);
   s.write(Buffer.concat([Buffer.from([HQN_VERSION, KEY.keyId]), frame(msg1)]));
   const reader = new FrameReader();
@@ -410,19 +410,25 @@ test("the key file is validated strictly", () => {
 
 // --- the real decapsulation pool ------------------------------------------------
 
-test("the worker pool decapsulates with the core's HQC, off the main thread", async () => {
+test("the pool decapsulates with the core's HQC, and the handshake completes on the handle", async () => {
   const { DecapPool } = await import("../../src/gateway/decap-pool");
-  const kp = core.hqcKeypairFromSeed(crypto.randomBytes(32));
-  const pool = new DecapPool([{ keyId: 5, sk: kp.sk }], 2, 8);
+  const pool = new DecapPool(new Map([[KEY.keyId, KEY]]), 2, 8);
+  const broker = await fakeBroker();
+  toClose.push(broker.server);
+  const gw = await gateway({ upstreamPort: broker.port, decapsulate: (k, ct) => pool.decapsulate(k, ct) });
+  toClose.push(gw.server);
   try {
-    const jobs = Array.from({ length: 4 }, () => core.hqcEncapsulate(kp.pk));
-    const secrets = await Promise.all(jobs.map((j) => pool.decapsulate(5, j.ct)));
-    for (const [i, ss] of secrets.entries()) assert.ok(ss.equals(jobs[i]!.ss), `job ${i}`);
+    // The real KEM on the client side: only the core's decapsulation opens it.
+    const realKem: Kem = { encapsulate: (pk) => core.hqcEncapsulate(pk), decapsulate: () => Buffer.alloc(0) };
+    const c = await handshake(gw.port, connectPacket(), realKem);
+    assert.ok((await c.nextFrame()).equals(CONNACK));
+    c.s.destroy();
     await assert.rejects(
-      pool.decapsulate(9, jobs[0]!.ct),
+      pool.decapsulate(9, Buffer.alloc(HQC_CIPHERTEXT_BYTES)),
       /unknown key id/,
       "an unknown key id is an error, not a crash",
     );
+    await assert.rejects(pool.decapsulate(KEY.keyId, Buffer.alloc(3)), "a ciphertext of the wrong size");
   } finally {
     await pool.close();
   }
@@ -430,7 +436,7 @@ test("the worker pool decapsulates with the core's HQC, off the main thread", as
 
 test("a full pool queue refuses at once rather than growing", async () => {
   const { DecapPool } = await import("../../src/gateway/decap-pool");
-  const pool = new DecapPool([], 1, 0);
+  const pool = new DecapPool(new Map(), 1, 0);
   try {
     await assert.rejects(pool.decapsulate(1, Buffer.alloc(HQC_CIPHERTEXT_BYTES)), /queue full/);
   } finally {
@@ -512,37 +518,22 @@ test("addressPrefix names the /24 or /56 an address is in", async () => {
   assert.equal(addressPrefix("1:2:3"), "1:2:3");
 });
 
-test("a decapsulation worker that dies fails only its own job and is replaced", async () => {
-  const fs = await import("node:fs");
-  const os = await import("node:os");
-  const path = await import("node:path");
+test("no more than `size` decapsulations run at once; the rest wait in order", async () => {
   const { DecapPool } = await import("../../src/gateway/decap-pool");
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "decap-"));
-  const file = path.join(dir, "worker.js");
-  // Key id 66 kills the worker; any other answers with its key id.
-  fs.writeFileSync(
-    file,
-    `const { parentPort } = require("node:worker_threads");
-     parentPort.on("message", (m) => {
-       if (m.keyId === 66) process.exit(1);
-       setTimeout(() => parentPort.postMessage({ id: m.id, ss: new Uint8Array([m.keyId]) }), 20);
-     });`,
-  );
-  const pool = new DecapPool([], 2, 8, file);
-  try {
-    const slow = pool.decapsulate(1, Buffer.alloc(1));
-    const killer = pool.decapsulate(66, Buffer.alloc(1));
-    const later = [pool.decapsulate(2, Buffer.alloc(1)), pool.decapsulate(3, Buffer.alloc(1))];
-    await assert.rejects(killer, /exited/);
-    assert.deepEqual([...(await slow)], [1], "another worker's job was failed with the dead one");
-    assert.deepEqual(
-      (await Promise.all(later)).map((b) => b[0]),
-      [2, 3],
-      "a job after the death never resolved",
-    );
-    assert.equal(pool.respawned, 1);
-  } finally {
-    await pool.close();
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
+  let running = 0;
+  let peak = 0;
+  const slow = {
+    keyId: 1,
+    decapsulate: async () => {
+      running++;
+      peak = Math.max(peak, running);
+      await new Promise((r) => setTimeout(r, 20));
+      running--;
+      return core.HqnSecret.fromBytes(Buffer.alloc(32));
+    },
+  } as unknown as GatewayKeyPair;
+  const pool = new DecapPool(new Map([[1, slow]]), 2, 8);
+  await Promise.all(Array.from({ length: 6 }, () => pool.decapsulate(1, Buffer.alloc(1))));
+  assert.equal(peak, 2);
+  await pool.close();
 });
