@@ -35,21 +35,58 @@ network() {
   } >"/run/systemd/network/$file"
 }
 
+# Every value from the metadata goes into a networkd file or host.env, which
+# overrides the units' Environment=: a newline in one would add a line of its
+# own. Each is checked against what it can be first, and anything else stops
+# the configuration.
+require() {
+  local kind="$1" value="$2" re
+  case "$kind" in
+    ipv4) re='^([0-9]{1,3}\.){3}[0-9]{1,3}$' ;;
+    optional-ipv4)
+      [[ -z "$value" ]] && return 0
+      re='^([0-9]{1,3}\.){3}[0-9]{1,3}$'
+      ;;
+    mac) re='^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$' ;;
+    role) re='^(app|mqtt|base)$' ;;
+    *) re='^$' ;;
+  esac
+  if [[ ! "$value" =~ $re ]]; then
+    echo "refusing metadata: $kind ${value@Q}" >&2
+    exit 1
+  fi
+}
+
 mkdir -p /run/systemd/network /run/hqcat
 
 public_ip="$(get '.interfaces.public[0].ipv4.ip_address')"
+public_mask="$(get '.interfaces.public[0].ipv4.netmask')"
+gateway="$(get '.interfaces.public[0].ipv4.gateway')"
+public_mac="$(get '.interfaces.public[0].mac')"
 anchor_ip="$(get '.interfaces.public[0].anchor_ipv4.ip_address')"
+anchor_mask="$(get '.interfaces.public[0].anchor_ipv4.netmask')"
 vpc_ip="$(get '.interfaces.private[0].ipv4.ip_address')"
+vpc_mask="$(get '.interfaces.private[0].ipv4.netmask')"
+vpc_mac="$(get '.interfaces.private[0].mac')"
+nameservers="$(get '.dns.nameservers | join(" ")')"
+for v in "$public_ip" "$public_mask" "$gateway"; do require ipv4 "$v"; done
+require mac "$public_mac"
+require optional-ipv4 "$anchor_ip"
+require optional-ipv4 "$vpc_ip"
+[[ -z "$anchor_ip" ]] || require ipv4 "$anchor_mask"
+if [[ -n "$vpc_ip" ]]; then
+  require ipv4 "$vpc_mask"
+  require mac "$vpc_mac"
+fi
+for ns in $nameservers; do require ipv4 "$ns"; done
 
-public=("Address=$public_ip/$(prefix "$(get '.interfaces.public[0].ipv4.netmask')")"
-"Gateway=$(get '.interfaces.public[0].ipv4.gateway')")
-[[ -z "$anchor_ip" ]] || public+=("Address=$anchor_ip/$(prefix "$(get '.interfaces.public[0].anchor_ipv4.netmask')")")
-for ns in $(get '.dns.nameservers | join(" ")'); do public+=("DNS=$ns"); done
-network 10-public.network "$(get '.interfaces.public[0].mac')" "${public[@]}"
+public=("Address=$public_ip/$(prefix "$public_mask")" "Gateway=$gateway")
+[[ -z "$anchor_ip" ]] || public+=("Address=$anchor_ip/$(prefix "$anchor_mask")")
+for ns in $nameservers; do public+=("DNS=$ns"); done
+network 10-public.network "$public_mac" "${public[@]}"
 
 if [[ -n "$vpc_ip" ]]; then
-  network 20-private.network "$(get '.interfaces.private[0].mac')" \
-    "Address=$vpc_ip/$(prefix "$(get '.interfaces.private[0].ipv4.netmask')")"
+  network 20-private.network "$vpc_mac" "Address=$vpc_ip/$(prefix "$vpc_mask")"
 fi
 
 networkctl reload
@@ -61,6 +98,7 @@ done
 user_data="$(get '.user_data')"
 [[ -n "$user_data" ]] || user_data='{}'
 role="$(jq -r '.role // "base"' <<<"$user_data")"
+require role "$role"
 printf 'ROLE=%s\nPUBLIC_IPV4=%s\nANCHOR_IPV4=%s\nVPC_IPV4=%s\n' \
   "$role" "$public_ip" "$anchor_ip" "$vpc_ip" >/run/hqcat/host.env
 
