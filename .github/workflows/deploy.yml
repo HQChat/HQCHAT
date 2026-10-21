@@ -210,10 +210,6 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
-        with:
-          terraform_version: "1.15.6"
-          terraform_wrapper: false
       # hqcat-server comes from the cache build just pushed to, not a rebuild.
       - uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
         with:
@@ -231,7 +227,8 @@ jobs:
           # Handed to a new droplet in its user data; the bundles are sealed to them.
           TF_VAR_age_identities="$(jq -cn '{app: env.AGE_IDENTITY_APP, mqtt: env.AGE_IDENTITY_MQTT} | with_entries(select(.value != ""))')"
           export TF_VAR_age_identities
-          infra/scripts/terraform.sh "$ENVIRONMENT" apply
+          # The Terraform pinned by hash in the flake, not a download trusted on TLS alone.
+          nix shell .#terraform --command infra/scripts/terraform.sh "$ENVIRONMENT" apply
           {
             echo "domain=$(jq -r .domain.value "$TF_OUTPUTS")"
             echo "api_host=$(jq -r .api_host.value "$TF_OUTPUTS")"
