@@ -17,6 +17,7 @@ final class TestVault: KeyVault, @unchecked Sendable {
         let peer = try P256.KeyAgreement.PublicKey(x963Representation: ephemeralPublic)
         return try key.sharedSecretFromKeyAgreement(with: peer).withUnsafeBytes { Data($0) }
     }
+    func stateSecret() throws -> Data { Data(SHA256.hash(data: key.rawRepresentation)) }
     func tier() -> Tier { .software }
 }
 
