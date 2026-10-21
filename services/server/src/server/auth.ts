@@ -55,7 +55,9 @@ function originAllowed(origin: string | null, req: http.IncomingMessage): boolea
   const allowed = allowedOrigins();
   if (allowed.length) return allowed.includes(origin);
   if (process.env.NODE_ENV === "production") return false;
-  const own = core.originOf(`${req.headers["x-forwarded-proto"] === "https" ? "https" : "http"}://${req.headers.host || ""}`);
+  const own = core.originOf(
+    `${req.headers["x-forwarded-proto"] === "https" ? "https" : "http"}://${req.headers.host || ""}`,
+  );
   return origin === own;
 }
 

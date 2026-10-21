@@ -55,10 +55,7 @@ test("in production a remote database without its CA refuses to start", () => {
   assert.equal(withCa.code, 0, withCa.out);
 
   // A database on this machine needs no CA: plaintext never leaves the host.
-  assert.equal(
-    boot({ NODE_ENV: "production", TRUSTED_PROXY: "x-real-ip", AUTH_ORIGINS: ORIGINS }, ["proxy"]).code,
-    0,
-  );
+  assert.equal(boot({ NODE_ENV: "production", TRUSTED_PROXY: "x-real-ip", AUTH_ORIGINS: ORIGINS }, ["proxy"]).code, 0);
 });
 
 // The sign-in proof binds the origin; with no list, production accepts none.

@@ -69,7 +69,9 @@ export function assertConfig(needs: ConfigNeed[] = []): void {
   // The sign-in proof binds the origin the client signed in at; only these are
   // accepted (src/server/auth.ts). Unset outside production: the Host header's.
   if (needs.includes("proxy") && process.env.NODE_ENV === "production" && !process.env.AUTH_ORIGINS?.trim()) {
-    errors.push("AUTH_ORIGINS is required in production: the origins clients sign in at (https://api.<domain>, the bot's).");
+    errors.push(
+      "AUTH_ORIGINS is required in production: the origins clients sign in at (https://api.<domain>, the bot's).",
+    );
   }
 
   // A remote database is reached only with its certificate and hostname

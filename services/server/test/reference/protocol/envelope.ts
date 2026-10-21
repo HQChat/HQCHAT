@@ -182,7 +182,10 @@ export function frameHeader(f: Omit<Frame, "payload">): Buffer | null {
   fixed.writeUInt8(FRAME_VERSION, OFF_VERSION);
   fixed.writeUInt8(KIND_BYTE[f.t], OFF_KIND);
   fixed.writeUInt8(
-    (hasRk ? FLAG_RK : 0) | (hasKemCt ? FLAG_KEMCT : 0) | (hasOneTime ? FLAG_ONE_TIME : 0) | (f.padded ? FLAG_PADDED : 0),
+    (hasRk ? FLAG_RK : 0) |
+      (hasKemCt ? FLAG_KEMCT : 0) |
+      (hasOneTime ? FLAG_ONE_TIME : 0) |
+      (f.padded ? FLAG_PADDED : 0),
     OFF_FLAGS,
   );
   sender.copy(fixed, OFF_SENDER);
