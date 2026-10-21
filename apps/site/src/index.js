@@ -783,7 +783,8 @@ const TOPOLOGY = `<pre>   iOS / macOS app
                                         <s>sees a topic id, sends "New message"</s>
 
    two protocols, no third. the broker holds undelivered ciphertext in its own
-   QoS-1 session until you reconnect; there is no message table anywhere.</pre>`;
+   QoS-1 session — up to 1000 messages, for two hours offline — and nothing
+   else does; there is no message table anywhere.</pre>`;
 
 /* ── shared prose blocks, used on / and on /crypto ───────────────────────── */
 
@@ -829,7 +830,9 @@ const SERVER_TABLE = scroll(`<table>
 <tr><td class="no">✗ your messages</td>
     <td>Bodies are AES-256-GCM under keys derived on the two devices; no server component
         holds those keys or ever has. Nothing is stored server-side —
-        undelivered ciphertext sits in the broker's own session until you reconnect.
+        undelivered ciphertext sits in the broker's own session, in memory: at most
+        1000 messages, kept while you have been offline for under two hours.
+        Past either limit the broker drops them, oldest first.
         <b>One exception, and it is yours to make:</b> if you report a message, your copy
         of that one message is uploaded with the report, and deleted after 90 days. The
         app says so on the screen where you send it. Nothing else moves a message body
@@ -1345,13 +1348,16 @@ ${sec(
   `
   ${SERVER_TABLE}
   ${scroll(TOPOLOGY)}
-  <p>Conversation topics — and the handshake topic beside each one — are derived as
-  <code>sha256</code> of the two sorted client ids, so
-  anyone holding both ids can compute the topic name — and an id is itself the hash of a
-  public key, so anyone holding both keys can too. Topic secrecy is therefore not the
-  access control and could never have been: the broker checks a per-topic ACL in Postgres on
-  every publish and subscribe, defaulting to deny. That ACL is the barrier, which is exactly
-  why it is the component the threat model watches hardest.</p>`,
+  <p>Conversation topics — and the handshake topic beside each one — are random ids the
+  server mints when a friendship is made: 64 hex characters from two random UUIDs, so 244
+  random bits. Nothing about them follows from the two client ids or keys, and the server
+  hands them only to the friendship's two members. They are also the access control. The
+  broker's ACL is a static file, not a lookup: any signed-in client may publish to and read
+  from <code>cv/</code> and <code>hs/</code> topics, by exact name only, since wildcard
+  filters are refused. Knowing a conversation's id is therefore the permission to
+  read its ciphertext and to write into it, which is why an id is never logged, never
+  derived, and never shown to anyone but its two members — and why the threat model treats
+  the ids as secrets.</p>`,
 )}
 
 ${sec("cat threat-model/limits", LIMITS)}
@@ -1412,8 +1418,10 @@ const privacyPage = shell(
     <li><strong>Your public key</strong> — needed to route encrypted messages to you.</li>
     <li><strong>Friend connections</strong> — stored so we can deliver messages and presence.</li>
     <li><strong>Undelivered messages</strong> — if you are offline, the encrypted message is
-        held in your session on our message broker until your device reconnects. We cannot
-        read it, and it is not written to any database.</li>
+        held in your session on our message broker, in memory, for when your device
+        reconnects. We cannot read it, and it is not written to any database. The session
+        holds at most 1000 messages and ends after two hours offline: past either limit,
+        undelivered messages are dropped, oldest first, and never arrive.</li>
     <li><strong>Push token</strong> — if you enable notifications, so we can wake your device.
         Notification payloads contain no message content.</li>
     <li><strong>A message you report, if you report one</strong> — reporting uploads your
@@ -1444,16 +1452,20 @@ const privacyPage = shell(
     <li>No address-book or contact uploads.</li>
     <li>No advertising identifiers, ad networks or third-party ad trackers.</li>
     <li>No behavioural or advertising analytics, and no profiling for marketing. (We do
-        collect limited crash and performance diagnostics — see below.)</li>
+        collect crash and hang reports — see below.)</li>
     <li>No selling or sharing of personal data, ever.</li>
   </ul>
 
   <h2>crash reports and diagnostics</h2>
-  <p>We use <strong>Sentry</strong> (Functional Software, Inc.) for crash reporting and
-  performance diagnostics. A report may contain the app and OS version, device model, language
-  and region; the error or crash itself, including stack traces; and performance signals such
-  as memory use and timing. On the server only, a report may include your username or public
-  key when that is needed to reproduce a routing error.</p>
+  <p>We use <strong>Sentry</strong> (Functional Software, Inc.) for crash reporting. The app
+  sends a report only when it crashes, hangs for two seconds or more, or is stopped by the
+  system for using too much memory. A report may contain the app and OS version, device
+  model, language and region; the crash or hang itself, including stack traces; and up to
+  50 of the app's events before it (memory warnings, which screen was open), with
+  usernames, ids and key-shaped strings removed on the device. It contains no performance tracing, no record of network requests, no screenshots
+  or screen recordings, and no user or installation identifier. On the server only, a
+  report may include your username or public key when that is needed to reproduce a
+  routing error.</p>
   <p>Your encrypted messages are <strong>never</strong> included and remain unreadable to us
   and to Sentry. This data is used solely to diagnose stability problems — never for
   advertising, never to build a profile — and is not sold or shared. Sentry processes it as
@@ -1524,8 +1536,8 @@ const termsPage = shell(
   history — for anyone, under any circumstances.</p>
 
   <h2>reliability and diagnostics</h2>
-  <p>To keep the service running and to fix problems, we collect crash reports and technical
-  performance diagnostics via Sentry, as described in our
+  <p>To keep the service running and to fix problems, we collect crash and hang reports via
+  Sentry, as described in our
   <a href="/privacy">privacy policy</a>. This never includes the content of your messages.</p>
 
   <h2>acceptable use</h2>

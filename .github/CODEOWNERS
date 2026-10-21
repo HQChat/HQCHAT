@@ -1,0 +1,4 @@
+# The owner reviews every change once branch protection requires code-owner
+# review: the workflows and infra/ reach the production keys and hosts, and the
+# rest ships in the apps or the server.
+* @martinrougeron

@@ -102,12 +102,19 @@ lib.mkIf (cfg.role == "mqtt") {
     description = "Render EMQX's cookie, dashboard password and admin API key";
     before = [ "podman-emqx.service" ];
     requiredBy = [ "podman-emqx.service" ];
-    serviceConfig = {
+    serviceConfig = cfg.rootService // {
       Type = "oneshot";
       RemainAfterExit = true;
       RuntimeDirectory = "hqcat-emqx";
       RuntimeDirectoryMode = "0750";
       RuntimeDirectoryPreserve = "yes";
+      ReadWritePaths = [ "/var/lib/hqcat-emqx" ];
+      # Hands the API key file to EMQX's uid and then narrows its mode.
+      CapabilityBoundingSet = [
+        "CAP_CHOWN"
+        "CAP_FOWNER"
+      ];
+      RestrictAddressFamilies = [ "AF_UNIX" ];
     };
     path = [
       pkgs.coreutils
@@ -143,6 +150,9 @@ lib.mkIf (cfg.role == "mqtt") {
       imageFile = image;
       environment = {
         EMQX_NODE__NAME = "emqx@127.0.0.1";
+        # A single node: Erlang distribution (4370) listens on loopback only,
+        # as rpc does, never on every address of the host network.
+        ERL_FLAGS = "-kernel inet_dist_use_interface {127,0,0,1}";
         EMQX_API_KEY__BOOTSTRAP_FILE = "/run/hqcat-emqx/api_bootstrap";
       };
       environmentFiles = [ "/run/hqcat-emqx/emqx.env" ];

@@ -1,8 +1,13 @@
 # nftables. The app host answers 80/443 to Cloudflare only, the broker host
 # answers hqn/1 on 443, and the two talk over WireGuard inside the
-# environment's VPC. SSH is rate-limited everywhere; everything else is
-# dropped. Only root may reach the metadata service, whose user data holds the
-# host key. The Cloudflare sets start from cloudflare-ips.nix and refresh daily.
+# environment's VPC. SSH is rate-limited per source address, so a flood from
+# (or spoofed as) other addresses cannot use up the admin's share; everything
+# else is dropped. Only root may reach the metadata service, whose user data
+# holds the host key. Outbound is an allow-list too: DNS, NTP, HTTPS, WireGuard
+# and, from the app host, SSH to the broker and the database inside the VPC;
+# anything else is refused and logged, so a compromised service has no free
+# channel out. The Cloudflare sets start from cloudflare-ips.nix and refresh
+# daily.
 {
   config,
   lib,
@@ -34,6 +39,11 @@ let
     tcp dport 443 ct state new meter hqn_new { ip saddr limit rate ${perMinute}/minute burst ${perMinute} packets } accept
     tcp dport 443 ct state new drop
   '';
+  vpc = cfg.environment.vpcRange;
+  # DigitalOcean's managed Postgres: 25060 for the cluster, 25061 for pools.
+  egressRules = lib.optionalString (role == "app") ''
+    ip daddr ${vpc} tcp dport { 22, 25060-25061 } accept
+  '';
   cloudflareRules = lib.optionalString (role == "app") ''
     ip  saddr @cloudflare_v4 tcp dport { 80, 443 } accept
     ip6 saddr @cloudflare_v6 tcp dport { 80, 443 } accept
@@ -63,7 +73,8 @@ in
           iif lo accept
           ip protocol icmp accept
           ip6 nexthdr ipv6-icmp accept
-          tcp dport 22 ct state new limit rate 6/minute burst 6 packets accept
+          tcp dport 22 ct state new meter ssh4_new { ip saddr limit rate 6/minute burst 6 packets } accept
+          tcp dport 22 ct state new meter ssh6_new { ip6 saddr limit rate 6/minute burst 6 packets } accept
           ${cloudflareRules}
           ${wgRules}
           ${hqnRules}
@@ -74,8 +85,22 @@ in
         }
 
         chain output {
-          type filter hook output priority filter; policy accept;
+          type filter hook output priority filter; policy drop;
+          ct state established,related accept
+          ct state invalid drop
+          oif lo accept
           ip daddr 169.254.169.254 meta skuid != 0 reject
+          ip daddr 169.254.169.254 tcp dport 80 accept
+          ip protocol icmp accept
+          ip6 nexthdr ipv6-icmp accept
+          oifname "wg0" accept
+          meta l4proto { tcp, udp } th dport 53 accept
+          udp dport 123 accept
+          tcp dport 443 accept
+          ip daddr ${vpc} udp dport 51820 accept
+          ${egressRules}
+          limit rate 10/minute log prefix "hqcat egress refused: "
+          reject with icmpx type admin-prohibited
         }
       }
     '';
@@ -88,30 +113,56 @@ in
       "nftables.service"
     ];
     wants = [ "network-online.target" ];
-    serviceConfig = {
+    serviceConfig = config.hqcat.rootService // {
       Type = "oneshot";
-      PrivateTmp = true;
-      ProtectHome = true;
-      NoNewPrivileges = true;
+      CapabilityBoundingSet = [ "CAP_NET_ADMIN" ];
+      RestrictAddressFamilies = [
+        "AF_INET"
+        "AF_INET6"
+        "AF_UNIX"
+        "AF_NETLINK"
+      ];
     };
     path = with pkgs; [
       curl
       nftables
-      gnused
+      coreutils
     ];
+    # The body is fetched over the network and goes to nft as root: only a
+    # list made entirely of plain CIDRs, none wider than /8 and a plausible
+    # number of them, replaces the current set.
     script = ''
       set -euo pipefail
+      cidr() {
+        local v="$1" addr="''${2%/*}" bits="''${2##*/}"
+        [[ "$2" == */* && "$bits" =~ ^[0-9]{1,3}$ ]] || return 1
+        if [[ "$v" == 4 ]]; then
+          [[ "$addr" =~ ^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])$ ]] &&
+            ((10#$bits >= 8 && 10#$bits <= 32))
+        else
+          [[ "$addr" =~ ^[0-9a-fA-F:]{2,39}$ && "$addr" == *:* ]] && ((10#$bits >= 8 && 10#$bits <= 128))
+        fi
+      }
       for v in 4 6; do
         list="$(curl -fsS --max-time 20 "https://www.cloudflare.com/ips-v$v")" || {
           echo "cloudflare ips-v$v unreachable; keeping the current set"
           continue
         }
-        [ -n "$list" ] || continue
+        ranges=()
+        ok=1
+        while IFS= read -r line; do
+          line="$(tr -d '[:space:]' <<<"$line")"
+          [[ -n "$line" ]] || continue
+          cidr "$v" "$line" || { ok=0; break; }
+          ranges+=("$line")
+        done <<<"$list"
+        if ((ok == 0 || ''${#ranges[@]} < 3 || ''${#ranges[@]} > 200)); then
+          echo "cloudflare ips-v$v is not a plausible list of CIDRs (''${#ranges[@]} ranges); keeping the current set"
+          continue
+        fi
         {
           echo "flush set inet filter cloudflare_v$v"
-          echo -n "add element inet filter cloudflare_v$v { "
-          echo -n "$(echo "$list" | sed '/^$/d' | paste -sd, -)"
-          echo " }"
+          echo "add element inet filter cloudflare_v$v { $(IFS=,; echo "''${ranges[*]}") }"
         } | nft -f -
       done
     '';

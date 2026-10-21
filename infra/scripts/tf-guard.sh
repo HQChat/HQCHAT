@@ -1,14 +1,30 @@
 #!/usr/bin/env bash
-# Refuses a Terraform plan that destroys state no pipeline can restore: a
-# droplet's disk, EMQX's volume, the database, the published address. Any
-# delete of those types (including the delete half of a replacement) fails
+# Refuses a Terraform plan that destroys what no pipeline can restore, or
+# whose loss opens something or quietly breaks it:
+#
+#   state       droplets' disks, EMQX's volume, the database, the VPC, the
+#               published address
+#   exposure    the firewalls (a managed database without one accepts any
+#               address), the zone settings (their delete reverts TLS to the
+#               zone's earlier settings), the DNS records
+#   keys        host, WireGuard and origin keys, the database users'
+#               passwords: a new one reaches a running host only through a
+#               bundle, or not at all
+#
+# Any delete of those types (including the delete half of a replacement) fails
 # unless ALLOW_REPLACE=true. Lists every planned change in $GITHUB_STEP_SUMMARY.
 #
 #   infra/scripts/tf-guard.sh <plan.json>
 set -euo pipefail
 
 plan="${1:?usage: tf-guard.sh <plan.json>}"
-protected='["digitalocean_droplet","digitalocean_volume","digitalocean_database_cluster","digitalocean_database_db","digitalocean_reserved_ip"]'
+protected='[
+  "digitalocean_droplet", "digitalocean_volume", "digitalocean_database_cluster",
+  "digitalocean_database_db", "digitalocean_reserved_ip", "digitalocean_vpc",
+  "digitalocean_firewall", "digitalocean_database_firewall", "cloudflare_zone_settings_override",
+  "cloudflare_record", "tls_private_key", "wireguard_asymmetric_key", "random_bytes",
+  "digitalocean_database_user"
+]'
 
 changes="$(jq -c '[.resource_changes[]? | select(.change.actions != ["no-op"] and .change.actions != ["read"])
   | {address, type, actions: .change.actions}]' "$plan")"

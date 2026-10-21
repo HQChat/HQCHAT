@@ -3647,9 +3647,9 @@ public struct ReportInput: Equatable, Hashable {
      */
     public var reason: String
     /**
-     * Messages whose text is the excerpt.
+     * The one message, sent by the friend, whose text is the excerpt.
      */
-    public var msgIds: [String]
+    public var msgId: String?
     /**
      * What the user added.
      */
@@ -3669,8 +3669,8 @@ public struct ReportInput: Equatable, Hashable {
          * The reason chosen.
          */reason: String, 
         /**
-         * Messages whose text is the excerpt.
-         */msgIds: [String], 
+         * The one message, sent by the friend, whose text is the excerpt.
+         */msgId: String?, 
         /**
          * What the user added.
          */note: String?, 
@@ -3679,7 +3679,7 @@ public struct ReportInput: Equatable, Hashable {
          */block: Bool) {
         self.peer = peer
         self.reason = reason
-        self.msgIds = msgIds
+        self.msgId = msgId
         self.note = note
         self.block = block
     }
@@ -3702,7 +3702,7 @@ public struct FfiConverterTypeReportInput: FfiConverterRustBuffer {
             try ReportInput(
                 peer: FfiConverterString.read(from: &buf), 
                 reason: FfiConverterString.read(from: &buf), 
-                msgIds: FfiConverterSequenceString.read(from: &buf), 
+                msgId: FfiConverterOptionString.read(from: &buf), 
                 note: FfiConverterOptionString.read(from: &buf), 
                 block: FfiConverterBool.read(from: &buf)
         )
@@ -3711,7 +3711,7 @@ public struct FfiConverterTypeReportInput: FfiConverterRustBuffer {
     public static func write(_ value: ReportInput, into buf: inout [UInt8]) {
         FfiConverterString.write(value.peer, into: &buf)
         FfiConverterString.write(value.reason, into: &buf)
-        FfiConverterSequenceString.write(value.msgIds, into: &buf)
+        FfiConverterOptionString.write(value.msgId, into: &buf)
         FfiConverterOptionString.write(value.note, into: &buf)
         FfiConverterBool.write(value.block, into: &buf)
     }

@@ -21,13 +21,14 @@ command -v xcodebuild >/dev/null || {
 
 step() { printf '\n\033[1m── %s\033[0m\n' "$1"; }
 
-# 0. The Rust core (HQChatCore), rebuilt when its sources moved since the
-#     committed build, then its Swift tests against the xcframework.
+# 0. The Rust core (HQChatCore), built from this checkout: the xcframework is
+#     never committed, so a clone has none until this runs (cargo rebuilds only
+#     what changed). The committed bindings must be the ones it generates.
 step "Rust core (HQChatCore)"
 core_pkg=../../core/swift/HQChatCore
-if [[ "$(cat "$core_pkg/.source" 2>/dev/null)" != "$(bash ../../core/hqchat-ffi/apple-source-hash.sh)" ]]; then
-  nix develop "$(cd ../.. && pwd)#apple" --command bash ../../core/hqchat-ffi/build-apple.sh
-  echo "⚠️  rebuilt core/swift/HQChatCore: commit it with the core change"
+nix develop "$(cd ../.. && pwd)#apple" --command bash ../../core/hqchat-ffi/build-apple.sh
+if ! git diff --quiet -- "$core_pkg/Sources"; then
+  echo "⚠️  the core's Swift bindings changed: commit core/swift/HQChatCore/Sources with the core change"
 fi
 (cd "$core_pkg" && xcrun swift test)
 # The shell that carries out the engine's effects (apps/apple/CoreShell).
