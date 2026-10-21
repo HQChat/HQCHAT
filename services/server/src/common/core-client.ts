@@ -88,8 +88,12 @@ export class CoreClient {
   }
 
   private handle(effects: CoreEffect[]): void {
+    // Every write first, in the order the core sealed them: a handler that
+    // answers inline must not put its reply on the wire ahead of this batch's
+    // frames (a ratchet step's first message among them, which the peer needs
+    // before anything later on that chain opens).
+    for (const e of effects) this.carryOut(e);
     for (const e of effects) {
-      this.carryOut(e);
       if (e.kind === "messageAdded" && e.message && !e.message.outgoing) {
         for (const fn of this.messageHandlers) fn(e.message);
       }
