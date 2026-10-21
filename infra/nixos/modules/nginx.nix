@@ -45,9 +45,11 @@ lib.mkIf (cfg.role == "app") {
     enable = true;
     recommendedOptimisation = true;
     recommendedTlsSettings = false;
+    # No version in headers or error pages. The module writes the directive
+    # itself: a second one in the config below fails nginx's config test.
+    serverTokens = false;
 
     commonHttpConfig = ''
-      server_tokens off;
       limit_req_zone $binary_remote_addr zone=api:10m rate=20r/s;
       map $request_method $checkout_limit_key {
           POST    $binary_remote_addr;
