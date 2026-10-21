@@ -10,7 +10,13 @@ all-features = true
 # crates alike; an exception goes here with the advisory id and a reason.
 yanked = "deny"
 unmaintained = "all"
-ignore = []
+ignore = [
+    # basic-toml is unmaintained. It comes in through askama_derive, which
+    # uniffi's bindings generator uses at build time to read its own
+    # templates and uniffi.toml: nothing it parses comes from outside the
+    # repository, and it ships in no binary. Drop this when uniffi moves off it.
+    { id = "RUSTSEC-2026-0374", reason = "build-time only, through uniffi's askama; parses no untrusted input" },
+]
 
 [licenses]
 # Permissive licences and MPL-2.0 (uniffi, file-level copyleft), all
