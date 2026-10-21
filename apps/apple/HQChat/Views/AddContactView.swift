@@ -94,8 +94,7 @@ struct AddContactView: View {
             TextField("username", text: $query)
                 .textFieldStyle(.plain)
                 .foregroundColor(HQColor.textPrimary)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
+                .hqPrivateTextEntry(ascii: true)
                 // Filtering on input, not just validating on submit: nothing
                 // outside the username alphabet can be typed or pasted here, so
                 // no crafted string ever reaches the lookup.

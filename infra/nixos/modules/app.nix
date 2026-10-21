@@ -35,8 +35,15 @@ let
 
   cred = name: "${name}:${secrets}/${name}";
 
+  # Where the bot reaches the server, and so the origin its sign-in proves.
+  botBaseUrl = "http://127.0.0.1:8090";
+
   common = {
     NODE_ENV = "production";
+    # nginx resolves CF-Connecting-IP (set_real_ip_from Cloudflare only) and
+    # passes the result as X-Real-IP: the one client address the server's
+    # per-address limits may believe.
+    TRUSTED_PROXY = "x-real-ip";
     LOG_LEVEL = "info";
     SENTRY_ENVIRONMENT = env.name;
     SENTRY_DSN = env.sentryDsn;
@@ -114,6 +121,9 @@ let
       LISTEN_HOST = "127.0.0.1,${wg.app}";
       SERVER_VERSION = server.version;
       PUBLIC_BASE_URL = "https://${env.domain}";
+      # The origins a sign-in proof may be bound to: the apps' API host and the
+      # bot's own (its BASE_URL below).
+      AUTH_ORIGINS = "https://${lib.toLower (env.apiHost or env.domain)},${botBaseUrl}";
       BOT_ID_FILE = "%d/bot_id";
       EMQX_API_URL = "http://${wg.mqtt}:18083";
       EMQX_API_KEY = "hqcat-svc";
@@ -131,9 +141,22 @@ let
     };
 
   # Operator tools (scripts/reports.ts, scripts/check-push.ts) run as a
-  # transient unit with the server's environment and credentials:
+  # transient unit with the server's environment, credentials and sandbox:
   #   hqcat-ops reports [<report-id> <disposition>]
   #   hqcat-ops check-push <username>
+  sandboxProp = v: if builtins.isBool v then (if v then "yes" else "no") else toString v;
+  sandboxArgs = lib.concatStringsSep " " (
+    lib.concatLists (
+      lib.mapAttrsToList
+        (k: v: map (x: "-p ${lib.escapeShellArg "${k}=${sandboxProp x}"}") (lib.toList v))
+        (
+          removeAttrs cfg.hardenedService [
+            "Restart"
+            "RestartSec"
+          ]
+        )
+    )
+  );
   exportLine =
     k: v:
     if lib.hasPrefix "%d/" v then
@@ -160,7 +183,7 @@ let
           exit 2
           ;;
       esac
-      exec systemd-run --pty --wait --collect --quiet \
+      exec systemd-run --pty --wait --collect --quiet ${sandboxArgs} \
         ${lib.concatMapStringsSep " " (c: "-p LoadCredential=${cred c}") serverCreds} \
         ${opsEnv} "$tool" "$@"
     '';
@@ -222,7 +245,7 @@ lib.mkIf (cfg.role == "app") {
     crit = 460;
     creds = [ "bot_seed" ];
     env = {
-      BASE_URL = "http://127.0.0.1:8090";
+      BASE_URL = botBaseUrl;
       MQTT_URL = "ws://${wg.mqtt}:8083/mqtt";
       BOT_USERNAME = "helper";
       BOT_STATE_DIR = "/var/lib/hqcat-bot";

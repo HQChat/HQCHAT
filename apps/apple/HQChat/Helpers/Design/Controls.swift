@@ -85,6 +85,27 @@ struct HQFieldLabel: View {
     }
 }
 
+// MARK: - Private text entry
+
+extension View {
+    /// Text the system must not learn from or hand elsewhere: no
+    /// autocorrection, spell-check or predictions (they teach the keyboard's
+    /// dictionary the words typed), and no Writing Tools (which may send the
+    /// text off the device to be rewritten). `ascii` asks for the ASCII
+    /// keyboard, for handles and addresses.
+    func hqPrivateTextEntry(capitalize: Bool = false, ascii: Bool = false) -> some View {
+        #if os(iOS)
+        self.autocorrectionDisabled()
+            .textInputAutocapitalization(capitalize ? .sentences : .never)
+            .keyboardType(ascii ? .asciiCapable : .default)
+            .writingToolsBehavior(.disabled)
+        #else
+        self.autocorrectionDisabled()
+            .writingToolsBehavior(.disabled)
+        #endif
+    }
+}
+
 /// A dark hard-edge text field with an optional leading green accent bar / "@"
 /// prefix, matching the onboarding mockups.
 struct HQTextField: View {
@@ -93,6 +114,8 @@ struct HQTextField: View {
     var monospaced: Bool = false
     var prefix: String? = nil
     var accent: Bool = false
+    /// The ASCII keyboard: for handles and server addresses.
+    var ascii: Bool = false
 
     @FocusState private var focused: Bool
 
@@ -134,14 +157,9 @@ struct HQTextField: View {
         .animation(.easeOut(duration: 0.16), value: focused)
     }
 
-    @ViewBuilder private var field: some View {
-        #if os(iOS)
+    private var field: some View {
         TextField(placeholder, text: $text)
-            .textInputAutocapitalization(.never)
-            .autocorrectionDisabled()
-        #else
-        TextField(placeholder, text: $text)
-        #endif
+            .hqPrivateTextEntry(ascii: ascii)
     }
 }
 
@@ -183,6 +201,7 @@ struct HQSearchField: View {
             TextField(placeholder, text: $text)
                 .textFieldStyle(.plain)
                 .foregroundColor(HQColor.textPrimary)
+                .hqPrivateTextEntry()
             if !text.isEmpty {
                 Button {
                     text = ""

@@ -1,7 +1,7 @@
 //! What `src/server/auth.ts`, `api.ts`, `emqx.ts` and the gateway's key
 //! loading call, replacing `src/protocol/{hqc,auth-proof,mqtt-proof,identity,topics}.ts`.
 
-use hqc::{Ciphertext, PublicKey, SecretKey, Seed, SharedSecret};
+use hqc::{Ciphertext, PublicKey, SecretKey, Seed};
 use hqchat_protocol::topics::{self, TopicId};
 use hqchat_protocol::{PeerId, auth_proof, mqtt_proof};
 use napi::bindgen_prelude::Buffer;
@@ -28,7 +28,7 @@ pub struct Encapsulation {
 }
 
 /// The deterministic keypair of a 32-byte seed (`HqcWrapper.keypairFromSeed`).
-#[napi]
+#[napi(catch_unwind)]
 pub fn hqc_keypair_from_seed(seed: Buffer) -> napi::Result<HqcKeyPair> {
     let seed: [u8; 32] = seed
         .as_ref()
@@ -42,7 +42,7 @@ pub fn hqc_keypair_from_seed(seed: Buffer) -> napi::Result<HqcKeyPair> {
 }
 
 /// A fresh ciphertext for `pk` and its secret (`HqcWrapper.encapsulate`).
-#[napi]
+#[napi(catch_unwind)]
 pub fn hqc_encapsulate(pk: Buffer) -> napi::Result<Encapsulation> {
     let pk = PublicKey::from_bytes(&pk).map_err(err)?;
     let (ct, ss) = hqc::encapsulate(&pk).map_err(err)?;
@@ -53,7 +53,7 @@ pub fn hqc_encapsulate(pk: Buffer) -> napi::Result<Encapsulation> {
 }
 
 /// The secret `ct` carries for `sk`; implicit rejection (`HqcWrapper.decapsulate`).
-#[napi]
+#[napi(catch_unwind)]
 pub fn hqc_decapsulate(sk: Buffer, ct: Buffer) -> napi::Result<Buffer> {
     let sk = SecretKey::from_bytes(&sk).map_err(err)?;
     let ct = Ciphertext::from_bytes(&ct).map_err(err)?;
@@ -64,20 +64,36 @@ pub fn hqc_decapsulate(sk: Buffer, ct: Buffer) -> napi::Result<Buffer> {
         .into())
 }
 
-/// `HKDF(ss, "auth")`, what `/auth/verify` expects (`authProof`).
-#[napi]
-pub fn auth_proof(ss: Buffer) -> napi::Result<Buffer> {
-    let ss: [u8; 32] = ss
-        .as_ref()
-        .try_into()
-        .map_err(|_| err("a shared secret is 32 bytes"))?;
-    Ok(auth_proof::auth_proof(&SharedSecret::from_bytes(ss))
-        .to_vec()
-        .into())
+/// What `/auth/init` returns, and the proof `/auth/verify` must present.
+#[napi(object)]
+pub struct AuthChallenge {
+    /// The HQC ciphertext to the account's key.
+    pub ct: Buffer,
+    /// The proof that answers it, to keep until the verify.
+    pub proof: Buffer,
+}
+
+/// A sign-in challenge to `pk` (raw bytes) for a sign-in at `origin`
+/// (`scheme://host[:port]`). The shared secret never reaches JS: only the
+/// proof that answers the challenge comes back.
+#[napi(catch_unwind)]
+pub fn auth_challenge(pk: Buffer, origin: String) -> napi::Result<AuthChallenge> {
+    let pk = PublicKey::from_bytes(&pk).map_err(err)?;
+    let (ct, proof) = auth_proof::challenge(&pk, &origin).map_err(err)?;
+    Ok(AuthChallenge {
+        ct: ct.as_bytes().to_vec().into(),
+        proof: proof.to_vec().into(),
+    })
+}
+
+/// `scheme://host[:port]` of `url`, as the sign-in proof binds it, or null.
+#[napi(catch_unwind)]
+pub fn origin_of(url: String) -> Option<String> {
+    auth_proof::origin_of(&url)
 }
 
 /// Constant-time comparison of a presented proof with the expected one.
-#[napi]
+#[napi(catch_unwind)]
 pub fn auth_proof_matches(expected: Buffer, offered: Buffer) -> bool {
     <[u8; 32]>::try_from(expected.as_ref()).is_ok_and(|e| auth_proof::proof_matches(&e, &offered))
 }
@@ -96,7 +112,7 @@ pub struct ConnectProof {
 }
 
 /// Strict parse of a v1 password; `null` for anything off the shape (`parseProofPassword`).
-#[napi]
+#[napi(catch_unwind)]
 pub fn parse_connect_proof(password: String) -> Option<ConnectProof> {
     let p = mqtt_proof::parse_password(&password)?;
     Some(ConnectProof {
@@ -108,7 +124,7 @@ pub fn parse_connect_proof(password: String) -> Option<ConnectProof> {
 }
 
 /// Whether `ts` is within ±60 s of `nowSec`, inclusive (`isFreshTimestamp`).
-#[napi]
+#[napi(catch_unwind)]
 pub fn is_fresh_timestamp(ts: i64, now_sec: i64) -> bool {
     mqtt_proof::is_fresh_timestamp(ts, now_sec)
 }
@@ -141,14 +157,14 @@ const fn u32_of(n: usize) -> u32 {
 
 /// Whether `raw` is an Ed25519 public key worth registering for CONNECT
 /// proofs: 32 bytes, a canonical point, not of small order (`ed25519PublicKey`).
-#[napi]
+#[napi(catch_unwind)]
 pub fn is_signing_key(raw: Buffer) -> bool {
     <[u8; 32]>::try_from(raw.as_ref()).is_ok_and(|key| mqtt_proof::is_valid_public_key(&key))
 }
 
 /// Whether the proof's signature verifies for `clientid` under the raw
 /// 32-byte Ed25519 key (`verifyProofSignature` over `proofMessage`).
-#[napi]
+#[napi(catch_unwind)]
 pub fn verify_connect_proof(public_key: Buffer, clientid: String, proof: ConnectProof) -> bool {
     let (Ok(key), Ok(id), Ok(nonce), Ok(sig)) = (
         <[u8; 32]>::try_from(public_key.as_ref()),
@@ -166,25 +182,25 @@ pub fn verify_connect_proof(public_key: Buffer, clientid: String, proof: Connect
 }
 
 /// The id of a public key given as hex in either case (`peerId`).
-#[napi]
+#[napi(catch_unwind)]
 pub fn peer_id(public_key_hex: String) -> String {
     PeerId::of_hex(&public_key_hex).to_string()
 }
 
 /// Whether `value` is an id: 64 lowercase hex (`isPeerId`).
-#[napi]
+#[napi(catch_unwind)]
 pub fn is_peer_id(value: String) -> bool {
     PeerId::parse(&value).is_ok()
 }
 
 /// Whether `publicKeyHex` is the key `id` names (`keyMatchesId`).
-#[napi]
+#[napi(catch_unwind)]
 pub fn key_matches_id(public_key_hex: String, id: String) -> bool {
     PeerId::of_hex(&public_key_hex).as_str() == id.to_lowercase()
 }
 
 /// `cv/{convoId}` (`conversationTopic`).
-#[napi]
+#[napi(catch_unwind)]
 pub fn conversation_topic(convo_id: String) -> napi::Result<String> {
     Ok(topics::conversation_topic(
         &TopicId::parse(&convo_id).map_err(err)?,
@@ -192,7 +208,7 @@ pub fn conversation_topic(convo_id: String) -> napi::Result<String> {
 }
 
 /// `hs/{handshakeId}` (`handshakeTopic`).
-#[napi]
+#[napi(catch_unwind)]
 pub fn handshake_topic(handshake_id: String) -> napi::Result<String> {
     Ok(topics::handshake_topic(
         &TopicId::parse(&handshake_id).map_err(err)?,

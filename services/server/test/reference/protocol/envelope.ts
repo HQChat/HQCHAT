@@ -47,7 +47,9 @@ export const FRAME_VERSION = 3;
 const FLAG_RK = 0x01;
 const FLAG_KEMCT = 0x02;
 const FLAG_ONE_TIME = 0x04;
-const ALL_FLAGS = FLAG_RK | FLAG_KEMCT | FLAG_ONE_TIME;
+/** The sealed plaintext is padded (core/hqchat-protocol/src/padding.rs). */
+const FLAG_PADDED = 0x08;
+const ALL_FLAGS = FLAG_RK | FLAG_KEMCT | FLAG_ONE_TIME | FLAG_PADDED;
 
 const OFF_VERSION = 4;
 const OFF_KIND = 5;
@@ -89,6 +91,8 @@ export interface Frame {
   ctMt?: Buffer;
   ctOt?: Buffer;
   otId?: number;
+  /** The payload's plaintext is padded to 256-byte classes. */
+  padded?: boolean;
   /** The initiator's public key; must hash to `sender`. */
   senderPk?: Buffer;
   payload: Buffer;
@@ -177,7 +181,13 @@ export function frameHeader(f: Omit<Frame, "payload">): Buffer | null {
   MAGIC.copy(fixed, 0);
   fixed.writeUInt8(FRAME_VERSION, OFF_VERSION);
   fixed.writeUInt8(KIND_BYTE[f.t], OFF_KIND);
-  fixed.writeUInt8((hasRk ? FLAG_RK : 0) | (hasKemCt ? FLAG_KEMCT : 0) | (hasOneTime ? FLAG_ONE_TIME : 0), OFF_FLAGS);
+  fixed.writeUInt8(
+    (hasRk ? FLAG_RK : 0) |
+      (hasKemCt ? FLAG_KEMCT : 0) |
+      (hasOneTime ? FLAG_ONE_TIME : 0) |
+      (f.padded ? FLAG_PADDED : 0),
+    OFF_FLAGS,
+  );
   sender.copy(fixed, OFF_SENDER);
   to.copy(fixed, OFF_TO);
   cid.copy(fixed, OFF_CID);
@@ -299,6 +309,7 @@ function readFrame(raw: Buffer): { frame: Frame; aad: Buffer } | null {
     ...(kemCt ? { kemCt: copy(kemCt) } : {}),
     ...(init ? { senderPk: copy(init.senderPk), ctId: copy(init.ctId), ctMt: copy(init.ctMt) } : {}),
     ...(oneTime ? { ctOt: copy(oneTime.ctOt), otId: oneTime.otId } : {}),
+    ...(flags & FLAG_PADDED ? { padded: true } : {}),
   };
   return { frame, aad: Buffer.from(raw.subarray(0, headerEnd)) };
 }

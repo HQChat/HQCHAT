@@ -8,8 +8,11 @@
 #
 # The comment after each SHA is the tag it came from; Dependabot reads it and
 # keeps it in step when it bumps the pin.
-# Monthly and capped: each Dependabot PR runs CI, and Actions minutes are
-# billed on this private repo.
+# Monthly and capped: each Dependabot PR runs CI and needs a review. The Rust
+# core's crates and the Terraform providers are watched too. Not covered: the
+# flake inputs (nixpkgs, rust-overlay) and the EMQX image digest in
+# infra/nixos/modules/mqtt.nix, which Dependabot cannot read; scan.yml's
+# weekly cargo deny and npm audit report advisories in between.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -46,3 +49,22 @@ updates:
     groups:
       minor-and-patch:
         update-types: ["minor", "patch"]
+
+  - package-ecosystem: cargo
+    directory: /core
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "deps"
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: terraform
+    directory: /infra/terraform
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 1
+    commit-message:
+      prefix: "infra"

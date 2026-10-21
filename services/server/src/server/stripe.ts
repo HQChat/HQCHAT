@@ -106,6 +106,82 @@ export function displayNameFromSession(session: CheckoutCustomFields): string | 
   return value.length > 0 ? value.slice(0, 60) : null;
 }
 
+/** The part of a webhook event that decides whether it names a supporter. */
+export interface SupporterEvent {
+  type: string;
+  data: { object: CheckoutCustomFields & { payment_status?: string | null } };
+}
+
+/**
+ * The name to put on the supporters page for a webhook event, or null. Only a
+ * paid checkout names anyone: a completed session whose payment is still
+ * pending (an asynchronous method) is named when Stripe reports it succeeded,
+ * and never if it fails.
+ */
+export function supporterFromEvent(event: SupporterEvent): string | null {
+  const paid =
+    (event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded") &&
+    event.data.object.payment_status === "paid";
+  return paid ? displayNameFromSession(event.data.object) : null;
+}
+
+export interface TierLabel {
+  priceId: string;
+  label: string;
+}
+
+/** Reads each configured tier's label from Stripe; `complete` is false when any read failed. */
+async function loadTierLabels(): Promise<{ labels: TierLabel[]; complete: boolean }> {
+  const out: TierLabel[] = [];
+  let complete = true;
+  for (const priceId of DONATION_PRICE_IDS) {
+    try {
+      const price = await stripeClient().prices.retrieve(priceId);
+      const amount = typeof price.unit_amount === "number" ? price.unit_amount / 100 : null;
+      const symbols: Record<string, string> = { eur: "€", usd: "$" };
+      const symbol = symbols[price.currency] ?? "";
+      out.push({
+        priceId,
+        label: amount === null ? "choose" : `${symbol}${amount.toFixed(0)} / month`,
+      });
+    } catch (e) {
+      complete = false;
+      logger.warn(`[stripe] could not read price ${priceId}: ${(e as Error).message}`);
+      out.push({ priceId, label: "monthly" });
+    }
+  }
+  return { labels: out, complete };
+}
+
+/**
+ * A value loaded at most once per `ttlMs` (`failedTtlMs` when the load was
+ * incomplete), with concurrent callers sharing one load.
+ */
+export function labelCache(
+  load: () => Promise<{ labels: TierLabel[]; complete: boolean }>,
+  opts: { ttlMs: number; failedTtlMs: number; now?: () => number },
+): { get: () => Promise<TierLabel[]> } {
+  const now = opts.now ?? Date.now;
+  let held: { until: number; labels: TierLabel[] } | null = null;
+  let loading: Promise<TierLabel[]> | null = null;
+  return {
+    get() {
+      if (held && now() < held.until) return Promise.resolve(held.labels);
+      loading ??= load()
+        .then(({ labels, complete }) => {
+          held = { until: now() + (complete ? opts.ttlMs : opts.failedTtlMs), labels };
+          return labels;
+        })
+        .finally(() => {
+          loading = null;
+        });
+      return loading;
+    },
+  };
+}
+
+const labels = labelCache(loadTierLabels, { ttlMs: 10 * 60_000, failedTtlMs: 60_000 });
+
 export const StripeService = {
   /** The Checkout URL for the website's donate button. */
   async createCheckout(baseUrl: string, choice: DonationChoice): Promise<string> {
@@ -119,24 +195,12 @@ export const StripeService = {
     return stripeClient().webhooks.constructEvent(rawBody, signature, process.env.STRIPE_WEBHOOK_SECRET!);
   },
 
-  /** Labels for the configured tiers, read from Stripe; a fallback label when unreachable. */
-  async tierLabels(): Promise<Array<{ priceId: string; label: string }>> {
-    const out: Array<{ priceId: string; label: string }> = [];
-    for (const priceId of DONATION_PRICE_IDS) {
-      try {
-        const price = await stripeClient().prices.retrieve(priceId);
-        const amount = typeof price.unit_amount === "number" ? price.unit_amount / 100 : null;
-        const symbols: Record<string, string> = { eur: "€", usd: "$" };
-        const symbol = symbols[price.currency] ?? "";
-        out.push({
-          priceId,
-          label: amount === null ? "choose" : `${symbol}${amount.toFixed(0)} / month`,
-        });
-      } catch (e) {
-        logger.warn(`[stripe] could not read price ${priceId}: ${(e as Error).message}`);
-        out.push({ priceId, label: "monthly" });
-      }
-    }
-    return out;
+  /**
+   * Labels for the configured tiers, read from Stripe and kept for 10
+   * minutes, so page views do not become Stripe API calls; a fallback label
+   * when unreachable, kept for a minute.
+   */
+  tierLabels(): Promise<TierLabel[]> {
+    return labels.get();
   },
 };

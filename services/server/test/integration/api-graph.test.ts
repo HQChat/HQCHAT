@@ -85,6 +85,7 @@ const created: string[] = [];
 
 interface Account {
   id: string;
+  pkHex: string;
   token: string;
   username: string;
 }
@@ -103,7 +104,7 @@ async function account(): Promise<Account> {
   await DB.ensureUser(id, pkHex);
   await DB.setUsername(id, username);
   created.push(id);
-  return { id, token: await DB.mintSessionToken(id), username };
+  return { id, pkHex, token: await DB.mintSessionToken(id), username };
 }
 
 /** Two accounts that are already friends. */
@@ -123,6 +124,7 @@ async function cleanup(): Promise<void> {
     `DELETE FROM sessions WHERE id = ANY($1::text[])`,
     `DELETE FROM invites WHERE from_id = ANY($1::text[]) OR to_id = ANY($1::text[])`,
     `DELETE FROM friendships WHERE id_lo = ANY($1::text[]) OR id_hi = ANY($1::text[])`,
+    `DELETE FROM ended_friendships WHERE id_lo = ANY($1::text[]) OR id_hi = ANY($1::text[])`,
     `DELETE FROM prekeys_onetime WHERE id = ANY($1::text[])`,
     `DELETE FROM prekeys_medium WHERE id = ANY($1::text[])`,
     `DELETE FROM push_tokens WHERE id = ANY($1::text[])`,
@@ -136,7 +138,7 @@ async function cleanup(): Promise<void> {
       /* a column this schema does not have */
     }
   }
-  await q(`DELETE FROM rate_counters WHERE key LIKE 'invite:day:%' OR key LIKE 'report:day:%'`);
+  await q(`DELETE FROM rate_counters WHERE key LIKE 'invite:day:%' OR key LIKE 'report:day:%' OR key LIKE 'prekeys:%'`);
   created.length = 0;
 }
 
@@ -348,6 +350,8 @@ test("a one-time prekey is handed out once and never again", async () => {
   // conversations derive from the same ephemeral secret, which is the property
   // the pool exists to avoid.
   const [a, b] = await friends();
+  const c = await account();
+  await DB.createFriendship(c.id, b.id);
   const upload = await call(
     "POST",
     "/prekeys",
@@ -364,11 +368,11 @@ test("a one-time prekey is handed out once and never again", async () => {
   assert.equal(upload.body.accepted, 2);
 
   const seen = new Set<number>();
-  for (let i = 0; i < 2; i++) {
-    const res = await call("POST", "/prekeys/claim", { peer: b.username }, a.token);
+  for (const claimer of [a, c]) {
+    const res = await call("POST", "/prekeys/claim", { peer: b.username }, claimer.token);
     assert.equal(res.status, 200, res.text);
     assert.equal(res.body.medium, KEY(0xaa), "the medium-term key comes with every claim");
-    assert.ok(res.body.oneTime, `claim ${i} returned no one-time key`);
+    assert.ok(res.body.oneTime, `a claim by ${claimer.username} returned no one-time key`);
     assert.ok(!seen.has(res.body.oneTime.id), `one-time key ${res.body.oneTime.id} was served twice`);
     seen.add(res.body.oneTime.id);
   }
@@ -423,6 +427,75 @@ test("a stranger cannot drain a pool, however many sessions they hold", async ()
     1,
     "the refused claim consumed a key anyway",
   );
+});
+
+test("one friend cannot drain another's one-time pool", async () => {
+  // Every account is the bot's friend, so without a per-pair allowance anyone
+  // could empty the bot's pool and leave every later initiator with the
+  // medium-term key alone.
+  const owner = await account();
+  const [greedy, honest] = [await account(), await account()];
+  await DB.createFriendship(owner.id, greedy.id);
+  await DB.createFriendship(owner.id, honest.id);
+  const oneTime = Array.from({ length: 8 }, (_, i) => ({ id: i, prekey: KEY(0xb0 + i) }));
+  assert.equal((await call("POST", "/prekeys", { medium: KEY(0xaa), oneTime }, owner.token)).status, 200);
+
+  const greedyClaims = [];
+  for (let i = 0; i < 8; i++) greedyClaims.push(await call("POST", "/prekeys/claim", { peer: owner.id }, greedy.token));
+  assert.ok(
+    greedyClaims.every((r) => r.status === 200 && r.body.medium === KEY(0xaa)),
+    "every claim still gets the bundle",
+  );
+  assert.equal(greedyClaims.filter((r) => r.body.oneTime).length, 1, "one friend took more than one one-time key");
+
+  const later = await call("POST", "/prekeys/claim", { peer: owner.id }, honest.token);
+  assert.ok(later.body.oneTime, "the honest initiator was left with the medium-term key only");
+  assert.equal((await call("GET", "/prekeys/count", undefined, owner.token)).body.remaining, 6);
+});
+
+test("the one-time pool is capped, keeping the newest", async () => {
+  const owner = await account();
+  for (let batch = 0; batch < 6; batch++) {
+    const oneTime = Array.from({ length: 8 }, (_, i) => ({ id: batch * 8 + i, prekey: KEY(0xb0 + i) }));
+    assert.equal((await call("POST", "/prekeys", { medium: KEY(0xaa), oneTime }, owner.token)).status, 200);
+  }
+  const count = (await call("GET", "/prekeys/count", undefined, owner.token)).body;
+  assert.equal(count.remaining, 32, "six uploads of eight were all kept");
+  assert.equal(count.maxId, 47, "the newest keys were the ones dropped");
+  const ids = await q<{ key_id: number }>(`SELECT min(key_id) AS key_id FROM prekeys_onetime WHERE id = $1`, [
+    owner.id,
+  ]);
+  assert.equal(ids.rows[0]!.key_id, 16, "the oldest sixteen go");
+});
+
+test("prekey uploads are limited per day", async () => {
+  const owner = await account();
+  await q(`INSERT INTO rate_counters (key, n, window_ends_at) VALUES ($1, 30, now() + interval '1 day')`, [
+    `prekeys:day:${owner.id}`,
+  ]);
+  const res = await call("POST", "/prekeys", { medium: KEY(0xaa), oneTime: [] }, owner.token);
+  assert.equal(res.status, 429, res.text);
+});
+
+test("a one-time prekey id past the column's range is a 400, not a 500", async () => {
+  const owner = await account();
+  for (const id of [2 ** 31, 2 ** 32, Number.MAX_SAFE_INTEGER]) {
+    const res = await call(
+      "POST",
+      "/prekeys",
+      { medium: KEY(0xaa), oneTime: [{ id, prekey: KEY(0xb1) }] },
+      owner.token,
+    );
+    assert.equal(res.status, 400, `${id}: ${res.text}`);
+    assert.equal(res.body.error, "INVALID_FIELD");
+  }
+  const top = await call(
+    "POST",
+    "/prekeys",
+    { medium: KEY(0xaa), oneTime: [{ id: 2 ** 31 - 1, prekey: KEY(0xb1) }] },
+    owner.token,
+  );
+  assert.equal(top.status, 200, top.text);
 });
 
 test("an upload larger than the cap is refused whole", async () => {
@@ -535,13 +608,19 @@ test("deleting an account leaves no row anywhere, and ends the live connection",
     ["prekeys_medium", "id"],
     ["prekeys_onetime", "id"],
     ["friendships", "id_lo"],
-    // Both directions: a block this user placed and a block placed on them.
+    ["ended_friendships", "id_lo"],
+    ["ended_friendships", "id_hi"],
+    // The blocks this user placed. A block placed ON them is the blocker's, below.
     ["blocks", "blocker_id"],
-    ["blocks", "blocked_id"],
   ] as const) {
     const rows = await q(`SELECT 1 FROM ${table} WHERE ${col} = $1`, [a.id]);
     assert.equal(rows.rows.length, 0, `${table}.${col} still holds a row for the deleted account`);
   }
+
+  // The second exception: b's block on a is b's data, and it outlives a. The
+  // same key signs back in to the same id, so dropping it would let a blocked
+  // account lift every block on it by deleting itself.
+  assert.deepEqual(await DB.blockedIds(b.id), [a.id], "deleting the blocked account lifted the block on it");
 
   // The exception, and its limit. A report ABOUT the deleted user survives —
   // otherwise deleting an account erases the complaints against it, which makes
@@ -576,6 +655,16 @@ test("deleting an account leaves no row anywhere, and ends the live connection",
   assert.equal(kicks.length, 1, "the live connection was left open");
   assert.deepEqual(kicks[0]!.args, [a.id]);
 
+  // The former friend is taken off the retired topics and told to refetch.
+  const revoked = called("revokeFriendshipTopics");
+  assert.equal(revoked.length, 1);
+  assert.deepEqual(revoked[0]!.args.slice(0, 2), [a.id, b.id]);
+  assert.equal((revoked[0]!.args[2] as { convoId: string }).convoId, hash);
+  assert.ok(
+    called("notifyGraphChanged").some((c) => (c.args[0] as string[]).includes(b.id)),
+    "the former friend was not nudged",
+  );
+
   // BOTH sessions, not just the one that asked.
   assert.equal((await call("GET", "/friends", undefined, a.token)).status, 401, "the deleting session");
   assert.equal(
@@ -589,6 +678,26 @@ test("deleting an account leaves no row anywhere, and ends the live connection",
   assert.equal((await q(`SELECT 1 FROM users WHERE id = $1`, [b.id])).rows.length, 1);
   const left = (await call("GET", "/friends", undefined, b.token)).body.friends as Array<{ id: string }>;
   assert.ok(!left.some((f) => f.id === a.id), "the remaining friend is still handed the deleted account's topics");
+});
+
+test("a blocked account that deletes itself and signs back in is still blocked", async () => {
+  const [victim, abuser] = await friends();
+  assert.equal((await call("POST", "/friends/block", { peer: abuser.id }, victim.token)).status, 200);
+  assert.equal((await call("POST", "/account/delete", {}, abuser.token)).status, 200);
+
+  // What /auth/verify does for a returning key: the same id, a new session.
+  assert.equal(await DB.identityKey(abuser.id), null, "the account is gone");
+  await DB.ensureUser(abuser.id, abuser.pkHex);
+  const token = await DB.mintSessionToken(abuser.id);
+
+  assert.deepEqual(
+    (await call("GET", "/friends/blocked", undefined, victim.token)).body.blocked,
+    [abuser.id],
+    "the victim's block list was emptied by the abuser's delete",
+  );
+  const again = await call("POST", "/friends/invite", { to: victim.id }, token);
+  assert.equal(again.status, 404, "the same id invites its blocker again");
+  assert.deepEqual((await call("GET", "/friends/invites", undefined, victim.token)).body.invites, []);
 });
 
 test("deletion needs a session, like everything else", async () => {
@@ -614,6 +723,38 @@ test("the friend ceiling is checked on both sides of an accept", async () => {
   assert.equal(res.status, 409, res.text);
   assert.equal(res.body.error, "FRIEND_LIMIT");
   assert.equal(res.body.peer, true, "the client is told it is the other side that is full");
+});
+
+test("concurrent accepts cannot overshoot the friend ceiling", async () => {
+  // The cap is checked inside the accept's transaction with both accounts
+  // locked; checked before it, ten simultaneous accepts all saw room.
+  const me = await account();
+  const cap = Number(process.env.FRIEND_CAP || 150);
+  await q(
+    `INSERT INTO friendships (id_lo, id_hi)
+     SELECT least($1, f), greatest($1, f)
+       FROM (SELECT md5(i::text || $1) || md5($1 || i::text) AS f FROM generate_series(1, $2) i) fake`,
+    [me.id, cap - 2],
+  );
+  const inviters = await Promise.all(Array.from({ length: 10 }, account));
+  for (const f of inviters) assert.equal((await call("POST", "/friends/invite", { to: me.id }, f.token)).status, 200);
+  const replies = await Promise.all(inviters.map((f) => call("POST", "/friends/accept", { from: f.id }, me.token)));
+  assert.equal(replies.filter((r) => r.status === 200).length, 2, replies.map((r) => r.status).join(", "));
+  assert.ok(replies.every((r) => r.status === 200 || (r.status === 409 && r.body.error === "FRIEND_LIMIT")));
+  assert.equal(await DB.countFriends(me.id), cap);
+  assert.equal((await DB.getMyInvites(me.id)).length, 8, "a refused accept keeps its invite");
+});
+
+test("a username race answers USERNAME_TAKEN, never the database's own words", async () => {
+  const name = `race_${crypto.randomBytes(4).toString("hex")}`;
+  const users = await Promise.all(Array.from({ length: 12 }, account));
+  const replies = await Promise.all(users.map((u) => call("POST", "/username", { username: name }, u.token)));
+  assert.equal(replies.filter((r) => r.status === 200).length, 1, replies.map((r) => r.status).join(", "));
+  for (const r of replies.filter((x) => x.status !== 200)) {
+    assert.equal(r.status, 409, r.text);
+    assert.equal(r.body.error, "USERNAME_TAKEN");
+    assert.ok(!/duplicate|constraint|users_/i.test(r.text), r.text);
+  }
 });
 
 // --- moderation: report + block -------------------------------------------------------------------------
@@ -741,10 +882,20 @@ test("a report takes any message id the wire format allows, and refuses what it 
   assert.equal(controlChars.status, 400, controlChars.text);
   assert.equal(controlChars.body.error, "INVALID_FIELD");
 
+  // C1 as well: U+009B is CSI on terminals that honour 8-bit controls.
+  const c1 = await call(
+    "POST",
+    "/report",
+    { conversation: hash, peer: b.id, category: "spam", messageId: "abc\u009b2Jdef" },
+    a.token,
+  );
+  assert.equal(c1.status, 400, c1.text);
+  assert.equal(c1.body.error, "INVALID_FIELD");
+
   assert.equal(
     (await q(`SELECT 1 FROM reports WHERE reporter_id = $1`, [a.id])).rows.length,
     3,
-    "the two refusals must not have written rows",
+    "the refusals must not have written rows",
   );
 });
 
@@ -782,6 +933,89 @@ test("a report for a conversation that does not exist is a 404, not a row", asyn
   );
   assert.equal(res.status, 404, res.text);
   assert.equal((await q(`SELECT 1 FROM reports WHERE reporter_id = $1`, [me.id])).rows.length, 0);
+});
+
+test("a conversation stays reportable after the friendship ends, by either side", async () => {
+  // The abuser must not be able to make a conversation unreportable by
+  // unfriending first.
+  const [victim, abuser] = await friends();
+  const hash = await convoId(victim.id, abuser.id);
+  assert.equal((await call("POST", "/friends/remove", { peer: victim.id }, abuser.token)).status, 200);
+  assert.equal(await DB.getTopicMembers(hash).then((m) => m.length), 0, "the push bridge still sees members");
+
+  const res = await call(
+    "POST",
+    "/report",
+    { conversation: hash, peer: abuser.id, category: "harassment" },
+    victim.token,
+  );
+  assert.equal(res.status, 200, res.text);
+  assert.equal((await reportRow(res.body.id))!.reported_id, abuser.id);
+
+  // Ended by a block, the same.
+  const [other, blocked] = await friends();
+  const blockedHash = await convoId(other.id, blocked.id);
+  assert.equal((await call("POST", "/friends/block", { peer: blocked.id }, other.token)).status, 200);
+  const after = await call(
+    "POST",
+    "/report",
+    { conversation: blockedHash, peer: blocked.id, category: "spam" },
+    other.token,
+  );
+  assert.equal(after.status, 200, after.text);
+
+  // Still only the two members.
+  const outsider = await account();
+  const stranger = await call(
+    "POST",
+    "/report",
+    { conversation: hash, peer: victim.id, category: "spam" },
+    outsider.token,
+  );
+  assert.equal(stranger.status, 403, stranger.text);
+});
+
+test("an ended friendship stops being reportable when its window lapses, and goes with an account", async () => {
+  const [a, b] = await friends();
+  const hash = await convoId(a.id, b.id);
+  await call("POST", "/friends/remove", { peer: b.id }, a.token);
+  await q(`UPDATE ended_friendships SET expires_at = now() - interval '1 second' WHERE convo_id = $1`, [hash]);
+  const lapsed = await call("POST", "/report", { conversation: hash, peer: b.id, category: "spam" }, a.token);
+  assert.equal(lapsed.status, 404, lapsed.text);
+
+  const [c, d] = await friends();
+  const other = await convoId(c.id, d.id);
+  await call("POST", "/friends/remove", { peer: d.id }, c.token);
+  assert.equal((await call("POST", "/account/delete", {}, d.token)).status, 200);
+  assert.equal((await q(`SELECT 1 FROM ended_friendships WHERE convo_id = $1`, [other])).rows.length, 0);
+});
+
+test("a report note with control characters is refused, and an excerpt's are neutralised", async () => {
+  // Both are printed on the operator's terminal. The note is the reporter's own
+  // text, so it is refused; the excerpt quotes the reported person, whose
+  // control characters must not make the report fail.
+  const [a, b] = await friends();
+  const hash = await convoId(a.id, b.id);
+  for (const note of ["\x1b[2Jcleared", "bell\x07", "c1\u009b31m", "cr\rover"]) {
+    const res = await call("POST", "/report", { conversation: hash, peer: b.id, category: "spam", note }, a.token);
+    assert.equal(res.status, 400, `${JSON.stringify(note)}: ${res.text}`);
+  }
+  const fine = await call(
+    "POST",
+    "/report",
+    {
+      conversation: hash,
+      peer: b.id,
+      category: "spam",
+      note: "line one\n\tline two",
+      excerpt: "hi\x1b]52;c;x\x07 there",
+    },
+    a.token,
+  );
+  assert.equal(fine.status, 200, fine.text);
+  const row = await reportRow(fine.body.id);
+  assert.equal(row!.reporter_note, "line one\n\tline two");
+  assert.equal(row!.message_excerpt, "hi\ufffd]52;c;x\ufffd there");
 });
 
 test("a `peer` that is not the other member is refused rather than ignored", async () => {
@@ -979,11 +1213,10 @@ test("GET /friends/blocked is what stops the client deleting a blocked contact",
   );
 });
 
-test("report, THEN block — the order the client must use, and what happens if it does not", async () => {
-  // /report requires membership of the conversation it names and /friends/block
-  // tears that conversation down, so the two routes cannot enforce their own
-  // ordering between themselves. This pins the consequence so a client that gets
-  // it backwards fails here rather than in the field, silently filing nothing.
+test("report, then block, or block, then report: both file", async () => {
+  // /friends/block tears the conversation down, and an ended friendship stays
+  // reportable for a while, so the order the client uses does not decide
+  // whether the report is filed.
   const [a, b] = await friends();
   const hash = await convoId(a.id, b.id);
 
@@ -997,7 +1230,8 @@ test("report, THEN block — the order the client must use, and what happens if 
   assert.equal((await call("POST", "/friends/block", { peer: b.id }, a.token)).status, 200);
 
   const after = await call("POST", "/report", { conversation: hash, peer: b.id, category: "harassment" }, a.token);
-  assert.equal(after.status, 404, "blocking first must fail loudly, not file a report about nobody");
+  assert.equal(after.status, 200, after.text);
+  assert.equal((await reportRow(after.body.id))!.reported_id, b.id);
 
   // The report filed BEFORE the block stands, with its content, which is the
   // property that makes the ordering workable at all.

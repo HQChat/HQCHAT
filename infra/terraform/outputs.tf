@@ -8,8 +8,12 @@ output "api_host" {
   value       = try(local.env.apiHost, local.env.domain)
 }
 
+# Sensitive: the app host's public address is the origin, which is never
+# published (every name for it is proxied by Cloudflare), and an apply prints
+# every non-sensitive output to the public Actions log.
 output "hosts" {
   description = "role → droplet id, public and VPC addresses, and SSH host public key."
+  sensitive   = true
   value = {
     for role, d in digitalocean_droplet.host : role => {
       id          = d.id
@@ -40,6 +44,7 @@ output "bundle" {
         privateKey    = wireguard_asymmetric_key.host["app"].private_key
         peerPublicKey = wireguard_asymmetric_key.host["mqtt"].public_key
         peerEndpoint  = digitalocean_droplet.host["mqtt"].ipv4_address_private
+        presharedKey  = random_bytes.wireguard_psk.base64
       })
     }
     mqtt = {
@@ -48,6 +53,7 @@ output "bundle" {
         privateKey    = wireguard_asymmetric_key.host["mqtt"].private_key
         peerPublicKey = wireguard_asymmetric_key.host["app"].public_key
         peerEndpoint  = digitalocean_droplet.host["app"].ipv4_address_private
+        presharedKey  = random_bytes.wireguard_psk.base64
       })
     }
   }

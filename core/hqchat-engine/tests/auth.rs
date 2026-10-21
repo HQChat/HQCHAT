@@ -47,6 +47,37 @@ fn start_signs_in_with_the_hqc_challenge_and_registers_a_signing_key() {
 }
 
 #[test]
+fn a_sign_in_the_server_never_answered_is_tried_again_on_the_backoff() {
+    let server = FakeServer::shared();
+    let mut c = Client::new(&server, "a");
+    let e = c.engine.create_identity().unwrap();
+    c.pump(e);
+    // The server is not listening yet: the request fails on the way.
+    let e = c.engine.start(NOW, net());
+    let req = e
+        .iter()
+        .find_map(|e| match e {
+            Effect::Http { req, path, .. } if path == "/auth/init" => Some(*req),
+            _ => None,
+        })
+        .expect("start signs in");
+    let e = c.engine.on_http(req, 0, vec![], NOW);
+    let at = e
+        .iter()
+        .find_map(|e| match e {
+            Effect::Timer { at } => Some(*at),
+            _ => None,
+        })
+        .expect("a failed sign-in asks to be woken");
+    assert!(at > NOW, "not at once: on the backoff");
+    assert!(paths(&server).is_empty());
+    // Now it is up.
+    let e = c.engine.tick(at);
+    c.pump(e);
+    assert_eq!(paths(&server), ["/auth/init", "/auth/verify"]);
+}
+
+#[test]
 fn a_locked_profile_asks_for_an_unlock_then_signs_in() {
     let server = FakeServer::shared();
     let mut c = Client::new(&server, "a");

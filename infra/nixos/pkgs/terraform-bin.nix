@@ -1,11 +1,13 @@
-# Terraform from HashiCorp's release zips, for the dev shell. The nixpkgs
-# package is unfree, so cache.nixos.org has no binary of it and every fresh
-# store compiled it from source: about five minutes per CI run. The release
-# binary is static Go, so it needs no patching.
+# Terraform from HashiCorp's release zips, for the dev shell and for Deploy
+# (`nix shell .#terraform`), so the binary that holds the cloud credentials
+# and the state is the one pinned here by hash. The nixpkgs package is
+# unfree, so cache.nixos.org has no binary of it and every fresh store
+# compiled it from source: about five minutes per CI run. The release binary
+# is static Go, so it needs no patching.
 #
-# The version matches deploy.yml's setup-terraform. To bump it, take each
-# zip's hash from terraform_<version>_SHA256SUMS on releases.hashicorp.com,
-# converted with `nix hash convert --hash-algo sha256 <hex>`.
+# To bump it, check terraform_<version>_SHA256SUMS against its .sig with
+# HashiCorp's release key (https://www.hashicorp.com/security), then take each
+# zip's hash from it, converted with `nix hash convert --hash-algo sha256 <hex>`.
 {
   lib,
   stdenvNoCC,

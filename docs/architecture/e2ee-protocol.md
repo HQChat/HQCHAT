@@ -31,8 +31,12 @@ Each profile publishes, through `POST /prekeys`:
 `POST /prekeys/claim { peer }` (friends only) returns the peer's identity key,
 medium-term prekey and, while the pool lasts, one one-time prekey with its id,
 which is consumed by the claim. Prekeys are not signed (HQC cannot sign); a
-substituted prekey gains nothing, because the session root also needs the
-encapsulation to the pinned identity key.
+substituted prekey breaks no confidentiality, because the session root also
+needs the encapsulation to the pinned identity key: the responder then fails
+to open the init, which is visible. The server can, however, withhold the
+one-time prekey without anyone noticing. The session is then a different one,
+whose forward secrecy until the first step rests on the 7-day medium-term
+prekey alone.
 
 ## Starting a session (`init`)
 
@@ -116,11 +120,21 @@ next chain key:   ck' = HKDF(ck, "hqchat/v2/ck")
 chain id:         cid = first 16 bytes of SHA-256(rkPub), as hex
 ```
 
-- **When to step:** the first send after hearing from the peer always steps;
-  after that a sending chain steps only once it has been used and has carried
-  32 messages or lived 15 minutes. These bounds are the post-compromise window.
+- **When to step:** the two sides take turns. A side may step only once a
+  step from the peer has arrived since its own last step (the first sending
+  chain is the exception: the peer has no key of ours to step against yet).
+  Two steps that cross would each derive the next root from the same one and
+  fork the session for good, as Signal's ratchet also avoids. On its turn, a
+  sending chain steps once it has been used and has carried 32 messages or
+  lived 15 minutes; these bounds are the post-compromise window, and a one-way
+  run steps once per turn. "Rotate keys" lifts the bounds, never the turn.
+  Sessions imported from 3.1.1 kept no turn: the lower id has it.
 - **Out of order:** keys skipped on the way to a later message are cached by
-  chain and index, at most 2,000 across all chains, oldest evicted.
+  chain and index, at most 2,000 across all chains, oldest evicted, and
+  dropped once their chain is 8 steps from the peer behind: a message that
+  late is lost rather than kept openable. A step is always the first message
+  of its chain (n = 0); the keys it leaves behind on the old chain (up to
+  `pn`) are walked only after it authenticates.
 - **Replays and forged steps:** a cached key is consumed only if its payload
   authenticates; a chain already left is never re-entered (the last 64 chain
   ids are remembered); everything a step would change is computed first and
@@ -139,7 +153,7 @@ receiver authenticates exactly the bytes it received.
 | 0 | magic `HQCE` | 4 |
 | 4 | version (3) | 1 |
 | 5 | kind (0 msg, 1 init, 2 receipt) | 1 |
-| 6 | flags: bit0 `rk`, bit1 `kemCt`, bit2 one-time | 1 |
+| 6 | flags: bit0 `rk`, bit1 `kemCt`, bit2 one-time, bit3 padded payload (ISO/IEC 7816-4, 256-byte classes) | 1 |
 | 7 | sender (raw client id) | 32 |
 | 39 | to (raw client id) | 32 |
 | 71 | cid (raw) | 16 |
@@ -190,7 +204,24 @@ background are stored sealed; opening needs the Enclave private key, gated by
 the profile's protection tier. Deleting a profile deletes its key pair, which
 makes its rows permanently unreadable.
 
+## Properties to know
+
+- **First messages and key compromise.** An init is sent before any round
+  trip, so its first messages cannot be bound to the challenge. Someone who
+  holds the responder's identity and prekey secrets can derive the init
+  chain, read what the initiator sent on it, and write on it in the
+  initiator's name, until the first steps. This is the key-compromise
+  impersonation every asynchronous zero-round-trip exchange has (X3DH and
+  PQXDH alike). It ends at the responder's first step, which encapsulates to
+  the initiator's ratchet key, and the initiator retires the init chain on
+  its own first turn.
+- **The CONNECT proof is not bound to the TLS channel.** Within its ±60 s
+  window, whoever terminates TLS (Cloudflare, on the WebSocket path) could use
+  a captured proof first; the single-use nonce stops only a second use.
+
 ## Not provided
 
-Read receipts, typing indicators, disappearing messages, attachments, multi-device
-for one identity, and padding against size analysis.
+Read receipts, typing indicators, disappearing messages, attachments, and
+multi-device for one identity. Padding hides a message's length within its
+256-byte size class only, and a frame's kind (message or receipt) is in its
+header.

@@ -31,6 +31,8 @@ paths = [
 ]
 
 regexes = [
+  # Migration file names, which the generic-api-key rule reads as a token.
+  '''^\d{3}_[a-z_]+\.sql$''',
   # The PEM armour constants the key parser checks against.
   '''-----BEGIN PRIVATE KEY-----''',
   '''-----END PRIVATE KEY-----''',

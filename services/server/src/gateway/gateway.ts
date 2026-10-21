@@ -1,5 +1,5 @@
 import * as net from "node:net";
-import { core, type GatewayKeyPair, type HqnGatewayHandshake, type HqnTransport } from "../common/core";
+import { core, type GatewayKeyPair, type HqnGatewayHandshake, type HqnSecret, type HqnTransport } from "../common/core";
 import { Admission } from "./admission";
 import { connectClientId } from "./mqtt-connect";
 
@@ -20,7 +20,7 @@ import { connectClientId } from "./mqtt-connect";
  *     decapsulation. (A real Noise client can still spend one decapsulation per
  *     handshake; that is what the per-IP handshake rate is for.)
  *   - Decapsulation runs off the event loop (`decapsulate` is async; main.ts
- *     backs it with a worker pool) behind a bounded queue, so a burst of
+ *     backs it with the core's, on libuv's pool) behind a bounded queue, so a burst of
  *     well-formed handshakes sheds load instead of stalling every established
  *     stream on this process.
  *   - Every failure is a silent close. No error frame, no timing difference
@@ -34,7 +34,7 @@ export interface GatewayOptions {
   /** Loaded server key pairs, by key id. */
   keys: Map<number, GatewayKeyPair>;
   /** HQC-256 decapsulation, off the event loop. Rejects when overloaded. */
-  decapsulate: (keyId: number, ct: Buffer) => Promise<Buffer>;
+  decapsulate: (keyId: number, ct: Buffer) => Promise<HqnSecret>;
   /** Where the decrypted stream goes: EMQX's internal plain-TCP listener. */
   upstream: { host: string; port: number };
   limits?: Partial<GatewayLimits>;
@@ -49,8 +49,12 @@ export interface GatewayLimits {
   maxConnectBytes: number;
   /** Time from accept to a complete msg1. */
   handshakeTimeoutMs: number;
+  /** Time from accept to the two header bytes; a silent socket gives its slot back sooner. */
+  headerTimeoutMs: number;
   /** Handshakes in progress from one address. */
   perIpHandshakes: number;
+  /** Handshakes in progress from one IPv4 /24 or IPv6 /56, so a few hundred addresses cannot fill maxHalfOpen. */
+  perPrefixHandshakes: number;
   /** Established streams from one address — high, because carrier NAT puts
    *  thousands of phones behind one IPv4 address. */
   perIpConnections: number;
@@ -67,7 +71,9 @@ export interface GatewayLimits {
 export const DEFAULT_LIMITS: GatewayLimits = {
   maxConnectBytes: 4096,
   handshakeTimeoutMs: 5000,
+  headerTimeoutMs: 1000,
   perIpHandshakes: 8,
+  perPrefixHandshakes: 64,
   perIpConnections: 512,
   perIpHandshakesPerMinute: 120,
   maxHalfOpen: 1024,
@@ -85,6 +91,7 @@ export type RefusalReason =
   | "length"
   | "timeout"
   | "ip-handshakes"
+  | "prefix-handshakes"
   | "ip-rate"
   | "ip-connections"
   | "half-open"
@@ -109,6 +116,8 @@ interface Connection {
   /** Ends the handshake accounting; idempotent. */
   leaveHandshake: () => void;
   timer: NodeJS.Timeout;
+  /** Until the two header bytes arrive. */
+  headerTimer: NodeJS.Timeout;
 }
 
 /** The hqn/1 front door: admission, the handshake, then the decrypted pipe to EMQX. */
@@ -146,9 +155,13 @@ class Gateway {
       /* a reset client is not an event worth logging */
     });
     const timer = setTimeout(() => this.refuse(sock, ip, "timeout"), this.limits.handshakeTimeoutMs);
-    sock.once("close", () => clearTimeout(timer));
+    const headerTimer = setTimeout(() => this.refuse(sock, ip, "timeout"), this.limits.headerTimeoutMs);
+    sock.once("close", () => {
+      clearTimeout(timer);
+      clearTimeout(headerTimer);
+    });
 
-    const conn: Connection = { sock, ip, started: this.now(), leaveHandshake, timer };
+    const conn: Connection = { sock, ip, started: this.now(), leaveHandshake, timer, headerTimer };
     this.readMessage1(conn, (keyId, msg1) => void this.handshake(conn, keyId, msg1));
   }
 
@@ -164,6 +177,7 @@ class Gateway {
         if (buf.length < 2) return;
         if (buf[0] !== core.HQN_VERSION || !this.opts.keys.has(buf[1]!)) return this.refuse(sock, ip, "header");
         keyId = buf[1]!;
+        clearTimeout(conn.headerTimer);
         buf = buf.subarray(2);
       }
       if (need === 2) {
@@ -197,7 +211,7 @@ class Gateway {
     } catch {
       return this.refuse(sock, ip, "noise");
     }
-    let ss: Buffer;
+    let ss: HqnSecret;
     try {
       ss = await this.opts.decapsulate(keyId, ct);
     } catch {

@@ -9,7 +9,8 @@
  *   NOISE_GW_HEALTH_HOST  comma-separated addresses for it  (every interface)
  *   NOISE_KEYS_FILE       secret seeds, see keys.ts              (required)
  *   EMQX_TCP_HOST/PORT    the broker's internal TCP listener  (127.0.0.1:1883)
- *   NOISE_GW_WORKERS      decapsulation workers         (cpus - 1, at least 1)
+ *   NOISE_GW_WORKERS      decapsulations at once        (cpus - 1, at least 1;
+ *                         UV_THREADPOOL_SIZE bounds how many run in parallel)
  *   NOISE_GW_QUEUE        decapsulations allowed to wait            (64)
  */
 
@@ -22,7 +23,7 @@ import { logger } from "../common/logger";
 import { initObservability } from "../common/observability";
 import { DecapPool } from "./decap-pool";
 import { createGateway } from "./gateway";
-import { decapsulationKeys, loadServerKeys, publicKeys, readKeySeeds } from "./keys";
+import { loadServerKeys, publicKeys, readKeySeeds } from "./keys";
 
 if (require.main === module) {
   initObservability("noise-gw");
@@ -33,7 +34,7 @@ if (require.main === module) {
   const seeds = readKeySeeds(keysFile);
   const keys = loadServerKeys(seeds);
   const pool = new DecapPool(
-    decapsulationKeys(seeds),
+    keys,
     Number(process.env.NOISE_GW_WORKERS || Math.max(1, os.cpus().length - 1)),
     Number(process.env.NOISE_GW_QUEUE || 64),
   );

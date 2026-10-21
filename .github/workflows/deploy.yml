@@ -1,5 +1,7 @@
 # One click: deploy the selected ref ("Use workflow from") to an environment,
-# from an empty DigitalOcean account or over a running one.
+# from an empty DigitalOcean account or over a running one. The ref is main, or
+# an app-store/<version> tag on a commit of main (app-store.yml); any other is
+# refused before a job that holds a secret starts.
 #
 #   ci        the full CI suite, the two-VM stack test included; skipped when
 #             this exact commit already passed CI (push to main), so a deploy
@@ -7,11 +9,13 @@
 #   build     both host closures and the environment's image, signed, pushed to the
 #             cache; warns first if the server or app Sentry DSN is empty
 #   infra     Terraform (guarded), then each host's secret bundle
-#   release   move channels/<environment>/<role>; hosts switch within minutes
+#   release   move channels/<environment>/<role>, signed with the cache key;
+#             hosts switch within minutes
 #   verify    /health reports this commit and a healthy broker, on the domain and
 #             on the apps' API host, then the functional scenarios run against
 #             the live environment
-#   rollback  if verify fails, the channels go back to the previous release
+#   rollback  if verify fails, the channels go back to the release this run
+#             replaced
 #   apple     once verify passes (and ship_apple is on): apple-release.yml
 #             uploads a new version of the iOS app to App Store Connect
 #   app-store once verify passes (and app_store_version is set): releases that
@@ -19,7 +23,8 @@
 #             server proven to speak its protocol (app-store.yml sets it)
 #
 # Environment secrets: DIGITALOCEAN_TOKEN, CLOUDFLARE_API_TOKEN, R2_ACCESS_KEY_ID,
-# R2_SECRET_ACCESS_KEY, NIX_CACHE_SIGNING_KEY, BOT_SEED, NOISE_KEYS and,
+# R2_SECRET_ACCESS_KEY, NIX_CACHE_SIGNING_KEY, BOT_SEED, NOISE_KEYS,
+# AGE_IDENTITY_APP, AGE_IDENTITY_MQTT (the hosts' age post-quantum identities) and,
 # optionally, STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, APNS_KEY_P8
 # (infra/scripts/init-environment.sh sets the generated ones); for the apple job,
 # ASC_KEY_ID, ASC_ISSUER_ID and ASC_KEY_P8 (an App Store Connect API key).
@@ -33,7 +38,7 @@ on:
         type: environment
         required: true
       allow_replace:
-        description: Allow destroying or replacing droplets, the volume, the database or the reserved IP
+        description: Allow destroying or replacing protected resources (droplets, volume, database, address, firewalls, zone settings, DNS, keys; infra/scripts/tf-guard.sh)
         type: boolean
         default: false
       ship_apple:
@@ -56,7 +61,34 @@ env:
   ENVIRONMENT: ${{ inputs.environment }}
 
 jobs:
+  # Fails, never skips: the jobs below run on `!failure()`, and a skipped
+  # ancestor would let them through.
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: The ref is main, or an App Store tag on main
+        run: |
+          case "$GITHUB_REF" in
+            refs/heads/main) ;;
+            refs/tags/app-store/*)
+              git merge-base --is-ancestor "$GITHUB_SHA" origin/main || {
+                echo "::error::$GITHUB_REF ($GITHUB_SHA) is not a commit on main"
+                exit 1
+              }
+              ;;
+            *)
+              echo "::error::deploys run from main or an app-store/ tag, not $GITHUB_REF"
+              exit 1
+              ;;
+          esac
+
   ci-passed:
+    needs: source
     runs-on: ubuntu-latest
     timeout-minutes: 2
     permissions:
@@ -84,7 +116,7 @@ jobs:
   # `!cancelled() && !failure()` lets a skipped `ci` through; GitHub would
   # otherwise skip every job downstream of a skipped one.
   build:
-    needs: [ci-passed, ci]
+    needs: [source, ci-passed, ci]
     if: ${{ !cancelled() && !failure() }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -101,6 +133,8 @@ jobs:
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - name: Check Sentry is configured (warns, never fails)
         run: infra/scripts/check-sentry.sh "$ENVIRONMENT"
       - name: Read the environment
@@ -161,7 +195,6 @@ jobs:
     outputs:
       domain: ${{ steps.apply.outputs.domain }}
       api_host: ${{ steps.apply.outputs.api_host }}
-      app_ipv4: ${{ steps.apply.outputs.app_ipv4 }}
       mqtt_ipv4: ${{ steps.apply.outputs.mqtt_ipv4 }}
     env:
       DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
@@ -171,13 +204,12 @@ jobs:
       TF_VAR_image_url: ${{ needs.build.outputs.image_url }}
       TF_VAR_image_name: ${{ needs.build.outputs.image_name }}
       ALLOW_REPLACE: ${{ inputs.allow_replace }}
-      TF_OUTPUTS: /tmp/tf-outputs.json
+      AGE_IDENTITY_APP: ${{ secrets.AGE_IDENTITY_APP }}
+      AGE_IDENTITY_MQTT: ${{ secrets.AGE_IDENTITY_MQTT }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         with:
-          terraform_version: "1.15.6"
-          terraform_wrapper: false
+          persist-credentials: false
       # hqcat-server comes from the cache build just pushed to, not a rebuild.
       - uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
         with:
@@ -189,11 +221,17 @@ jobs:
       - name: Terraform
         id: apply
         run: |
-          infra/scripts/terraform.sh "$ENVIRONMENT" apply
+          TF_OUTPUTS="$RUNNER_TEMP/tf-outputs.json"
+          echo "TF_OUTPUTS=$TF_OUTPUTS" >>"$GITHUB_ENV"
+          export TF_OUTPUTS
+          # Handed to a new droplet in its user data; the bundles are sealed to them.
+          TF_VAR_age_identities="$(jq -cn '{app: env.AGE_IDENTITY_APP, mqtt: env.AGE_IDENTITY_MQTT} | with_entries(select(.value != ""))')"
+          export TF_VAR_age_identities
+          # The Terraform pinned by hash in the flake, not a download trusted on TLS alone.
+          nix shell .#terraform --command infra/scripts/terraform.sh "$ENVIRONMENT" apply
           {
             echo "domain=$(jq -r .domain.value "$TF_OUTPUTS")"
             echo "api_host=$(jq -r .api_host.value "$TF_OUTPUTS")"
-            echo "app_ipv4=$(jq -r .hosts.value.app.public_ipv4 "$TF_OUTPUTS")"
             echo "mqtt_ipv4=$(jq -r .hqn_ipv4.value "$TF_OUTPUTS")"
           } >>"$GITHUB_OUTPUT"
       - name: Publish the secret bundles
@@ -203,10 +241,14 @@ jobs:
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
           APNS_KEY_P8: ${{ secrets.APNS_KEY_P8 }}
+          NIX_CACHE_SIGNING_KEY: ${{ secrets.NIX_CACHE_SIGNING_KEY }}
         run: |
           BOT_ID="$(nix shell .#hqcat-server --command hqcat-bot --print-id)"
           export BOT_ID
-          nix shell --inputs-from . nixpkgs#age nixpkgs#awscli2 --command infra/scripts/publish-secrets.sh "$ENVIRONMENT"
+          nix shell --inputs-from . nixpkgs#age nixpkgs#awscli2 nixpkgs#openssl --command infra/scripts/publish-secrets.sh "$ENVIRONMENT"
+      - name: Remove the Terraform outputs
+        if: always()
+        run: rm -f "$TF_OUTPUTS"
 
   release:
     needs: [build, infra]
@@ -214,24 +256,37 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: ${{ inputs.environment }}
+    outputs:
+      app_previous: ${{ steps.move.outputs.app_previous }}
+      mqtt_previous: ${{ steps.move.outputs.mqtt_previous }}
     env:
       R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      NIX_CACHE_SIGNING_KEY: ${{ secrets.NIX_CACHE_SIGNING_KEY }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - name: Move the channels
-        run: infra/scripts/release.sh "$ENVIRONMENT" promote "${{ needs.build.outputs.app }}" "${{ needs.build.outputs.mqtt }}"
+        id: move
+        env:
+          APP: ${{ needs.build.outputs.app }}
+          MQTT: ${{ needs.build.outputs.mqtt }}
+        run: infra/scripts/release.sh "$ENVIRONMENT" promote "$APP" "$MQTT"
 
   verify:
     needs: [build, infra, release]
     if: ${{ !cancelled() && !failure() }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    environment: ${{ inputs.environment }}
     env:
       DOMAIN: ${{ needs.infra.outputs.domain }}
       API_HOST: ${{ needs.infra.outputs.api_host }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       # The scenarios load the core addon (HQCHAT_NODE); the release's own build
       # is in the cache, inside the server's closure.
       - uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
@@ -269,11 +324,18 @@ jobs:
             echo "::error::https://$API_HOST/health does not serve $GITHUB_SHA: the apps cannot reach this server (${health:-no answer})"
             exit 1
           }
+      # The origin's address is looked up here and masked before any use: it is
+      # never a job output or a step variable, which the public log would show.
       - name: Only the expected ports answer
         env:
-          APP_IPV4: ${{ needs.infra.outputs.app_ipv4 }}
+          DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
           HQN_IPV4: ${{ needs.infra.outputs.mqtt_ipv4 }}
         run: |
+          APP_IPV4="$(curl -fsS -H @<(printf 'Authorization: Bearer %s\n' "$DIGITALOCEAN_TOKEN") \
+            "https://api.digitalocean.com/v2/droplets?tag_name=hqchat-$ENVIRONMENT-app" |
+            jq -r '[.droplets[].networks.v4[] | select(.type == "public") | .ip_address][0] // empty')"
+          [ -n "$APP_IPV4" ] || { echo "::error::no app droplet found for $ENVIRONMENT"; exit 1; }
+          echo "::add-mask::$APP_IPV4"
           ! curl -sk --max-time 5 -o /dev/null "https://$APP_IPV4/health" || { echo "::error::the origin answers outside Cloudflare"; exit 1; }
           for port in 1883 1884 8083 8081 18083; do
             ! nc -z -w 3 "$HQN_IPV4" "$port" || { echo "::error::the broker answers on $port"; exit 1; }
@@ -297,10 +359,17 @@ jobs:
     env:
       R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      NIX_CACHE_SIGNING_KEY: ${{ secrets.NIX_CACHE_SIGNING_KEY }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      # What this run's release replaced, never a pointer read back from the bucket.
       - name: Return the channels to the previous release
-        run: infra/scripts/release.sh "$ENVIRONMENT" rollback
+        env:
+          APP: ${{ needs.release.outputs.app_previous }}
+          MQTT: ${{ needs.release.outputs.mqtt_previous }}
+        run: infra/scripts/release.sh "$ENVIRONMENT" rollback "$APP" "$MQTT"
 
   # The apps ship only against a server that verify has just proven live.
   apple:
@@ -320,6 +389,8 @@ jobs:
     environment: ${{ inputs.environment }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"

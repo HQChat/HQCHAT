@@ -165,7 +165,7 @@ fn frames_that_arrive_locked_wait_for_the_unlock_with_a_notification_meanwhile()
     b.vault.lock();
     let id = send(&mut a, &b, "while you were locked");
     settle(&mut [&mut a, &mut b]);
-    assert!(b.seen.contains(&Effect::Notify { peer: a.id() }));
+    assert!(b.seen.contains(&Effect::Notify { peer: Some(a.id()) }));
     assert_eq!(
         b.engine.friends()[0].unread,
         2,
@@ -280,4 +280,50 @@ fn rotating_keys_steps_the_ratchet_and_the_conversation_goes_on() {
     settle(&mut [&mut a, &mut b]);
     assert_eq!(texts(&b, &a), ["one", "three", "four"]);
     assert_eq!(texts(&a, &b), ["two", "five"]);
+}
+
+#[test]
+fn only_a_message_one_wrote_can_be_retried() {
+    let (_s, mut a, mut b) = pair();
+    send(&mut a, &b, "from a");
+    settle(&mut [&mut a, &mut b]);
+    let received = b.engine.history(a.id(), None, 10).unwrap()[0]
+        .msg_id
+        .clone();
+    let routed = _s.borrow().broker.routed.len();
+    let e = b.engine.retry(received, NOW);
+    assert!(
+        e.is_empty() || !e.iter().any(|x| matches!(x, Effect::MessageStatus { .. })),
+        "{e:?}"
+    );
+    b.pump(e);
+    settle(&mut [&mut a, &mut b]);
+    assert_eq!(
+        _s.borrow().broker.routed.len(),
+        routed,
+        "nothing was sent back"
+    );
+}
+
+#[test]
+fn the_server_sees_a_size_class_not_a_length() {
+    let (s, mut a, mut b) = pair();
+    send(&mut a, &b, "first");
+    settle(&mut [&mut a, &mut b]);
+    let mut sizes = Vec::new();
+    for text in ["hi", &"x".repeat(200)] {
+        let before = s.borrow().broker.routed.len();
+        send(&mut a, &b, text);
+        settle(&mut [&mut a, &mut b]);
+        let routed = &s.borrow().broker.routed;
+        let (_, raw) = routed[before..]
+            .iter()
+            .find(|(t, _)| t.starts_with("cv/"))
+            .unwrap();
+        let (frame, _) = hqchat_protocol::envelope::decode(raw).unwrap();
+        assert!(frame.header.padded);
+        sizes.push(frame.payload.len());
+    }
+    assert_eq!(sizes[0], sizes[1], "2 and 200 characters look the same");
+    assert_eq!(texts(&b, &a).last().unwrap().len(), 200);
 }

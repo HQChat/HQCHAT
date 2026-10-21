@@ -45,6 +45,9 @@ lib.mkIf (cfg.role == "app") {
     enable = true;
     recommendedOptimisation = true;
     recommendedTlsSettings = false;
+    # No version in headers or error pages. The module writes the directive
+    # itself: a second one in the config below fails nginx's config test.
+    serverTokens = false;
 
     commonHttpConfig = ''
       limit_req_zone $binary_remote_addr zone=api:10m rate=20r/s;
@@ -53,6 +56,10 @@ lib.mkIf (cfg.role == "app") {
           default "";
       }
       limit_req_zone $checkout_limit_key zone=checkout:10m rate=10r/m;
+      # The broker's WebSocket: a client opens one connection and keeps it, and
+      # every opening costs the auth service a database lookup.
+      limit_req_zone $binary_remote_addr zone=mqtt:10m rate=2r/s;
+      limit_conn_zone $binary_remote_addr zone=mqtt_conn:10m;
 
       ${lib.concatMapStringsSep "\n" (r: "set_real_ip_from ${r};") (cf.v4 ++ cf.v6)}
       real_ip_header CF-Connecting-IP;
@@ -65,7 +72,10 @@ lib.mkIf (cfg.role == "app") {
       sslCertificateKey = "${certDir}/origin.key";
 
       extraConfig = ''
-        ssl_protocols TLSv1.2 TLSv1.3;
+        # Only Cloudflare connects here, and it speaks TLS 1.3 with the hybrid
+        # post-quantum group to origins; X25519 alone stays as its fallback.
+        ssl_protocols TLSv1.3;
+        ssl_ecdh_curve X25519MLKEM768:X25519;
         ssl_prefer_server_ciphers off;
         client_max_body_size 1m;
         add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
@@ -79,6 +89,8 @@ lib.mkIf (cfg.role == "app") {
           proxyPass = "http://${wg.mqtt}:8083";
           proxyWebsockets = true;
           extraConfig = ''
+            limit_req zone=mqtt burst=20 nodelay;
+            limit_conn mqtt_conn 50;
             ${fwd}
             proxy_read_timeout 3600s;
             proxy_send_timeout 3600s;
@@ -124,9 +136,12 @@ lib.mkIf (cfg.role == "app") {
     wantedBy = [ "multi-user.target" ];
     before = [ "nginx.service" ];
     requiredBy = [ "nginx.service" ];
-    serviceConfig = {
+    serviceConfig = cfg.rootService // {
       Type = "oneshot";
       RemainAfterExit = true;
+      ReadWritePaths = [ certDir ];
+      # Hands the files to the ssl-cert group, which root is not in.
+      CapabilityBoundingSet = [ "CAP_CHOWN" ];
     };
     path = with pkgs; [
       openssl

@@ -1,11 +1,12 @@
 //! The engine: one per profile.
 
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::core::Core;
-use crate::effect::{CloseReason, Effect};
+use crate::effect::{Action, CloseReason, Effect};
 use crate::import::Import;
-use crate::ports::{KeyVault, Store};
+use crate::ports::{KeyVault, Store, VaultError};
 use crate::types::{Config, CoreError, FriendView, Message, NetworkInfo, PushToken, ReportInput};
 
 /// The client. `Send + Sync`: every call takes an internal lock and returns
@@ -36,15 +37,28 @@ impl Engine {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// Runs `f` and returns the effects it emitted, or its error.
+    /// Runs `f` and returns the effects it emitted, or its error. A panic
+    /// (none should be reachable: the lints forbid every construct that could
+    /// raise one) is caught here and becomes an error: across the bindings it
+    /// would trap the Swift app (`try!`) or abort the Node process.
     fn run(
         &self,
         f: impl FnOnce(&mut Core) -> Result<(), CoreError>,
     ) -> Result<Vec<Effect>, CoreError> {
         let mut core = self.core();
-        let result = f(&mut core);
+        core.out.clear();
+        let result = catch_unwind(AssertUnwindSafe(|| f(&mut core)));
         let effects = std::mem::take(&mut core.out);
-        result.map(|()| effects)
+        match result {
+            Ok(r) => r.map(|()| effects),
+            Err(_) => Err(panicked()),
+        }
+    }
+
+    /// Runs a read under the same guard as [`Engine::run`].
+    fn read<T>(&self, f: impl FnOnce(&mut Core) -> T) -> Result<T, CoreError> {
+        let mut core = self.core();
+        catch_unwind(AssertUnwindSafe(|| f(&mut core))).map_err(|_| panicked())
     }
 
     // ── Lifecycle ────────────────────────────────────────────────────────
@@ -111,7 +125,9 @@ impl Engine {
 
     /// This profile's client id, known from the first unlock on.
     pub fn my_id(&self) -> Option<String> {
-        self.core().me.as_ref().map(ToString::to_string)
+        self.read(|c| c.me.as_ref().map(ToString::to_string))
+            .ok()
+            .flatten()
     }
 
     /// A timer fired, or the shell resumed: keep-alive, refresh, retries.
@@ -171,7 +187,7 @@ impl Engine {
     pub fn accept(&self, peer: String) -> Vec<Effect> {
         self.run(|c| {
             c.friendship(
-                crate::Action::Accept,
+                Action::Accept,
                 "/friends/accept",
                 serde_json::json!({ "from": peer }),
             );
@@ -184,7 +200,7 @@ impl Engine {
     pub fn remove(&self, peer: String) -> Vec<Effect> {
         self.run(|c| {
             c.friendship(
-                crate::Action::Remove,
+                Action::Remove,
                 "/friends/remove",
                 serde_json::json!({ "peer": peer }),
             );
@@ -197,7 +213,7 @@ impl Engine {
     pub fn block(&self, peer: String) -> Vec<Effect> {
         self.run(|c| {
             c.friendship(
-                crate::Action::Block,
+                Action::Block,
                 "/friends/block",
                 serde_json::json!({ "peer": peer }),
             );
@@ -212,7 +228,7 @@ impl Engine {
     pub fn unblock(&self, peer: String) -> Vec<Effect> {
         self.run(|c| {
             c.friendship(
-                crate::Action::Unblock,
+                Action::Unblock,
                 "/friends/unblock",
                 serde_json::json!({ "peer": peer }),
             );
@@ -239,9 +255,22 @@ impl Engine {
         self.run(|c| c.mark_read(&peer))
     }
 
-    /// Reports a friend's messages.
+    /// Reports a friend, quoting at most one message they sent. A report the
+    /// core refuses before sending fails like one the server refused, with
+    /// status 0 and a code naming why, so no screen waits for an answer.
     pub fn report(&self, report: ReportInput) -> Vec<Effect> {
-        self.run(|c| c.report(&report)).unwrap_or_default()
+        self.run(|c| c.report(&report)).unwrap_or_else(|e| {
+            let code = match e {
+                CoreError::NotAFriend => "NOT_FRIENDS",
+                CoreError::Vault(VaultError::Locked) => "LOCKED",
+                _ => "NOT_REPORTABLE",
+            };
+            vec![Effect::ActionFailed {
+                action: Action::Report,
+                status: 0,
+                code: code.into(),
+            }]
+        })
     }
 
     /// Claims a username.
@@ -281,28 +310,28 @@ impl Engine {
         limit: u32,
     ) -> Result<Vec<Message>, CoreError> {
         let peer = hqchat_protocol::PeerId::parse(&peer)?;
-        self.core().history(&peer, before, limit)
+        self.read(|c| c.history(&peer, before, limit))?
     }
 
     /// The friends, sorted for display.
     pub fn friends(&self) -> Vec<FriendView> {
-        self.core().friends()
+        self.read(|c| c.friends()).unwrap_or_default()
     }
 
     /// Friend requests this user sent, not answered yet.
     pub fn sent_invites(&self) -> Vec<crate::SentInviteView> {
-        self.core().sent.clone()
+        self.read(|c| c.sent.clone()).unwrap_or_default()
     }
 
     /// Friend requests waiting for this user's answer.
     pub fn invites(&self) -> Vec<crate::InviteView> {
-        self.core().invites.clone()
+        self.read(|c| c.invites.clone()).unwrap_or_default()
     }
 
     /// The safety number for a friend's pinned key, to compare in person.
     pub fn fingerprint(&self, peer: String) -> Option<String> {
         let peer = hqchat_protocol::PeerId::parse(&peer).ok()?;
-        self.core().fingerprint(&peer)
+        self.read(|c| c.fingerprint(&peer)).ok().flatten()
     }
 
     // ── I/O results ──────────────────────────────────────────────────────
@@ -351,6 +380,10 @@ impl Engine {
         })
         .unwrap_or_default()
     }
+}
+
+fn panicked() -> CoreError {
+    CoreError::State("the core hit an internal error; nothing was changed".into())
 }
 
 #[cfg(test)]

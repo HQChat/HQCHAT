@@ -12,7 +12,7 @@ core (`core/hqc-sys`), which compiles it for whatever target it is built for.
 | Server, gateway, bot, CI, hosts | `nix build .#hqchat-node` (`core/hqchat-node/package.nix`), which compiles the prepared tree (`.#hqc.source`) into the core's Node addon | `lib/hqchat_node.node`, loaded through `HQCHAT_NODE` |
 | Local server runs and the core's own tests | `core/hqchat-node/build.sh`, inside `nix develop` (`HQC_SOURCE`) | `core/hqchat-node/hqchat_node.node`, found by `src/common/core.ts` when `HQCHAT_NODE` is unset |
 | The standalone library and its self-test | `nix build .#hqc` (`native/hqc/package.nix`) | `lib/libhqc_wrap.so`; no server program loads it any more |
-| The Apple apps and the Swift test slices | `core/hqchat-ffi/build-apple.sh`, inside `nix develop .#apple` | `core/swift/HQChatCore/HQChatCoreFFI.xcframework` (committed; `release.sh` refuses a stale one) |
+| The Apple apps and the Swift test slices | `core/hqchat-ffi/build-apple.sh`, inside `nix develop .#apple` | `core/swift/HQChatCore/HQChatCoreFFI.xcframework`, never committed: built on each Mac, and by the Apple release workflow from the commit it ships (`release.sh` refuses any other build) |
 
 Every build compiles the same bytes: `native/hqc/prepare-source.sh` turns the
 pinned upstream tree into the compiled source (it guards the unused x86
@@ -32,8 +32,19 @@ themselves: Swift talks to the core.
 core/hqchat-node/build.sh                 # server and tests, inside nix develop
 ```
 
-The Apple core package is committed, so the Xcode project builds straight from
-a clone.
+On a Mac, the Apple core package has to be built once before Xcode can build
+the app (and again after every core change; `apps/apple/verify.sh` does it
+each run):
+
+```bash
+nix develop .#apple --command core/hqchat-ffi/build-apple.sh
+```
+
+It writes the xcframework, which git ignores, and regenerates the Swift
+bindings in `core/swift/HQChatCore/Sources`, which are committed: a change
+there belongs in the same commit as the core change that caused it. The Apple
+release workflow builds the package itself and stops if the bindings it
+generates differ from the committed ones.
 
 ## Moving to a new upstream commit
 

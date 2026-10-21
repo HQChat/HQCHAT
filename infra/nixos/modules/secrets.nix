@@ -1,7 +1,14 @@
 # Pulls this host's secret bundle, <cache>/secrets/<environment>/<role>.age
-# (published by the Deploy workflow, encrypted to the host's SSH key), installs
+# (published by the Deploy workflow: infra/scripts/publish-secrets.sh), installs
 # each entry as a file under hqcat.secretsDir, and restarts the units that read
 # a changed file. Entries absent from the bundle are left untouched.
+#
+# The bucket is public and anyone able to write to it is not trusted: a bundle
+# is opened only when <role>.age.sig is a statement signed with the cache key,
+# for this environment and role, naming the bundle's SHA-256 and a release no
+# older than the last one installed here. It is sealed to the host's age
+# post-quantum identity (/etc/hqcat/age-identity, from user data or installed
+# by hand), never to a classical key.
 {
   config,
   lib,
@@ -20,11 +27,16 @@ let
       jq
       coreutils
       diffutils
+      gnused
       systemd
+      (callPackage ../pkgs/hqcat-verify-signed.nix { })
     ];
     text = ''
       [[ "''${ROLE:-base}" != base ]] || exit 0
-      url="${cfg.environment.cache.url}/secrets/${cfg.environment.name}/$ROLE.age"
+      environment=${lib.escapeShellArg cfg.environment.name}
+      url="${cfg.environment.cache.url}/secrets/$environment/$ROLE.age"
+      identity=/etc/hqcat/age-identity
+      state=/var/lib/hqcat-host/secrets-release
       tmp="$(mktemp -d)"
       trap 'rm -rf "$tmp"' EXIT
 
@@ -33,10 +45,36 @@ let
         echo "no bundle at $url (HTTP $code); secrets unchanged"
         exit 0
       fi
+      curl -fsS --max-time 30 -o "$tmp/bundle.sig" "$url.sig" || {
+        echo "no signature at $url.sig; secrets unchanged"
+        exit 1
+      }
 
+      statement="$(sed -n 1p "$tmp/bundle.sig")"
+      read -r magic s_env s_role release digest rest <<<"$statement"
+      if [[ "$magic" != hqcat-secrets/1 || "$s_env" != "$environment" || "$s_role" != "$ROLE" || -n "$rest" ]] ||
+        [[ ! "$release" =~ ^[0-9]{1,15}$ || "$digest" != "$(sha256sum "$tmp/bundle.age" | cut -d' ' -f1)" ]]; then
+        echo "the bundle does not match its statement ($statement); secrets unchanged"
+        exit 1
+      fi
+      hqcat-verify-signed ${lib.escapeShellArg cfg.environment.cache.publicKey} "$statement" "$(sed -n 2p "$tmp/bundle.sig")" || {
+        echo "the bundle is not signed by the cache key; secrets unchanged"
+        exit 1
+      }
+      installed="$(cat "$state" 2>/dev/null || echo 0)"
+      [[ "$installed" =~ ^[0-9]{1,15}$ ]] || installed=0
+      if ((10#$release < 10#$installed)); then
+        echo "refusing bundle release $release: release $installed is installed here already"
+        exit 1
+      fi
+
+      [[ -s "$identity" ]] || {
+        echo "no age identity at $identity; secrets unchanged (docs/runbooks/deploy.md)"
+        exit 1
+      }
       umask 077
-      age -d -i /etc/ssh/ssh_host_ed25519_key -o "$tmp/bundle.json" "$tmp/bundle.age" || {
-        echo "the bundle does not decrypt with this host's key"
+      age -d -i "$identity" -o "$tmp/bundle.json" "$tmp/bundle.age" || {
+        echo "the bundle does not decrypt with this host's age identity"
         exit 1
       }
 
@@ -51,6 +89,9 @@ let
         echo "updated $name"
         changed=1
       done < <(jq -r 'keys[]' "$tmp/bundle.json")
+
+      mkdir -p "$(dirname "$state")"
+      printf '%s\n' "$release" >"$state"
 
       if [[ "$changed" == 1 ]]; then
         for unit in ${lib.escapeShellArgs cfg.secretConsumers}; do
@@ -73,6 +114,7 @@ in
     systemd.tmpfiles.rules = [
       "d /etc/hqcat 0700 root root -"
       "d ${dir} 0700 root root -"
+      "d /var/lib/hqcat-host 0700 root root -"
     ];
 
     systemd.services.hqcat-secrets-sync = {
@@ -80,10 +122,17 @@ in
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
       restartIfChanged = false;
-      serviceConfig = {
+      # Reads a public URL into age and jq: confined to the two directories it
+      # writes, with no capabilities (restarting the consumers is a request to
+      # systemd, which trusts uid 0).
+      serviceConfig = cfg.rootService // {
         Type = "oneshot";
         EnvironmentFile = "/run/hqcat/host.env";
         ExecStart = lib.getExe sync;
+        ReadWritePaths = [
+          "/etc/hqcat"
+          "/var/lib/hqcat-host"
+        ];
       };
     };
 

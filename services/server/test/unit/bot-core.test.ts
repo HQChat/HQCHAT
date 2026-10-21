@@ -41,7 +41,7 @@ test("the first start imports the TS state under the seed's id, and later starts
       first.engine.friends().map((f) => [f.id, f.username]),
       [[friendId, "alice"]],
     );
-    assert.equal(fs.statSync(path.join(dir, "device-key")).mode & 0o777, 0o600);
+    assert.ok(!fs.existsSync(path.join(dir, "device-key")), "no key is stored beside the data it seals");
     assert.ok(fs.existsSync(path.join(dir, "state.json.imported")), "the TS state is kept as a backup");
     assert.ok(!fs.existsSync(path.join(dir, "state.json")));
 
@@ -52,14 +52,18 @@ test("the first start imports the TS state under the seed's id, and later starts
   }
 });
 
-test("a start that lost the device key rebuilds the profile from the seed and the backup", () => {
+test("the store opens only with the seed, and a key file from an older build is dropped", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hqchat-bot-"));
   try {
     const seed = crypto.randomBytes(32);
     openBot(dir, seed, OPTS);
-    fs.rmSync(path.join(dir, "device-key"));
+    // A build that stored its key left this behind: it goes, and the profile
+    // is built again from the seed and the backup.
+    fs.writeFileSync(path.join(dir, "device-key"), "00".repeat(32));
     const rebuilt = openBot(dir, seed, OPTS);
     assert.equal(core.peerId(signInKey(rebuilt)), idOfSeed(seed));
+    assert.ok(!fs.existsSync(path.join(dir, "device-key")));
+    assert.ok(!core.deviceKeyFromSeed(seed).equals(core.deviceKeyFromSeed(crypto.randomBytes(32))));
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

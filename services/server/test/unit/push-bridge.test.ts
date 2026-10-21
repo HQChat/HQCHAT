@@ -97,7 +97,8 @@ test("a conversation message wakes the members who are offline", async () => {
 
 test("…and never someone who is online", async () => {
   const { deps, woke } = spy({ [HASH]: [ID_A, ID_B] });
-  const b = createPushBridge(deps);
+  let clock = 0;
+  const b = createPushBridge(deps, new Set(), { now: () => clock });
   await b.handleMessage(`u/${ID_A}/presence`, presence("online"));
 
   await b.handleMessage(`cv/${HASH}`, Buffer.from("ciphertext"));
@@ -106,6 +107,7 @@ test("…and never someone who is online", async () => {
   // The sender being skipped is not a special case — it is this same rule, and
   // it only holds while their presence is current.
   await b.handleMessage(`u/${ID_A}/presence`, presence("offline"));
+  clock += 60_000; // past the wake interval
   await b.handleMessage(`cv/${HASH}`, Buffer.from("ciphertext"));
   assert.deepEqual(woke, [ID_B, ID_A, ID_B], "once offline again, they are woken");
 });
@@ -179,3 +181,61 @@ test("a malformed conversation topic is ignored rather than guessed at", async (
 });
 
 // --- health ------------------------------------------------------------------
+
+// --- what a publisher can make the bridge do ------------------------------------
+
+test("a flood into one inbox is one wake per interval, not one per frame", async () => {
+  // Any account may publish into any inbox, and the bridge cannot see who did.
+  const { deps, woke } = spy({});
+  let clock = 0;
+  const b = createPushBridge(deps, new Set(), { now: () => clock, wakeIntervalMs: 60_000 });
+  for (let i = 0; i < 500; i++) await b.handleMessage(`u/${ID_A}/inbox`, Buffer.from("junk"));
+  assert.deepEqual(woke, [ID_A], "500 frames sounded more than one alert");
+
+  clock += 59_999;
+  await b.handleMessage(`u/${ID_A}/inbox`, Buffer.from("junk"));
+  assert.equal(woke.length, 1);
+  clock += 1;
+  await b.handleMessage(`u/${ID_A}/inbox`, Buffer.from("junk"));
+  assert.equal(woke.length, 2, "a new interval wakes again");
+});
+
+test("a conversation and an inbox share one recipient's interval", async () => {
+  const { deps, woke } = spy({ [HASH]: [ID_A, ID_B] });
+  const b = createPushBridge(deps, new Set(), { now: () => 0 });
+  await b.handleMessage(`u/${ID_A}/inbox`, Buffer.from("init"));
+  await b.handleMessage(`cv/${HASH}`, Buffer.from("ciphertext"));
+  assert.deepEqual(woke, [ID_A, ID_B]);
+});
+
+test("an unknown conversation id costs one lookup, not one per frame", async () => {
+  let lookups = 0;
+  let clock = 0;
+  const b = createPushBridge(
+    {
+      getTopicMembers: async () => {
+        lookups++;
+        return [];
+      },
+      send: async () => "sent",
+    },
+    new Set(),
+    { now: () => clock, unknownTtlMs: 1000 },
+  );
+  for (let i = 0; i < 100; i++) await b.handleMessage(`cv/${HASH}`, Buffer.from("x"));
+  assert.equal(lookups, 1);
+  clock += 1000;
+  await b.handleMessage(`cv/${HASH}`, Buffer.from("x"));
+  assert.equal(lookups, 2, "an id is looked up again once the memory lapses");
+});
+
+test("random ids cannot grow the bridge's memory past its bound", async () => {
+  const { deps } = spy({});
+  const b = createPushBridge(deps, new Set(), { now: () => 0, maxTracked: 100 });
+  for (let i = 0; i < 1000; i++) {
+    const id = i.toString(16).padStart(64, "0");
+    await b.handleMessage(`u/${id}/inbox`, Buffer.from("x"));
+    await b.handleMessage(`cv/${id}`, Buffer.from("x"));
+  }
+  assert.deepEqual(b.tracked(), { woken: 100, unknown: 100 });
+});

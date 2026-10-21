@@ -57,6 +57,10 @@ run "production" {
 
   variables {
     environment = "production"
+    age_identities = {
+      app  = "AGE-SECRET-KEY-PQ-1APPTEST"
+      mqtt = "AGE-SECRET-KEY-PQ-1MQTTTEST"
+    }
   }
 
   assert {
@@ -82,6 +86,20 @@ run "production" {
   }
   assert {
     condition = alltrue([
+      for r in digitalocean_firewall.app.outbound_rule :
+      contains(["443", "53", "123"], coalesce(r.port_range, "-")) || r.protocol == "icmp" || !contains(coalesce(r.destination_addresses, []), "0.0.0.0/0")
+    ])
+    error_message = "The app host reaches the internet on HTTPS, DNS and NTP only."
+  }
+  assert {
+    condition = alltrue([
+      for r in digitalocean_firewall.app.inbound_rule : toset(r.source_addresses) == toset(local.ssh_sources)
+      if r.port_range == "22"
+    ])
+    error_message = "The app host's SSH admits the environment's adminSshSources, or any address when it names none."
+  }
+  assert {
+    condition = alltrue([
       for r in digitalocean_firewall.mqtt.inbound_rule : toset(r.source_tags) == toset(["hqchat-production-app"])
       if r.port_range == "22" || r.protocol == "udp"
     ])
@@ -104,6 +122,14 @@ run "production" {
     error_message = "TLS to the origin must be verified (strict), and 0-RTT stays off."
   }
   assert {
+    condition     = cloudflare_zone_settings_override.this[0].settings[0].min_tls_version == "1.3"
+    error_message = "The edge speaks TLS 1.3 only."
+  }
+  assert {
+    condition     = length(cloudflare_zone_dnssec.this) == 1 && length(cloudflare_record.caa) > 0
+    error_message = "The zone owner signs the zone (DNSSEC) and limits issuance (CAA)."
+  }
+  assert {
     condition     = alltrue([for k, _ in cloudflare_workers_route.site : !strcontains(k, "*")])
     error_message = "Worker routes are exact paths; a glob would route the API to the site."
   }
@@ -122,6 +148,10 @@ run "production" {
   assert {
     condition     = alltrue([for role, d in digitalocean_droplet.host : jsondecode(d.user_data).role == role && length(d.ssh_keys) > 0])
     error_message = "Each droplet names its role in user data and carries the admin keys."
+  }
+  assert {
+    condition     = alltrue([for role, d in digitalocean_droplet.host : startswith(jsondecode(d.user_data).ageIdentity, "AGE-SECRET-KEY-PQ-1${upper(role)}")])
+    error_message = "Each droplet gets its own role's age identity, which its secret bundle is sealed to."
   }
   assert {
     condition     = tostring(digitalocean_reserved_ip_assignment.hqn.droplet_id) == digitalocean_droplet.host["mqtt"].id

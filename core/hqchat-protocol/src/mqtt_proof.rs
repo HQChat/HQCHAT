@@ -62,9 +62,10 @@ impl core::fmt::Debug for SigningKey {
 impl SigningKey {
     /// A fresh key; register [`SigningKey::public_key`] as `mqttSigningKey`.
     pub fn generate(entropy: &mut dyn Entropy) -> Result<SigningKey, Error> {
-        let mut seed = [0u8; 32];
-        entropy.fill(&mut seed)?;
-        Ok(SigningKey(seed))
+        // Filled in place: no unwiped copy of the seed is left behind.
+        let mut key = SigningKey([0u8; 32]);
+        entropy.fill(&mut key.0)?;
+        Ok(key)
     }
 
     /// The key a 32-byte seed determines (RFC 8032), for vectors.

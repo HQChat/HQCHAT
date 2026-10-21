@@ -94,7 +94,7 @@ fn a_report_names_the_conversation_and_can_block() {
     let e = a.engine.report(ReportInput {
         peer: b.id(),
         reason: "spam".into(),
-        msg_ids: vec![],
+        msg_id: None,
         note: Some("again and again".into()),
         block: true,
     });
@@ -393,4 +393,51 @@ fn a_friends_key_is_pinned_on_sync_and_can_be_marked_verified() {
         hqchat_engine::Engine::new(support::config("a"), a.vault.clone(), a.store.clone()).unwrap();
     restarted.unlock(support::NOW).unwrap();
     assert!(restarted.friends()[0].verified);
+}
+
+#[test]
+fn a_report_quotes_one_message_the_friend_sent_and_nothing_else() {
+    let server = FakeServer::shared();
+    let mut a = Client::signed_in(&server, "a");
+    let mut b = Client::signed_in(&server, "b");
+    Client::befriend(&mut a, &mut b);
+    let e = b
+        .engine
+        .send_text(a.id(), "the abuse".into(), b.now)
+        .unwrap();
+    b.pump(e);
+    support::settle(&mut [&mut a, &mut b]);
+    let e = a
+        .engine
+        .send_text(b.id(), "my private reply".into(), a.now)
+        .unwrap();
+    a.pump(e);
+    support::settle(&mut [&mut a, &mut b]);
+    let history = a.engine.history(b.id(), None, 10).unwrap();
+    let theirs = history.iter().find(|m| !m.outgoing).unwrap().msg_id.clone();
+    let mine = history.iter().find(|m| m.outgoing).unwrap().msg_id.clone();
+    let report = |msg_id: Option<String>| ReportInput {
+        peer: b.id(),
+        reason: "abuse".into(),
+        msg_id,
+        note: None,
+        block: false,
+    };
+
+    let filed = server.borrow().reports.len();
+    let e = a.engine.report(report(Some(mine)));
+    assert!(
+        e.iter().any(|e| matches!(e, Effect::ActionFailed { .. })),
+        "the user's own message is never quoted: {e:?}"
+    );
+    let e = a.engine.report(report(Some("not-a-message".into())));
+    assert!(e.iter().any(|e| matches!(e, Effect::ActionFailed { .. })));
+    assert_eq!(server.borrow().reports.len(), filed, "nothing was filed");
+
+    let e = a.engine.report(report(Some(theirs.clone())));
+    a.pump(e);
+    let s = server.borrow();
+    let filed = s.reports.last().expect("filed");
+    assert_eq!(filed["excerpt"], "the abuse");
+    assert_eq!(filed["messageId"], theirs);
 }

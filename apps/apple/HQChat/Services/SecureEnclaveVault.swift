@@ -41,6 +41,16 @@ final class SecureEnclaveVault: KeyVault, @unchecked Sendable {
         }
     }
 
+    /// The 32 bytes the core joins to the ECDH secret when it seals `state`,
+    /// so the identity does not rest on P-256 alone.
+    func stateSecret() throws -> Data {
+        do {
+            return try MessageKeyStore.stateSecret(for: profileID)
+        } catch {
+            throw VaultError.Unavailable(message: "the Keychain refused the state secret: \(error)")
+        }
+    }
+
     /// The key's protection as the core names it: behind biometrics, or behind
     /// any device-owner authentication (the passcode included).
     func tier() -> Tier {

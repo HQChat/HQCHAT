@@ -26,8 +26,9 @@ use hqchat_protocol::envelope::{self, Frame, Header, InitFields, Kind, OneTime};
 use hqchat_protocol::handshake::{self, HandshakeFrame};
 use hqchat_protocol::ratchet::{self, InitHeader, MessageHeader, PrekeyBundle, SessionState};
 use hqchat_protocol::topics;
-use hqchat_protocol::{Kem, OsEntropy, PeerId, aead};
+use hqchat_protocol::{Kem, OsEntropy, PeerId, aead, padding};
 use serde_json::json;
+use zeroize::Zeroizing;
 
 use crate::core::Core;
 use crate::effect::{Effect, Method};
@@ -38,8 +39,24 @@ use crate::types::{CoreError, Delivery, Message};
 
 /// How long an issued challenge stands.
 const CHALLENGE_TTL_MS: i64 = 60_000;
-/// Open challenges per peer: bounds what forged inits can cost.
+/// Open challenges per peer: bounds what forged inits can cost. A full set
+/// refuses the next init rather than evict one: anyone may publish an init
+/// naming any friend, so eviction would let a stranger push out the real one.
 const MAX_CHALLENGES_PER_PEER: usize = 4;
+/// Frames of one init held until its proof. An initiator repeats its init on
+/// every frame until answered, so a first burst is a handful of frames; what
+/// is refused here comes again with `UNANSWERED_RESEND`.
+const MAX_HELD_FRAMES: usize = 8;
+/// Bytes held across every open challenge, for unproven frames.
+const MAX_HELD_BYTES: usize = 2 * 1024 * 1024;
+/// Frames kept sealed for the unlock, and how many of them may be first
+/// contacts: an inbox init is the one frame a stranger can make.
+const MAX_PENDING_FRAMES: usize = 1000;
+const MAX_PENDING_INITS: usize = 64;
+/// While the friend is online and our first messages go unanswered (a lost
+/// or refused challenge), they go again: after a minute, then doubling.
+const UNANSWERED_RESEND_MS: i64 = 60_000;
+const UNANSWERED_RESEND_MAX: u32 = 6;
 
 /// An outgoing message the broker has not acknowledged yet.
 #[derive(Debug, Clone)]
@@ -66,11 +83,17 @@ pub(crate) struct Convo {
     /// Friends whose key or prekeys are being fetched.
     starting: HashSet<PeerId>,
     challenges: HashMap<[u8; 32], Challenge>,
-    /// Transcripts of inits whose sender proved its key.
-    proven: HashSet<[u8; 32]>,
+    /// Transcripts of inits whose sender proved its key, and who that was:
+    /// forgotten with the peer's session, so an old init cannot reopen one.
+    pub(crate) proven: HashMap<[u8; 32], PeerId>,
     /// Friends whose simultaneous init we yielded to: resend once theirs opens.
     yielded: HashSet<PeerId>,
     pending_seq: u64,
+    /// First contacts kept for the unlock since the last drain.
+    pending_inits: usize,
+    /// Friends our init has not been answered by: when to send it again, and
+    /// how many times it went.
+    pub(crate) unanswered: HashMap<PeerId, (i64, u32)>,
 }
 
 /// A random UUID v4, as the other clients make message ids. Fails rather
@@ -139,8 +162,11 @@ impl Core {
     // ── Sending ────────────────────────────────────────────────────────────
 
     /// Makes the next message to `peer` step the ratchet (a new KEM key
-    /// pair), whatever the step policy would otherwise wait for. A chain
-    /// nothing was sent on yet has nothing to step away from.
+    /// pair), whatever the message count or the chain's age would wait for.
+    /// It never lifts the turn: when the last step was ours, the step comes
+    /// with the first message after the peer's next one, since stepping twice
+    /// in a row could cross theirs and fork the session. A chain nothing was
+    /// sent on yet has nothing to step away from.
     pub fn rotate_keys(&mut self, peer: &PeerId) -> Result<(), CoreError> {
         let Some(session) = self.session(peer)? else {
             return Err(CoreError::State("no session to rotate".into()));
@@ -190,11 +216,16 @@ impl Core {
 
     pub fn retry(&mut self, msg_id: &str, now: i64) -> Result<(), CoreError> {
         self.unlocked()?;
-        let peer = self
-            .peers
-            .keys()
-            .find(|p| self.message_slot_of(p, msg_id).is_some())
-            .cloned()
+        // Only a message this user wrote: retrying a received one would seal
+        // the friend's text and send it back to them.
+        let peers: Vec<PeerId> = self.peers.keys().cloned().collect();
+        let peer = peers
+            .into_iter()
+            .find(|p| {
+                self.message_slot_of(p, msg_id)
+                    .and_then(|s| self.get_message(&s).ok().flatten())
+                    .is_some_and(|m| m.outgoing)
+            })
             .ok_or(CoreError::State("no such message".into()))?;
         if !self.convo.outbox.iter().any(|o| o.msg_id == msg_id) {
             self.convo.outbox.push(Outgoing {
@@ -257,7 +288,7 @@ impl Core {
                     }
                 }
                 Err(e) => {
-                    self.drop_frame(format!("could not seal for {peer}: {e:?}"));
+                    self.drop_frame(format!("could not seal for {}: {e:?}", topics::short(peer)));
                     break;
                 }
             }
@@ -322,11 +353,20 @@ impl Core {
                     ct_ot: ct.as_bytes().to_vec(),
                     ot_id: *id,
                 }),
+            padded: true,
         };
         let aad = envelope::header_bytes(&header)?;
-        let payload = aead::seal_payload(text.as_bytes(), &sealed.key.0, &aad, &mut OsEntropy)?;
+        // Padded, so what the server sees is a size class, not a length.
+        let plain = Zeroizing::new(padding::pad(text.as_bytes()));
+        let payload = aead::seal_payload(&plain, &sealed.key.0, &aad, &mut OsEntropy)?;
         let bytes = envelope::encode(&Frame { header, payload })?;
         self.save_session(peer)?;
+        if init.is_some() {
+            self.convo
+                .unanswered
+                .entry(peer.clone())
+                .or_insert((now.saturating_add(UNANSWERED_RESEND_MS), 0));
+        }
         let topic = if init.is_some() {
             topics::inbox_topic(peer)
         } else {
@@ -381,7 +421,8 @@ impl Core {
             None => {
                 self.convo.starting.remove(&peer);
                 self.drop_frame(format!(
-                    "the key served for {peer} does not hash to that id"
+                    "the key served for {} does not hash to that id",
+                    topics::short(&peer)
                 ));
                 self.fail_outbox(&peer);
             }
@@ -418,7 +459,7 @@ impl Core {
             one_time,
         };
         let kem = self.kem;
-        match ratchet::start_as_initiator(&kem, &bundle, now) {
+        match ratchet::start_as_initiator(&kem, &bundle) {
             Ok((session, _)) => {
                 if self.put_session(&peer, session).is_ok() {
                     self.flush(&peer, now);
@@ -473,11 +514,15 @@ impl Core {
 
     // ── Link events (hooks of net.rs) ──────────────────────────────────────
 
-    pub fn on_puback(&mut self, peer: &PeerId, msg_id: &str, _now: i64) {
+    pub fn on_puback(&mut self, peer: &PeerId, msg_id: &str, now: i64) {
         let before = self.convo.outbox.len();
         self.convo.outbox.retain(|o| o.msg_id != msg_id);
         if self.convo.outbox.len() != before {
             self.persist_state();
+        }
+        // A slot freed: what waited for one goes now.
+        if self.convo.outbox.iter().any(|o| !o.in_flight) {
+            self.flush_all(now);
         }
         let online = self.peers.get(peer).is_some_and(|p| p.online);
         self.set_status(
@@ -513,7 +558,9 @@ impl Core {
         }
         let (frame, aad) = match envelope::decode(&payload) {
             Ok(d) => d,
-            Err(_) => return self.drop_frame(format!("not a frame on {topic}")),
+            Err(_) => {
+                return self.drop_frame(format!("not a frame on {}", topics::redacted(topic)));
+            }
         };
         let Some(me) = self.me.clone() else { return };
         let sender = frame.header.sender.clone();
@@ -526,7 +573,10 @@ impl Core {
             .filter(|p| !p.is_read_only())
             .cloned()
         else {
-            return self.drop_frame(format!("frame from {sender}, not a friend"));
+            return self.drop_frame(format!(
+                "frame from {}, not a friend",
+                topics::short(&sender)
+            ));
         };
         if frame.header.to != me {
             return self.drop_frame("frame addressed to someone else");
@@ -538,8 +588,12 @@ impl Core {
         };
         if expected.as_deref() != Some(topic) {
             return self.drop_frame(format!(
-                "{:?} on {topic}, expected {expected:?}",
-                frame.header.kind
+                "{:?} on {}, expected {}",
+                frame.header.kind,
+                topics::redacted(topic),
+                expected
+                    .as_deref()
+                    .map_or("no topic".into(), topics::redacted)
             ));
         }
         if frame.header.kind == Kind::Init {
@@ -549,11 +603,59 @@ impl Core {
     }
 
     /// Seals the frame to the device key as it came: opened by the unlock.
+    /// Nothing can be authenticated while locked, so only what the topic
+    /// vouches for is counted: a frame on a friend's conversation topic (an
+    /// id only the two of them hold) names that friend, while an inbox init,
+    /// which anyone can publish naming anyone, gets a notification that names
+    /// no one. Junk and frames out of place are dropped, and a quota bounds
+    /// what a stranger can make this client store.
     fn keep_for_unlock(&mut self, topic: &str, payload: Vec<u8>, now: i64) {
-        let notify = match envelope::decode(&payload) {
-            Ok((f, _)) if f.header.kind != Kind::Receipt => Some(f.header.sender),
-            _ => None,
+        let Some(me) = self.me.clone() else { return };
+        let notify = if topic.starts_with("hs/") {
+            None
+        } else {
+            let Ok((f, _)) = envelope::decode(&payload) else {
+                return self.drop_frame(format!("not a frame on {}", topics::redacted(topic)));
+            };
+            let Some(peer) = self
+                .peers
+                .get(&f.header.sender)
+                .filter(|p| !p.is_read_only())
+            else {
+                return self.drop_frame("frame from someone who is not a friend");
+            };
+            let vouched = match f.header.kind {
+                Kind::Init => topic == topics::inbox_topic(&me),
+                _ => {
+                    peer.convo
+                        .as_ref()
+                        .map(topics::conversation_topic)
+                        .as_deref()
+                        == Some(topic)
+                }
+            };
+            if f.header.to != me || !vouched {
+                return self.drop_frame(format!(
+                    "{:?} out of place on {}",
+                    f.header.kind,
+                    topics::redacted(topic)
+                ));
+            }
+            match f.header.kind {
+                Kind::Receipt => None,
+                Kind::Init => Some(None),
+                _ => Some(Some(f.header.sender)),
+            }
         };
+        if notify == Some(None) {
+            if self.convo.pending_inits >= MAX_PENDING_INITS {
+                return self.drop_frame("too many first contacts while locked");
+            }
+            self.convo.pending_inits = self.convo.pending_inits.saturating_add(1);
+        }
+        if self.store.list(persist::PENDING_PREFIX.into()).len() >= MAX_PENDING_FRAMES {
+            return self.drop_frame("too many frames waiting for the unlock");
+        }
         match self.store_pending(topic, payload, now) {
             Ok(()) => {}
             Err(e @ CoreError::Store(_)) => self.storage_failed("a frame for the unlock", &e),
@@ -561,14 +663,17 @@ impl Core {
                 return self.drop_frame(format!("could not keep a frame for the unlock: {e:?}"));
             }
         }
-        if let Some(sender) = notify
-            && let Some(p) = self.peers.get_mut(&sender)
-            && !p.is_read_only()
-        {
-            p.pending = p.pending.saturating_add(1);
-            self.emit(Effect::Notify {
-                peer: sender.to_string(),
-            });
+        match notify {
+            Some(Some(sender)) => {
+                if let Some(p) = self.peers.get_mut(&sender) {
+                    p.pending = p.pending.saturating_add(1);
+                }
+                self.emit(Effect::Notify {
+                    peer: Some(sender.to_string()),
+                });
+            }
+            Some(None) => self.emit(Effect::Notify { peer: None }),
+            None => {}
         }
     }
 
@@ -613,6 +718,7 @@ impl Core {
                 Err(_) => self.store.delete(slot),
             }
         }
+        self.convo.pending_inits = 0;
         // What was opened is now counted as unread messages.
         let mut changed = false;
         for p in self.peers.values_mut() {
@@ -628,32 +734,51 @@ impl Core {
         let Some(init) = init_header(&frame.header) else {
             return self.drop_frame("init missing handshake fields or of the wrong sizes");
         };
-        let has_session = matches!(self.session(sender), Ok(Some(_)));
-        if has_session {
-            let heard = matches!(self.session(sender), Ok(Some(s)) if s.pending_init.is_none());
-            let Some(me) = self.me.clone() else {
-                return self.drop_frame("init before an identity exists");
-            };
-            if heard {
-                // An initiator repeats its init until answered: the payload is a message.
-                return self.open_message(sender, &frame, &aad, now);
-            }
-            if me < *sender {
-                return self.drop_frame("simultaneous init: keeping ours (lower id)");
-            }
-            // Yield: theirs wins; ours was never answered.
-            self.forget_session(sender);
-            self.convo.yielded.insert(sender.clone());
-        }
         let Some(me) = self.me.clone() else {
             return self.drop_frame("init before an identity exists");
         };
+        match self.session(sender) {
+            // An initiator repeats its init until answered: the payload is a
+            // message, and the session key authenticates it.
+            Ok(Some(s)) if s.pending_init.is_none() => {
+                return self.open_message(sender, &frame, &aad, now);
+            }
+            Ok(Some(_)) if me < *sender => {
+                return self.drop_frame("simultaneous init: keeping ours (lower id)");
+            }
+            // Ours would yield, but only to an init its sender proves: anyone
+            // can publish an init naming any friend (see `accept_init`).
+            _ => {}
+        }
         let transcript = handshake::init_transcript(sender, &me, &init);
-        if self.convo.proven.contains(&transcript) {
-            self.open_init(sender, &frame, &aad, now);
+        if self.convo.proven.contains_key(&transcript) {
+            self.accept_init(sender, &frame, &aad, now);
         } else {
             self.challenge(sender, frame, aad, transcript, &init, now);
         }
+    }
+
+    /// An init whose sender proved its key. On a simultaneous start the
+    /// higher id yields here, never before the proof.
+    fn accept_init(&mut self, sender: &PeerId, frame: &Frame, aad: &[u8], now: i64) {
+        let Some(me) = self.me.clone() else {
+            return self.drop_frame("init before an identity exists");
+        };
+        match self.session(sender) {
+            Ok(Some(s)) if s.pending_init.is_none() => {
+                return self.open_message(sender, frame, aad, now);
+            }
+            Ok(Some(_)) if me < *sender => {
+                return self.drop_frame("simultaneous init: keeping ours (lower id)");
+            }
+            Ok(Some(_)) => {
+                // Yield: theirs wins; ours was never answered.
+                self.forget_session(sender);
+                self.convo.yielded.insert(sender.clone());
+            }
+            _ => {}
+        }
+        self.open_init(sender, frame, aad, now);
     }
 
     fn challenge(
@@ -666,7 +791,20 @@ impl Core {
         now: i64,
     ) {
         self.convo.challenges.retain(|_, c| c.expires_at > now);
+        let held_bytes: usize = self
+            .convo
+            .challenges
+            .values()
+            .flat_map(|c| &c.held)
+            .map(|(f, a)| f.payload.len().saturating_add(a.len()))
+            .sum();
+        if held_bytes.saturating_add(frame.payload.len()) > MAX_HELD_BYTES {
+            return self.drop_frame("too much held for unproven inits");
+        }
         if let Some(open) = self.convo.challenges.get_mut(&transcript) {
+            if open.held.len() >= MAX_HELD_FRAMES {
+                return self.drop_frame("too many frames held for one unproven init");
+            }
             open.held.push((frame, aad));
             return;
         }
@@ -681,19 +819,15 @@ impl Core {
         else {
             return self.drop_frame("init without a sender key");
         };
-        let mut for_peer: Vec<([u8; 32], i64)> = self
+        let open_for_peer = self
             .convo
             .challenges
-            .iter()
-            .filter(|(_, c)| c.peer == *peer)
-            .map(|(t, c)| (*t, c.expires_at))
-            .collect();
-        if for_peer.len() >= MAX_CHALLENGES_PER_PEER {
-            // The oldest goes: the real initiator re-sends, so its newest init always gets one.
-            for_peer.sort_by_key(|(_, at)| *at);
-            if let Some((oldest, _)) = for_peer.first() {
-                self.convo.challenges.remove(oldest);
-            }
+            .values()
+            .filter(|c| c.peer == *peer)
+            .count();
+        if open_for_peer >= MAX_CHALLENGES_PER_PEER {
+            // Refused, never evicted: the real initiator sends again.
+            return self.drop_frame("too many open challenges for this friend");
         }
         let Ok(nonce) = handshake::handshake_nonce(&mut OsEntropy) else {
             return;
@@ -755,7 +889,7 @@ impl Core {
             .and_then(|p| p.handshake.as_ref())
             .map(topics::handshake_topic);
         if expected.as_deref() != Some(topic) {
-            return self.drop_frame(format!("handshake frame on {topic}"));
+            return self.drop_frame(format!("handshake frame on {}", topics::redacted(topic)));
         }
         match h {
             HandshakeFrame::Challenge { nonce, ct, .. } => {
@@ -804,14 +938,10 @@ impl Core {
                     return self.drop_frame("handshake proof did not match");
                 }
                 // The peer proved THIS init; its other open challenges are about inits it did not build.
-                self.convo.proven.insert(transcript);
+                self.convo.proven.insert(transcript, from.clone());
                 self.convo.challenges.retain(|_, c| c.peer != from);
                 for (frame, aad) in challenge.held {
-                    if matches!(self.session(&from), Ok(Some(_))) {
-                        self.open_message(&from, &frame, &aad, now);
-                    } else {
-                        self.open_init(&from, &frame, &aad, now);
-                    }
+                    self.accept_init(&from, &frame, &aad, now);
                 }
             }
         }
@@ -846,15 +976,25 @@ impl Core {
         {
             p.pinned = sender_pk;
         }
+        // The message before the session: kept once by id, so if a later
+        // write fails, the frame that comes again is not lost as a replay.
+        let kept = match self.keep_received(sender, &frame.header.msg_id, text, now) {
+            Ok(kept) => kept,
+            Err(e) => return self.storage_failed("a received message", &e),
+        };
+        if let Err(e) = self.put_session(sender, session) {
+            return self.storage_failed("a session", &e);
+        }
         if let Some(o) = &frame.header.one_time
             && let Some(prekeys) = self.unlocked.as_mut().and_then(|u| u.prekeys.as_mut())
         {
             prekeys.one_time.remove(&o.ot_id);
         }
-        if self.put_session(sender, session).is_err() || self.save_state().is_err() {
-            return;
+        self.persist_state();
+        if let Some(record) = kept {
+            self.announce_received(sender, record);
         }
-        self.deliver(sender, &frame.header.msg_id, text, now);
+        self.send_receipt(sender, &frame.header.msg_id, now);
         if self.convo.yielded.remove(sender) {
             self.resend_unconfirmed(sender, now);
         }
@@ -867,8 +1007,9 @@ impl Core {
             Ok(Some(session)) => open_with(&kem, session, frame, aad),
             _ => {
                 return self.drop_frame(format!(
-                    "{:?} from {sender} with no session",
-                    frame.header.kind
+                    "{:?} from {} with no session",
+                    frame.header.kind,
+                    topics::short(sender)
                 ));
             }
         };
@@ -878,50 +1019,76 @@ impl Core {
                 frame.header.kind, frame.header.n
             ));
         };
-        if self.save_session(sender).is_err() {
-            return;
+        // The message before the session (see open_init); a failed write
+        // undoes the advance, and the frame is not acknowledged.
+        let kept = if frame.header.kind == Kind::Receipt {
+            None
+        } else {
+            match self.keep_received(sender, &frame.header.msg_id, text, now) {
+                Ok(kept) => kept,
+                Err(e) => {
+                    self.drop_cached_session(sender);
+                    return self.storage_failed("a received message", &e);
+                }
+            }
+        };
+        if let Err(e) = self.save_session(sender) {
+            self.drop_cached_session(sender);
+            return self.storage_failed("a session", &e);
         }
         if frame.header.kind == Kind::Receipt {
             self.set_status(sender, &frame.header.msg_id, Delivery::Delivered);
         } else {
-            self.deliver(sender, &frame.header.msg_id, text, now);
+            if let Some(record) = kept {
+                self.announce_received(sender, record);
+            }
+            self.send_receipt(sender, &frame.header.msg_id, now);
         }
         // Their answer may have opened our session for what waits.
         self.flush(sender, now);
     }
 
-    /// Stores a received message once, tells the UI, and acknowledges it.
-    fn deliver(&mut self, sender: &PeerId, msg_id: &str, text: String, now: i64) {
-        if self.message_slot_of(sender, msg_id).is_none() {
-            let at = self.stamp(now);
-            let record = StoredMessage {
-                format: persist::FORMAT,
-                msg_id: msg_id.to_owned(),
-                outgoing: false,
-                text: text.clone(),
-                at,
-                delivery: None,
-            };
-            if self.put_message(sender, &record).is_err() {
-                return;
-            }
-            if let Some(p) = self.peers.get_mut(sender) {
-                p.unread = p.unread.saturating_add(1);
-            }
-            self.persist_state();
-            self.emit(Effect::MessageAdded(Message {
-                msg_id: msg_id.to_owned(),
-                peer: sender.to_string(),
-                outgoing: false,
-                text,
-                at,
-                delivery: None,
-            }));
-            self.emit(Effect::Notify {
-                peer: sender.to_string(),
-            });
+    /// Stores a received message once: the record when it is new, `None`
+    /// when it was kept before (a redelivery).
+    fn keep_received(
+        &mut self,
+        sender: &PeerId,
+        msg_id: &str,
+        text: String,
+        now: i64,
+    ) -> Result<Option<StoredMessage>, CoreError> {
+        if self.message_slot_of(sender, msg_id).is_some() {
+            return Ok(None);
         }
-        self.send_receipt(sender, msg_id, now);
+        let record = StoredMessage {
+            format: persist::FORMAT,
+            msg_id: msg_id.to_owned(),
+            outgoing: false,
+            text,
+            at: self.stamp(now),
+            delivery: None,
+        };
+        self.put_message(sender, &record)?;
+        Ok(Some(record))
+    }
+
+    /// Counts a newly kept message as unread and tells the UI.
+    fn announce_received(&mut self, sender: &PeerId, record: StoredMessage) {
+        if let Some(p) = self.peers.get_mut(sender) {
+            p.unread = p.unread.saturating_add(1);
+        }
+        self.persist_state();
+        self.emit(Effect::MessageAdded(Message {
+            msg_id: record.msg_id.clone(),
+            peer: sender.to_string(),
+            outgoing: false,
+            text: record.text.clone(),
+            at: record.at,
+            delivery: None,
+        }));
+        self.emit(Effect::Notify {
+            peer: Some(sender.to_string()),
+        });
     }
 
     /// A receipt never opens a session and is sent only inside an answered one.
@@ -935,10 +1102,45 @@ impl Core {
         }
     }
 
+    /// Sends again what an unanswered init carried, while the friend is
+    /// online: the challenge may have been lost, or refused because forged
+    /// inits filled the friend's slots. Stops once answered, or after
+    /// `UNANSWERED_RESEND_MAX` tries; the receiver keeps each message once.
+    pub(crate) fn resend_unanswered(&mut self, now: i64) {
+        let due: Vec<(PeerId, u32)> = self
+            .convo
+            .unanswered
+            .iter()
+            .filter(|(_, (at, _))| now >= *at)
+            .map(|(p, (_, n))| (p.clone(), *n))
+            .collect();
+        for (peer, tries) in due {
+            let pending = matches!(self.session(&peer), Ok(Some(s)) if s.pending_init.is_some());
+            if !pending || tries >= UNANSWERED_RESEND_MAX {
+                self.convo.unanswered.remove(&peer);
+                continue;
+            }
+            let online = self.peers.get(&peer).is_some_and(|p| p.online);
+            if !online || !self.link_up() {
+                self.convo
+                    .unanswered
+                    .insert(peer, (now.saturating_add(UNANSWERED_RESEND_MS), tries));
+                continue;
+            }
+            let wait =
+                UNANSWERED_RESEND_MS.saturating_mul(1_i64.checked_shl(tries).unwrap_or(i64::MAX));
+            self.convo.unanswered.insert(
+                peer.clone(),
+                (now.saturating_add(wait), tries.saturating_add(1)),
+            );
+            self.resend_unconfirmed(&peer, now);
+        }
+    }
+
     /// After yielding a simultaneous start: every outgoing message to `peer`
     /// not yet delivered goes again, in order, under its id.
     fn resend_unconfirmed(&mut self, peer: &PeerId, now: i64) {
-        let slots = self.store.list(persist::messages_prefix(peer));
+        let slots = self.message_slots(peer);
         for slot in slots {
             let Ok(Some(m)) = self.get_message(&slot) else {
                 continue;
@@ -973,7 +1175,13 @@ fn open_with(
         aad,
     ) {
         Ok(plain) => {
-            text = String::from_utf8(plain).ok();
+            let plain = Zeroizing::new(plain);
+            let body = if frame.header.padded {
+                padding::unpad(&plain).ok()
+            } else {
+                Some(plain.as_slice())
+            };
+            text = body.and_then(|b| String::from_utf8(b.to_vec()).ok());
             text.is_some()
         }
         Err(_) => false,

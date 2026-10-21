@@ -6,8 +6,9 @@
 //!   once, at [`PublicKey::from_bytes`] and friends, never inside C.
 //! - [`SecretKey`], [`SharedSecret`] and [`Seed`] are wiped when dropped and
 //!   never printed.
-//! - [`encapsulate`] draws its entropy from the OS; [`encapsulate_derand`]
-//!   takes it from the caller, for known-answer tests and vectors only.
+//! - [`encapsulate`] draws its entropy from the OS. A caller-chosen entropy
+//!   exists only in this crate's own tests: reused entropy would give the
+//!   secret away, so no other crate can ask for it.
 //! - Decapsulation never fails on a forged ciphertext: implicit rejection
 //!   returns a pseudo-random secret, so there is no decryption oracle.
 
@@ -123,6 +124,13 @@ impl SecretKey {
     pub fn as_bytes(&self) -> &[u8; SECRET_KEY_BYTES] {
         &self.0
     }
+
+    /// Whether `public` is this key's public half. An HQC-KEM secret key
+    /// starts with its public key (`dk_kem = ek_kem ‖ dk_pke ‖ σ ‖ seed_kem`),
+    /// so a pair read from outside is checked without a KEM round trip.
+    pub fn belongs_to(&self, public: &PublicKey) -> bool {
+        self.0.first_chunk::<PUBLIC_KEY_BYTES>() == Some(&*public.0)
+    }
 }
 
 impl fmt::Debug for SecretKey {
@@ -195,9 +203,10 @@ pub struct Seed([u8; SEED_BYTES]);
 impl Seed {
     /// A fresh seed from the OS random generator.
     pub fn generate() -> Result<Self, Error> {
-        let mut seed = [0u8; SEED_BYTES];
-        getrandom::fill(&mut seed).map_err(|_| Error::Entropy)?;
-        Ok(Self(seed))
+        // Filled in place: no unwiped copy of the seed is left behind.
+        let mut seed = Self([0u8; SEED_BYTES]);
+        getrandom::fill(&mut seed.0).map_err(|_| Error::Entropy)?;
+        Ok(seed)
     }
 
     /// A seed from known bytes (a stored identity seed, a test vector).
@@ -250,9 +259,9 @@ pub fn encapsulate(pk: &PublicKey) -> Result<(Ciphertext, SharedSecret), Error> 
 }
 
 /// [`encapsulate`] with the caller's entropy: the same entropy gives the same
-/// ciphertext. For known-answer tests and vectors only; reusing entropy
-/// across real encapsulations gives the secret away.
-pub fn encapsulate_derand(
+/// ciphertext. Private: reusing entropy across real encapsulations gives the
+/// secret away.
+fn encapsulate_derand(
     pk: &PublicKey,
     entropy: &[u8; ENC_ENTROPY_BYTES],
 ) -> Result<(Ciphertext, SharedSecret), Error> {
@@ -281,6 +290,18 @@ struct Entropy([u8; ENC_ENTROPY_BYTES]);
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_same_entropy_gives_the_same_encapsulation() {
+        let same = |a: &SharedSecret, b: &SharedSecret| bool::from(a.ct_eq(b));
+        let pair = keypair_from_seed(&Seed::from_bytes([1; SEED_BYTES])).unwrap();
+        let entropy = [0x5a; ENC_ENTROPY_BYTES];
+        let (ct1, ss1) = encapsulate_derand(&pair.public, &entropy).unwrap();
+        let (ct2, ss2) = encapsulate_derand(&pair.public, &entropy).unwrap();
+        assert_eq!(ct1, ct2);
+        assert!(same(&ss1, &ss2));
+        assert!(same(&decapsulate(&pair.secret, &ct1).unwrap(), &ss1));
+    }
 
     #[test]
     fn a_wrong_length_is_refused_with_what_and_how_long() {

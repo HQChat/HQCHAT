@@ -43,11 +43,6 @@ export function loadServerKeys(seeds: KeySeed[]): Map<number, GatewayKeyPair> {
   return new Map(seeds.map((s) => [s.keyId, new core.GatewayKeyPair(s)]));
 }
 
-/** The HQC secret keys the decapsulation workers hold, by key id. */
-export function decapsulationKeys(seeds: KeySeed[]): { keyId: number; sk: Buffer }[] {
-  return seeds.map((s) => ({ keyId: s.keyId, sk: core.hqcKeypairFromSeed(s.hqcSeed).sk }));
-}
-
 export function readKeySeeds(file: string): KeySeed[] {
   return parseKeySeeds(fs.readFileSync(file, "utf8"));
 }

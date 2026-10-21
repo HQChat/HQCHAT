@@ -7,9 +7,13 @@
 #                                       iOS simulator (arm64 + x86_64), macOS (arm64)
 #   Sources/HQChatCore/HQChatCore.swift the uniffi bindings, generated from them
 #
-# Both are committed, so the Xcode project builds from a clone, as with
-# native/hqc. `.source` holds the hash of the core sources they came from;
-# apps/apple/verify.sh refuses a build that does not match its sources.
+# The xcframework is never committed: it is built here, once after a clone
+# and after every core change (apps/apple/verify.sh runs this), and by the
+# Apple release workflow on its own runner before it archives. The bindings
+# are committed, so a change to the core's Swift surface shows in review; the
+# release workflow fails when the ones it generates differ from them.
+# `.built-from` records the commit built, or `dirty` when the core's inputs had
+# uncommitted changes; apps/apple/release.sh ships nothing else.
 #
 # Runs inside `nix develop .#apple` (Rust with the Apple targets, HQC_SOURCE),
 # or anywhere `cargo` has those four targets and HQC_SOURCE names the prepared
@@ -41,6 +45,14 @@ swift_out="$out/Sources/HQChatCore/HQChatCore.swift"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
+# What this build is made from, taken before it starts: the commit, unless the
+# core's inputs differ from it.
+built_from="$(git -C "$core" rev-parse HEAD)"
+if [[ -n "$(git -C "$core/.." status --porcelain -- core native flake.nix flake.lock)" ]]; then
+  built_from=dirty
+fi
+rm -f "$out/.built-from"
+
 for t in "${targets[@]}"; do
   # The static library alone: the crate's other types (cdylib, rlib) are for
   # the bindings generator and the tests.
@@ -55,7 +67,7 @@ lipo -create "$target_dir/aarch64-apple-ios-sim/release/$lib" "$target_dir/x86_6
   -output "$work/ios-sim/$lib"
 cp "$target_dir/aarch64-apple-darwin/release/$lib" "$work/macos/$lib"
 # Debug info and local symbols out (Rust's std ships with debug info): about a
-# quarter of the size, since the xcframework is committed. Exported symbols stay.
+# quarter of the size. Exported symbols stay.
 for l in "$work"/*/"$lib"; do xcrun strip -S -x "$l" 2>/dev/null; done
 
 # The bindings come from the library's own metadata, so they always match it.
@@ -79,7 +91,7 @@ xcodebuild -create-xcframework \
   -library "$work/macos/$lib" -headers "$headers" \
   -output "$xcframework" >/dev/null
 cp "$bindings/hqchat_ffi.swift" "$swift_out"
-"$here/apple-source-hash.sh" >"$out/.source"
+printf '%s\n' "$built_from" >"$out/.built-from"
 
 echo "built $xcframework and $swift_out"
 du -sh "$xcframework"/*/ | sed "s|$xcframework/||"

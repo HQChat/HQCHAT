@@ -1,6 +1,6 @@
-# The two droplets. They boot the environment's base image and read their role
-# and SSH host key from user data (infra/nixos/hqcat-netconf.sh), then switch to
-# their role's closure. Image, user data and keys are creation-time inputs:
+# The two droplets. They boot the environment's base image and read their role,
+# SSH host key and age identity from user data (infra/nixos/hqcat-netconf.sh),
+# then switch to their role's closure. Image, user data and keys are creation-time inputs:
 # changing them later must not replace a running droplet.
 resource "digitalocean_droplet" "host" {
   for_each          = local.roles
@@ -13,8 +13,9 @@ resource "digitalocean_droplet" "host" {
   tags              = [digitalocean_tag.this["env"].name, digitalocean_tag.this[each.key].name]
   graceful_shutdown = true
   user_data = jsonencode({
-    role    = each.key
-    hostKey = tls_private_key.host[each.key].private_key_openssh
+    role        = each.key
+    hostKey     = tls_private_key.host[each.key].private_key_openssh
+    ageIdentity = lookup(var.age_identities, each.key, null)
   })
 
   lifecycle {

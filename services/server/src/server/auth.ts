@@ -10,16 +10,21 @@ import { resolveTransportInfo } from "./transport-config";
 /**
  * The auth service.
  *
- *   POST /auth/init        { pk }                          → { ct }  KEM challenge to the public key
- *   POST /auth/verify      { pk, solution, mqttSigningKey } → session and MQTT signing-key id
+ *   POST /auth/init        { pk, origin }                  → { ct, challenge }  KEM challenge to the public key
+ *   POST /auth/verify      { pk, solution, mqttSigningKey, challenge? } → session and MQTT signing-key id
  *   POST /auth/refresh     (Bearer) { mqttSigningKey }     → a new MQTT signing-key id
+ *   POST /auth/logout      (Bearer) { everywhere? }        → ends this session, or every session and MQTT key
  *   GET  /auth/transport                                   → the hqn/1 gateway, when enabled
  *   POST /mqtt/authn       EMQX hook: verifies a signed, single-use CONNECT proof
  *   POST /mqtt/authn/internal  EMQX hook for the internal listener (push bridge)
  */
 
 const INIT_PER_IP_PER_MIN = Number(process.env.AUTH_INIT_IP_LIMIT || 20);
+/** Inits for one key from one address. Per address, so a stranger cannot spend the owner's budget. */
 const INIT_PER_PK_PER_MIN = Number(process.env.AUTH_INIT_PK_LIMIT || 6);
+/** Inits for one key from every address together: an alert, never a refusal. */
+const INIT_PER_PK_ALERT = Number(process.env.AUTH_INIT_PK_ALERT || 60);
+const VERIFY_PER_IP_PER_MIN = Number(process.env.AUTH_VERIFY_IP_LIMIT || 30);
 const VERIFY_FAILURE_ALERT = Number(process.env.AUTH_VERIFY_FAILURE_ALERT || 5);
 /** The internal MQTT identity's username; the push bridge connects as it. */
 export const INTERNAL_MQTT_USER = "svc-internal";
@@ -30,6 +35,68 @@ function safeEqual(a: string, b: string): boolean {
   const ab = Buffer.from(a);
   const bb = Buffer.from(b);
   return ab.length === bb.length && crypto.timingSafeEqual(ab, bb);
+}
+
+/**
+ * The origins a client may sign in at (`scheme://host[:port]`). The proof is
+ * bound to the one it names, so a server that relays a client's sign-in here
+ * gains nothing: its own origin is refused, and ours makes the client's proof
+ * the wrong one. Outside production, unset means the request's own Host.
+ */
+function allowedOrigins(): string[] {
+  return (process.env.AUTH_ORIGINS || "")
+    .split(",")
+    .map((o) => core.originOf(o.trim()))
+    .filter((o): o is string => o !== null);
+}
+
+function originAllowed(origin: string | null, req: http.IncomingMessage): boolean {
+  if (!origin) return false;
+  const allowed = allowedOrigins();
+  if (allowed.length) return allowed.includes(origin);
+  if (process.env.NODE_ENV === "production") return false;
+  const own = core.originOf(
+    `${req.headers["x-forwarded-proto"] === "https" ? "https" : "http"}://${req.headers.host || ""}`,
+  );
+  return origin === own;
+}
+
+/**
+ * A challenge to `pk` for a sign-in at `origin`, and the proof that answers
+ * it, in the stored form (hex). The only place the proof is derived; the
+ * shared secret stays inside the core.
+ */
+function newChallenge(pk: Buffer, origin: string): { ct: Buffer; proof: string } {
+  const { ct, proof } = core.authChallenge(pk, origin);
+  return { ct, proof: proof.toString("hex") };
+}
+
+/** The client's proof from the verify body (base64 on the wire), in the stored form. */
+function presentedProof(body: JsonBody): string {
+  return Buffer.from(textField(body, "solution"), "base64").toString("hex");
+}
+
+/** A short, stable stand-in for the caller's address, so challenge rows hold no address. */
+function sourceOf(req: http.IncomingMessage): string {
+  return crypto.createHash("sha256").update(clientIp(req)).digest("hex").slice(0, 16);
+}
+
+/**
+ * Which of the open challenges `proof` answers, or null. With a challenge id
+ * only that one is considered; without one (the current clients) every open
+ * challenge is compared, each in constant time and with no early exit.
+ */
+function matchChallenge(
+  open: Array<{ challengeId: string; proof: string }>,
+  proof: string,
+  challengeId: string,
+): string | null {
+  let match: string | null = null;
+  for (const c of open) {
+    if (challengeId && c.challengeId !== challengeId) continue;
+    if (safeEqual(proof, c.proof) && match === null) match = c.challengeId;
+  }
+  return match;
 }
 
 async function befriendBot(id: string): Promise<void> {
@@ -63,42 +130,57 @@ async function signingKeyFields(id: string, signingKey: Buffer) {
 }
 
 async function handleInit(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-  const pkHex = textField(await readJson(req), "pk").toLowerCase();
+  const body = await readJson(req);
+  const pkHex = textField(body, "pk").toLowerCase();
   if (!/^[0-9a-f]+$/.test(pkHex)) return send(res, 400, { error: "bad public key" });
+  const origin = core.originOf(typeof body.origin === "string" ? body.origin : "");
+  if (!originAllowed(origin, req)) return send(res, 400, { error: "BAD_ORIGIN" });
   const id = core.peerId(pkHex);
+  const ip = clientIp(req);
 
-  const [ipHits, pkHits] = await Promise.all([
-    DB.bumpCounter(`init:ip:${clientIp(req)}`, 60),
+  const [ipHits, pkHits, pkAll] = await Promise.all([
+    DB.bumpCounter(`init:ip:${ip}`, 60),
+    DB.bumpCounter(`init:pk:${id}:${sourceOf(req)}`, 60),
     DB.bumpCounter(`init:pk:${id}`, 60),
   ]);
+  if (pkAll === INIT_PER_PK_ALERT) {
+    logger.error(`[auth] ${pkAll} sign-in inits in 1m for one public key, from several addresses`);
+  }
   if (ipHits > INIT_PER_IP_PER_MIN || pkHits > INIT_PER_PK_PER_MIN) {
     logger.warn(`[auth] init rate-limited (ip=${ipHits}, pk=${pkHits})`);
     return send(res, 429, { error: "RATE_LIMITED" });
   }
 
   if (pkHex.length !== core.HQC_PUBLIC_KEY_BYTES * 2) return send(res, 400, { error: "bad public key" });
-  const { ct, ss } = core.hqcEncapsulate(Buffer.from(pkHex, "hex"));
-  await DB.startAuthChallenge(id, core.authProof(ss).toString("hex"));
-  return send(res, 200, { ct: ct.toString("base64") });
+  const { ct, proof } = newChallenge(Buffer.from(pkHex, "hex"), origin as string);
+  const challenge = await DB.startAuthChallenge(id, sourceOf(req), proof);
+  return send(res, 200, { ct: ct.toString("base64"), challenge });
 }
 
 async function handleVerify(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  if ((await DB.bumpCounter(`verify:ip:${clientIp(req)}`, 60)) > VERIFY_PER_IP_PER_MIN) {
+    return send(res, 429, { error: "RATE_LIMITED" });
+  }
   const body = await readJson(req);
   const signingKey = readSigningKey(body);
   const pkHex = textField(body, "pk").toLowerCase();
   const id = core.peerId(pkHex);
-  const solutionHex = Buffer.from(textField(body, "solution"), "base64").toString("hex");
 
-  const expectedHex = await DB.takeAuthChallenge(id);
-  if (!expectedHex || !safeEqual(solutionHex, expectedHex)) {
+  // A wrong proof spends nothing: only the challenge it answers is deleted.
+  const matched = matchChallenge(await DB.openAuthChallenges(id), presentedProof(body), textField(body, "challenge"));
+  if (!matched || !(await DB.spendAuthChallenge(id, matched))) {
     const failures = await DB.bumpCounter(`verify:fail:${id}`, 15 * 60);
     if (failures === VERIFY_FAILURE_ALERT) {
-      logger.error(`[auth] ${failures} failed key-possession proofs in 15m for one public key (ip=${clientIp(req)})`);
+      // The alert carries nothing per key or address, so its throttle is global.
+      logger.warn(`[auth] repeated failed proofs for one public key from ip=${clientIp(req)}`);
+      logger.error(`[auth] ${failures} failed key-possession proofs in 15m for one public key`);
     }
     return send(res, 401, { error: "auth failed" });
   }
   await DB.clearCounter(`verify:fail:${id}`);
 
+  // Checked only after the proof, so only the key's holder learns of a ban.
+  if (await DB.isBanned(id)) return send(res, 403, { error: "BANNED" });
   await DB.ensureUser(id, pkHex);
   await befriendBot(id);
 
@@ -148,6 +230,19 @@ export function createAuthHandler(opts: { internalMqttSecret?: string } = {}): h
         const session = await DB.resolveSessionToken(bearer(req));
         if (!session) return send(res, 401, { error: "unauthenticated" });
         return send(res, 200, await signingKeyFields(session.id, readSigningKey(await readJson(req))));
+      }
+
+      if (method === "POST" && url === "/auth/logout") {
+        const token = bearer(req);
+        const session = await DB.resolveSessionToken(token);
+        if (!session) return send(res, 401, { error: "unauthenticated" });
+        if ((await readJson(req)).everywhere === true) {
+          await DB.revokeAllSessions(session.id);
+          await EMQX.kick(session.id);
+        } else {
+          await DB.revokeSessionToken(token);
+        }
+        return send(res, 200, { ok: true });
       }
 
       if (method === "POST" && url === "/mqtt/authn/internal") {

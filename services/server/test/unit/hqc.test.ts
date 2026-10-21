@@ -168,7 +168,7 @@ test("the native library matches the committed known-answer test", async (t) => 
     "\nThis library is not byte-compatible with the one these digests came from. " +
     "HQC's sampling changes between upstream revisions, so a server built from one " +
     "and a client from another cannot hold a conversation. Rebuild every target from " +
-    "one ref (native/hqc/package.nix, native/hqc/build-apple.sh) rather than updating this digest.";
+    "one ref (native/hqc/package.nix, core/hqc-sys) rather than updating this digest.";
 
   assert.equal(sha(pk), KAT.pk, `public key drift${drift}`);
   assert.equal(sha(sk), KAT.sk, `secret key drift${drift}`);

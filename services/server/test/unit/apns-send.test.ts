@@ -184,9 +184,11 @@ async function withApns(
   dbCalls.length = 0;
   replies = [];
 
+  const apns = require(apnsPath) as Apns;
   try {
-    await fn(require(apnsPath) as Apns, log);
+    await fn(apns, log);
   } finally {
+    apns.closeApnsConnections();
     Object.assign(logger, savedLogger);
     Object.assign(console, savedConsole);
     for (const [k, v] of Object.entries(saved)) {
@@ -448,6 +450,7 @@ test("the push is addressed to the device and typed as an alert", async () => {
     assert.equal(req.headers[":path"], `/3/device/${device}`);
     assert.equal(req.headers["apns-topic"], FULL.APNS_TOPIC_IOS);
     assert.equal(req.headers["apns-push-type"], "alert", "the wrong push type is silently dropped by iOS");
+    assert.equal(req.headers["apns-collapse-id"], "new-message", "repeated wakes replace each other on the device");
     assert.equal(req.headers["content-type"], "application/json");
     assert.match(String(req.headers.authorization), /^bearer ey/);
     assert.deepEqual(JSON.parse(req.body), {
@@ -583,5 +586,57 @@ test("enabled is about the three ids, and says nothing about whether a push land
   await withApns({ ...FULL, APNS_TOPIC_IOS: undefined, APNS_TOPIC_MACOS: undefined }, (apns) => {
     assert.equal(apns.ApnsService.enabled(), true);
     assert.ok(apns.ApnsService.gaps().length > 0, "…but it is not ready");
+  });
+});
+
+// --- one connection, not one per push ----------------------------------------------------
+
+test("pushes share one connection per APNs host", async () => {
+  // Apple treats a connect per push as a denial of service, and a flood of
+  // wakes would otherwise be a flood of TLS handshakes.
+  await withApns(FULL, async (apns) => {
+    pushToken = { token: "ac".repeat(32), platform: "ios", environment: "production" };
+    for (let i = 0; i < 5; i++) assert.equal(await apns.ApnsService.send("u1", "t", "b"), "sent");
+    await Promise.all(Array.from({ length: 5 }, () => apns.ApnsService.send("u1", "t", "b")));
+    assert.equal(seen.length, 10);
+    assert.deepEqual(authorities, ["https://api.push.apple.com"], "a connection was opened per push");
+  });
+});
+
+test("a dead connection is replaced on the next push", async () => {
+  await withApns(FULL, async (apns) => {
+    pushToken = { token: "ad".repeat(32), platform: "ios", environment: "production" };
+    const saved = redirectTo;
+    redirectTo = () => `http://127.0.0.1:1`;
+    try {
+      assert.equal(await apns.ApnsService.send("u1", "t", "b"), "rejected");
+    } finally {
+      redirectTo = saved;
+    }
+    assert.equal(await apns.ApnsService.send("u1", "t", "b"), "sent", "the failed connection was reused");
+    assert.equal(authorities.length, 2);
+  });
+});
+
+test("a request APNs never answers is given up on", async () => {
+  await withApns(FULL, async (apns) => {
+    pushToken = { token: "ae".repeat(32), platform: "ios", environment: "production" };
+    const silent = http2.createServer();
+    silent.on("stream", () => {
+      /* never respond */
+    });
+    silent.listen(0, "127.0.0.1");
+    await once(silent, "listening");
+    const saved = redirectTo;
+    redirectTo = () => `http://127.0.0.1:${(silent.address() as AddressInfo).port}`;
+    try {
+      const started = Date.now();
+      assert.equal(await apns.ApnsService.send("u1", "t", "b"), "rejected");
+      assert.ok(Date.now() - started < 15_000);
+    } finally {
+      redirectTo = saved;
+      apns.closeApnsConnections();
+      silent.close();
+    }
   });
 });

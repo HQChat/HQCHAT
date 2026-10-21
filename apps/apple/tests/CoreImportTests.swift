@@ -17,6 +17,7 @@ final class TestVault: KeyVault, @unchecked Sendable {
         let peer = try P256.KeyAgreement.PublicKey(x963Representation: ephemeralPublic)
         return try key.sharedSecretFromKeyAgreement(with: peer).withUnsafeBytes { Data($0) }
     }
+    func stateSecret() throws -> Data { Data(SHA256.hash(data: key.rawRepresentation)) }
     func tier() -> Tier { .software }
 }
 
@@ -34,7 +35,7 @@ func peerID(_ pk: Data) -> String {
 }
 
 func engine() -> Engine {
-    try! Engine(config: Config(serverUrl: "https://hqchat.test", profileId: "p", device: .ios),
+    try! Engine(config: Config(serverUrl: "https://hqchat.test", profileId: "p", device: .ios, hqnPins: []),
                 vault: TestVault(), store: TestStore())
 }
 

@@ -3,6 +3,7 @@
 // with everything under Migration/, a few weeks after that release; a profile
 // not opened in that window starts fresh (docs/architecture/core-wiring.md).
 
+import CryptoKit
 import Foundation
 import HQChatCore
 import SwiftData
@@ -235,7 +236,7 @@ extension LegacySnapshot {
                 peerID: peer,
                 // Rows from before message ids were kept get one now: the core
                 // needs an id, and nothing outside this device refers to them.
-                messageID: row.messageId ?? "legacy-\(UUID().uuidString.lowercased())",
+                messageID: try row.messageId ?? Self.legacyMessageID(for: row),
                 isOutgoing: row.isOutgoing,
                 text: text,
                 timestamp: row.timestamp,
@@ -259,5 +260,16 @@ extension LegacySnapshot {
             pending: pending
         )
         return (snapshot, unreadable)
+    }
+
+    /// The id a row without one is imported under: the same on every run,
+    /// from the row's persistent identifier, so an import that is retried
+    /// writes over the slots of the one that failed instead of beside them.
+    static func legacyMessageID(for row: AppMessage) throws -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let identifier = try encoder.encode(row.persistentModelID)
+        let digest = SHA256.hash(data: identifier).prefix(16)
+        return "legacy-" + digest.map { String(format: "%02x", $0) }.joined()
     }
 }

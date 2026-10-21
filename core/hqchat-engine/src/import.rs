@@ -121,11 +121,24 @@ fn invalid(what: &str) -> CoreError {
 fn identity_of(identity: ImportIdentity) -> Result<KeyPair, CoreError> {
     match identity {
         ImportIdentity::Seed(seed) => Ok(hqc::keypair_from_seed(&hqc::Seed::from_bytes(seed))?),
-        ImportIdentity::KeyPair { public, secret } => Ok(KeyPair {
-            public: PublicKey::from_bytes(&public).map_err(|_| invalid("identity public key"))?,
-            secret: SecretKey::from_bytes(&secret).map_err(|_| invalid("identity secret key"))?,
-        }),
+        ImportIdentity::KeyPair { public, secret } => pair_of(&public, &secret, "identity"),
     }
+}
+
+/// A keypair from its two halves, refused unless the secret key is the
+/// public key's: a mismatched identity would be named after a key it cannot
+/// decapsulate for, and could neither sign in nor open an init.
+fn pair_of(public: &[u8], secret: &[u8], what: &str) -> Result<KeyPair, CoreError> {
+    let public =
+        PublicKey::from_bytes(public).map_err(|_| invalid(&format!("{what} public key")))?;
+    let secret =
+        SecretKey::from_bytes(secret).map_err(|_| invalid(&format!("{what} secret key")))?;
+    if !secret.belongs_to(&public) {
+        return Err(invalid(&format!(
+            "{what} keypair (the halves do not match)"
+        )));
+    }
+    Ok(KeyPair { public, secret })
 }
 
 fn prekeys_of(p: ImportPrekeys, identity_sk: &SecretKey) -> Result<Prekeys, CoreError> {
@@ -136,12 +149,7 @@ fn prekeys_of(p: ImportPrekeys, identity_sk: &SecretKey) -> Result<Prekeys, Core
     }
     Ok(Prekeys {
         identity_sk: identity_sk.clone(),
-        medium: KeyPair {
-            public: PublicKey::from_bytes(&p.medium_public)
-                .map_err(|_| invalid("medium-term public key"))?,
-            secret: SecretKey::from_bytes(&p.medium_secret)
-                .map_err(|_| invalid("medium-term secret key"))?,
-        },
+        medium: pair_of(&p.medium_public, &p.medium_secret, "medium-term")?,
         rotated_at: p.rotated_at,
         one_time,
         next_id: p.next_id,
@@ -235,11 +243,16 @@ impl Core {
             .prekeys
             .map(|p| prekeys_of(p, &identity.secret))
             .transpose()?;
+        let me = PeerId::of(&identity.public);
         let mut peers = BTreeMap::new();
         let mut sessions = Vec::new();
         for p in import.peers {
             let (peer, session) = peer_of(p)?;
-            if let Some(session) = session {
+            if let Some(mut session) = session {
+                // Older clients kept no record of whose turn it is to step.
+                // Both sides of a session break the tie the same way: the
+                // lower id may step first, the other once that step arrives.
+                session.peer_key_fresh = me < peer.id;
                 sessions.push((peer.id.clone(), session));
             }
             peers.insert(peer.id.clone(), peer);
@@ -258,9 +271,14 @@ impl Core {
             .map(|(to, at)| crate::types::SentInviteView { to, at })
             .collect();
 
+        // A profile with no identity has nothing readable in the store: what
+        // a failed or interrupted import left is sealed under a data key that
+        // is gone, and would keep a conversation from ever opening again.
+        self.clear_data();
         let result = self.write_import(identity, prekeys, peers, sessions, messages, &pending);
         if result.is_err() {
             // Back to a profile with no identity, which can be imported again.
+            self.clear_data();
             self.unlocked = None;
             self.me = None;
             self.peers.clear();
@@ -271,6 +289,19 @@ impl Core {
             self.drain_pending(now);
         }
         Ok(())
+    }
+
+    /// Deletes every session, message and pending frame in the store.
+    fn clear_data(&self) {
+        for prefix in [
+            persist::SESSION_PREFIX,
+            persist::MESSAGE_PREFIX,
+            persist::PENDING_PREFIX,
+        ] {
+            for slot in self.store.list(prefix.into()) {
+                self.store.delete(slot);
+            }
+        }
     }
 
     fn write_import(
@@ -286,6 +317,7 @@ impl Core {
         let mut data_key = Zeroizing::new([0u8; 32]);
         getrandom::fill(data_key.as_mut()).map_err(|_| CoreError::State("no entropy".into()))?;
         self.me = Some(PeerId::of(&identity.public));
+        self.names = Some(persist::SlotNames::of(&data_key));
         self.unlocked = Some(Unlocked {
             identity,
             data_key,

@@ -260,3 +260,33 @@ fn going_to_the_background_announces_offline_and_returning_online() {
     settle(&mut [&mut a, &mut b]);
     assert!(a.engine.friends()[0].online);
 }
+
+#[test]
+fn a_gateway_key_this_build_does_not_pin_is_refused_and_wss_is_used() {
+    let server = FakeServer::shared();
+    server.borrow_mut().enable_hqn();
+    let config = hqchat_engine::Config {
+        hqn_pins: vec!["00".repeat(32)],
+        ..support::config("a")
+    };
+    let a = Client::signed_in_with(&server, "a", config);
+    assert_eq!(opens(&a), [false], "WSS, not the unpinned gateway");
+    assert!(connected(&a));
+}
+
+#[test]
+fn a_pinned_gateway_key_is_used() {
+    let server = FakeServer::shared();
+    server.borrow_mut().enable_hqn();
+    let pin = {
+        let s = server.borrow();
+        hqchat_engine::hqn_key_fingerprint(&s.broker.gateway.as_ref().unwrap().public())
+    };
+    let config = hqchat_engine::Config {
+        hqn_pins: vec![pin],
+        ..support::config("a")
+    };
+    let a = Client::signed_in_with(&server, "a", config);
+    assert_eq!(opens(&a), [true]);
+    assert!(connected(&a));
+}

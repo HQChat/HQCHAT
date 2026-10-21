@@ -170,6 +170,9 @@ pub struct Config {
     pub profile_id: String,
     /// What the engine runs on.
     pub device: Device,
+    /// Fingerprints of the gateway keys this build trusts (`hqnKeyFingerprint`
+    /// in the core's docs); empty takes the served key on TLS alone.
+    pub hqn_pins: Vec<String>,
 }
 
 impl From<Config> for core::Config {
@@ -179,6 +182,7 @@ impl From<Config> for core::Config {
             profile_id: c.profile_id,
             // The apps take hqn/1 whenever the server offers it.
             allow_hqn: true,
+            hqn_pins: c.hqn_pins,
             device: match c.device {
                 Device::Ios => core::Device::Ios,
                 Device::Macos => core::Device::Macos,
@@ -398,8 +402,8 @@ pub struct ReportInput {
     pub peer: String,
     /// The reason chosen.
     pub reason: String,
-    /// Messages whose text is the excerpt.
-    pub msg_ids: Vec<String>,
+    /// The one message, sent by the friend, whose text is the excerpt.
+    pub msg_id: Option<String>,
     /// What the user added.
     pub note: Option<String>,
     /// Block them too, once the report is filed.
@@ -411,7 +415,7 @@ impl From<ReportInput> for core::ReportInput {
         core::ReportInput {
             peer: r.peer,
             reason: r.reason,
-            msg_ids: r.msg_ids,
+            msg_id: r.msg_id,
             note: r.note,
             block: r.block,
         }
@@ -533,10 +537,10 @@ pub enum Effect {
         /// The tier.
         tier: Tier,
     },
-    /// Show a notification for a friend; never content.
+    /// Show a notification; never content.
     Notify {
-        /// The friend.
-        peer: String,
+        /// The friend, or none for a first contact not yet proven.
+        peer: Option<String>,
     },
     /// The server refused an action.
     ActionFailed {

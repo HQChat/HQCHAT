@@ -1,7 +1,8 @@
 # Pull-based updates: every two minutes the host fetches its secrets and then
-# its channel pointer, <cache>/channels/<environment>/<role>, and switches to
-# that signed closure, gated by the new generation's hqcat-health-check. It
-# never evaluates or builds.
+# its channel pointer, <cache>/channels/<environment>/<role>.signed, and
+# switches to the signed closure it names, gated by the new generation's
+# hqcat-health-check. The pointer is signed with the cache key and numbered,
+# so an older one is refused. It never evaluates or builds.
 {
   config,
   lib,
@@ -19,6 +20,7 @@ let
       coreutils
       gnused
       systemd
+      (callPackage ../pkgs/hqcat-verify-signed.nix { })
     ];
     text = builtins.readFile ../hqcat-host-agent.sh;
   };
@@ -62,6 +64,7 @@ in
     environment = {
       HEALTH_TIMEOUT = "300";
       CACHE_URL = env.cache.url;
+      CACHE_PUBLIC_KEY = env.cache.publicKey;
       ENVIRONMENT = env.name;
     };
     serviceConfig = {

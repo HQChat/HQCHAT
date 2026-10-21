@@ -52,7 +52,9 @@ exit = "warn"
 # Integer overflow panics (and becomes an error at the bindings) instead of
 # wrapping, in release as in debug.
 overflow-checks = true
-# Bindings turn a panic into an error; an abort would kill the app with no report.
+# Unwind, so that a panic can be caught: Engine::run turns one into an error,
+# and every Node export catches it (napi catch_unwind); an abort would kill
+# the app or the server with no report.
 panic = "unwind"
 lto = "thin"
 codegen-units = 1

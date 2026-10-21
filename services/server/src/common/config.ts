@@ -1,6 +1,8 @@
 import * as fs from "node:fs";
 import { apnsGaps, apnsIntended, apnsSummary } from "../server/apns-config";
+import { clusterCa, isLocal } from "../server/db/ssl";
 import { donationGaps, donationSummary, resolvePrices } from "../server/donations-config";
+import { TRUSTED_PROXY_MODES } from "../server/http";
 
 /**
  * Process configuration. Importing this module resolves the `*_FILE`
@@ -23,7 +25,7 @@ for (const key of Object.keys(process.env)) {
 /** Whether this deployment takes donations through Stripe. */
 export const DONATIONS_ENABLED = /^(1|true|yes)$/i.test(process.env.DONATIONS_ENABLED || "");
 
-export type ConfigNeed = "stripe" | "apns";
+export type ConfigNeed = "stripe" | "apns" | "proxy";
 
 /**
  * Validates the configuration a service needs and exits with every problem
@@ -54,10 +56,31 @@ export function assertConfig(needs: ConfigNeed[] = []): void {
     );
   }
 
+  // Without it every request seems to come from the proxy, and each per-address
+  // limit becomes one limit for everybody.
+  const proxy = process.env.TRUSTED_PROXY?.trim().toLowerCase() || "";
+  if (needs.includes("proxy") && process.env.NODE_ENV === "production" && !proxy) {
+    errors.push("TRUSTED_PROXY is required in production (x-real-ip behind nginx; see src/server/http.ts).");
+  }
+  if (proxy && !(TRUSTED_PROXY_MODES as readonly string[]).includes(proxy)) {
+    errors.push(`TRUSTED_PROXY is not one of ${TRUSTED_PROXY_MODES.join(", ")}.`);
+  }
+
+  // The sign-in proof binds the origin the client signed in at; only these are
+  // accepted (src/server/auth.ts). Unset outside production: the Host header's.
+  if (needs.includes("proxy") && process.env.NODE_ENV === "production" && !process.env.AUTH_ORIGINS?.trim()) {
+    errors.push(
+      "AUTH_ORIGINS is required in production: the origins clients sign in at (https://api.<domain>, the bot's).",
+    );
+  }
+
+  // A remote database is reached only with its certificate and hostname
+  // verified against the cluster CA (src/server/db/ssl.ts); in production a
+  // missing CA is a refusal to start, said here rather than at the first query.
   const databaseUrl = process.env.DATABASE_URL || "";
-  if (process.env.NODE_ENV === "production" && databaseUrl) {
+  if (process.env.NODE_ENV === "production" && databaseUrl && !isLocal(databaseUrl)) {
+    if (!clusterCa()) errors.push("PGSSLROOTCERT must name the cluster CA: a remote database is verified against it.");
     if (!/sslmode=verify-full/.test(databaseUrl)) warnings.push("DATABASE_URL does not request sslmode=verify-full.");
-    if (!process.env.PGSSLROOTCERT?.trim()) warnings.push("PGSSLROOTCERT is unset; the cluster CA cannot be verified.");
   }
 
   for (const w of warnings) console.warn(`config: ${w}`);

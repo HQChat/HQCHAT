@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import SwiftData
 
@@ -24,6 +25,8 @@ struct HQChatApp: App {
                         await appState.initialize()
                     }
             }
+            // Nothing readable in the app switcher's snapshot or a screen capture.
+            .hqPrivacyCover()
             .onChange(of: scenePhase) { _, phase in
                 switch phase {
                 case .background:
@@ -35,6 +38,17 @@ struct HQChatApp: App {
                     Task { await appState.enterForeground() }
                 default: break
                 }
+            }
+            // A Mac can sleep its screens or switch user while HQChat stays
+            // frontmost, so the scene never goes to the background: the
+            // unlock is dropped then too, as on background.
+            .onReceive(NSWorkspace.shared.notificationCenter.publisher(
+                for: NSWorkspace.screensDidSleepNotification)) { _ in
+                appState.clearCachedKey()
+            }
+            .onReceive(NSWorkspace.shared.notificationCenter.publisher(
+                for: NSWorkspace.sessionDidResignActiveNotification)) { _ in
+                appState.clearCachedKey()
             }
         }
     }

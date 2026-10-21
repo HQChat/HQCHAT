@@ -61,23 +61,63 @@ enum CoreMigration {
         return unreadable
     }
 
+    /// Whether 3.1.1 items are still there for a profile the core already
+    /// holds: the move was interrupted between the import and the purge, or a
+    /// delete failed. Asked without prompting.
+    @MainActor
+    static func hasLeftovers(profileID: UUID, context: ModelContext) -> Bool {
+        guard ChatStore.hasIdentity(profileID: profileID) else { return false }
+        if LegacyIdentity.exists(profileID: profileID)
+            || !AESKeyStore.accounts(of: profileID).isEmpty
+            || !AESKeyStore.orphanedAccounts().isEmpty {
+            return true
+        }
+        let id: UUID? = profileID
+        let pending = (try? context.fetchCount(FetchDescriptor<PendingFrame>(predicate: #Predicate { $0.profileID == id }))) ?? 0
+        let messages = (try? context.fetchCount(FetchDescriptor<Message>(predicate: #Predicate { $0.profileID == id }))) ?? 0
+        let friends = ((try? context.fetch(FetchDescriptor<Friend>())) ?? []).contains { $0.profile?.id == profileID }
+        return pending > 0 || messages > 0 || friends
+    }
+
+    /// Runs `purge` for every profile the core holds that still has 3.1.1
+    /// items. The move purges once the import succeeds; this is what finishes
+    /// the job when the process died in between, or a delete failed, since
+    /// the move itself never runs again for that profile.
+    @MainActor
+    static func sweepLeftovers(profiles: [Profile], context: ModelContext) {
+        for profile in profiles where hasLeftovers(profileID: profile.id, context: context) {
+            Log.keys.info("[CoreMigration] 🧹 3.1.1 items left behind by an earlier move; deleting them")
+            purge(profileID: profile.id, context: context)
+        }
+    }
+
     /// Deletes a profile's 3.1.1 items: the identity key, sessions and prekey
-    /// secrets in the Keychain, and its friend, message and pending rows. The
-    /// Enclave key and the tier marker stay: the core uses both.
+    /// secrets in the Keychain (with the ones 3.1.1 wrote under no profile),
+    /// and its friend, message and pending rows. The Enclave key and the tier
+    /// marker stay: the core uses both. A delete that fails is logged, and the
+    /// next launch's sweep tries again.
     @MainActor
     static func purge(profileID: UUID, context: ModelContext) {
         LegacyIdentity.delete(profileID: profileID)
-        for account in AESKeyStore.accounts(of: profileID) { AESKeyStore.delete(account) }
+        for account in AESKeyStore.accounts(of: profileID) + AESKeyStore.orphanedAccounts() {
+            AESKeyStore.delete(account)
+        }
         let id: UUID? = profileID
-        for row in (try? context.fetch(FetchDescriptor<PendingFrame>(predicate: #Predicate { $0.profileID == id }))) ?? [] {
-            context.delete(row)
+        do {
+            for row in try context.fetch(FetchDescriptor<PendingFrame>(predicate: #Predicate { $0.profileID == id })) {
+                context.delete(row)
+            }
+            for row in try context.fetch(FetchDescriptor<Message>(predicate: #Predicate { $0.profileID == id })) {
+                context.delete(row)
+            }
+            for row in try context.fetch(FetchDescriptor<Friend>()) where row.profile?.id == profileID {
+                context.delete(row)
+            }
+            try context.save()
+            // Deleted rows stay readable in SQLite's free pages until compacted.
+            PersistenceController.storeNeedsCompacting()
+        } catch {
+            Log.storage.error("[CoreMigration] ❌ the 3.1.1 rows could not be deleted: \(String(describing: error))")
         }
-        for row in (try? context.fetch(FetchDescriptor<Message>(predicate: #Predicate { $0.profileID == id }))) ?? [] {
-            context.delete(row)
-        }
-        for row in (try? context.fetch(FetchDescriptor<Friend>())) ?? [] where row.profile?.id == profileID {
-            context.delete(row)
-        }
-        try? context.save()
     }
 }

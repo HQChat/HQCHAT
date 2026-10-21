@@ -1401,6 +1401,13 @@ public protocol KeyVault: AnyObject, Sendable {
     func agree(ephemeralPublic: Data) throws  -> Data
     
     /**
+     * A 32-byte secret kept beside the device key, bound to this device. It
+     * joins the ECDH secret in sealing `state`, so the identity does not
+     * rest on P-256 alone; the user's gate stays on the device key.
+     */
+    func stateSecret() throws  -> Data
+    
+    /**
      * The device key's tier.
      */
     func tier()  -> Tier
@@ -1497,6 +1504,20 @@ open func agree(ephemeralPublic: Data)throws  -> Data  {
     uniffi_hqchat_ffi_fn_method_keyvault_agree(
             self.uniffiCloneHandle(),
         FfiConverterData.lower(ephemeralPublic),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * A 32-byte secret kept beside the device key, bound to this device. It
+     * joins the ECDH secret in sealing `state`, so the identity does not
+     * rest on P-256 alone; the user's gate stays on the device key.
+     */
+open func stateSecret()throws  -> Data  {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeVaultError_lift) {
+        uniffiCallStatus in
+    uniffi_hqchat_ffi_fn_method_keyvault_state_secret(
+            self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
 }
@@ -1600,6 +1621,29 @@ fileprivate struct UniffiCallbackInterfaceKeyVault {
                 }
                 return try uniffiObj.agree(
                      ephemeralPublic: try FfiConverterData.lift(ephemeralPublic)
+                )
+            }
+
+            
+            let writeReturn = { uniffiOutReturn.pointee = FfiConverterData.lower($0) }
+            uniffiTraitInterfaceCallWithError(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn,
+                lowerError: FfiConverterTypeVaultError_lower
+            )
+        },
+        stateSecret: { (
+            uniffiHandle: UInt64,
+            uniffiOutReturn: UnsafeMutablePointer<RustBuffer>,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> Data in
+                guard let uniffiObj = try? FfiConverterTypeKeyVault.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return try uniffiObj.stateSecret(
                 )
             }
 
@@ -2066,6 +2110,11 @@ public struct Config: Equatable, Hashable {
      * What the engine runs on.
      */
     public var device: Device
+    /**
+     * Fingerprints of the gateway keys this build trusts (`hqnKeyFingerprint`
+     * in the core's docs); empty takes the served key on TLS alone.
+     */
+    public var hqnPins: [String]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -2078,10 +2127,15 @@ public struct Config: Equatable, Hashable {
          */profileId: String, 
         /**
          * What the engine runs on.
-         */device: Device) {
+         */device: Device, 
+        /**
+         * Fingerprints of the gateway keys this build trusts (`hqnKeyFingerprint`
+         * in the core's docs); empty takes the served key on TLS alone.
+         */hqnPins: [String]) {
         self.serverUrl = serverUrl
         self.profileId = profileId
         self.device = device
+        self.hqnPins = hqnPins
     }
 
     
@@ -2102,7 +2156,8 @@ public struct FfiConverterTypeConfig: FfiConverterRustBuffer {
             try Config(
                 serverUrl: FfiConverterString.read(from: &buf), 
                 profileId: FfiConverterString.read(from: &buf), 
-                device: FfiConverterTypeDevice.read(from: &buf)
+                device: FfiConverterTypeDevice.read(from: &buf), 
+                hqnPins: FfiConverterSequenceString.read(from: &buf)
         )
     }
 
@@ -2110,6 +2165,7 @@ public struct FfiConverterTypeConfig: FfiConverterRustBuffer {
         FfiConverterString.write(value.serverUrl, into: &buf)
         FfiConverterString.write(value.profileId, into: &buf)
         FfiConverterTypeDevice.write(value.device, into: &buf)
+        FfiConverterSequenceString.write(value.hqnPins, into: &buf)
     }
 }
 
@@ -3647,9 +3703,9 @@ public struct ReportInput: Equatable, Hashable {
      */
     public var reason: String
     /**
-     * Messages whose text is the excerpt.
+     * The one message, sent by the friend, whose text is the excerpt.
      */
-    public var msgIds: [String]
+    public var msgId: String?
     /**
      * What the user added.
      */
@@ -3669,8 +3725,8 @@ public struct ReportInput: Equatable, Hashable {
          * The reason chosen.
          */reason: String, 
         /**
-         * Messages whose text is the excerpt.
-         */msgIds: [String], 
+         * The one message, sent by the friend, whose text is the excerpt.
+         */msgId: String?, 
         /**
          * What the user added.
          */note: String?, 
@@ -3679,7 +3735,7 @@ public struct ReportInput: Equatable, Hashable {
          */block: Bool) {
         self.peer = peer
         self.reason = reason
-        self.msgIds = msgIds
+        self.msgId = msgId
         self.note = note
         self.block = block
     }
@@ -3702,7 +3758,7 @@ public struct FfiConverterTypeReportInput: FfiConverterRustBuffer {
             try ReportInput(
                 peer: FfiConverterString.read(from: &buf), 
                 reason: FfiConverterString.read(from: &buf), 
-                msgIds: FfiConverterSequenceString.read(from: &buf), 
+                msgId: FfiConverterOptionString.read(from: &buf), 
                 note: FfiConverterOptionString.read(from: &buf), 
                 block: FfiConverterBool.read(from: &buf)
         )
@@ -3711,7 +3767,7 @@ public struct FfiConverterTypeReportInput: FfiConverterRustBuffer {
     public static func write(_ value: ReportInput, into buf: inout [UInt8]) {
         FfiConverterString.write(value.peer, into: &buf)
         FfiConverterString.write(value.reason, into: &buf)
-        FfiConverterSequenceString.write(value.msgIds, into: &buf)
+        FfiConverterOptionString.write(value.msgId, into: &buf)
         FfiConverterOptionString.write(value.note, into: &buf)
         FfiConverterBool.write(value.block, into: &buf)
     }
@@ -4686,12 +4742,12 @@ public enum Effect: Equatable, Hashable {
          */tier: Tier
     )
     /**
-     * Show a notification for a friend; never content.
+     * Show a notification; never content.
      */
     case notify(
         /**
-         * The friend.
-         */peer: String
+         * The friend, or none for a first contact not yet proven.
+         */peer: String?
     )
     /**
      * The server refused an action.
@@ -4788,7 +4844,7 @@ public struct FfiConverterTypeEffect: FfiConverterRustBuffer {
         case 14: return .tierChanged(tier: try FfiConverterTypeTier.read(from: &buf)
         )
         
-        case 15: return .notify(peer: try FfiConverterString.read(from: &buf)
+        case 15: return .notify(peer: try FfiConverterOptionString.read(from: &buf)
         )
         
         case 16: return .actionFailed(action: try FfiConverterTypeAction.read(from: &buf), status: try FfiConverterUInt16.read(from: &buf), code: try FfiConverterString.read(from: &buf)
@@ -4888,7 +4944,7 @@ public struct FfiConverterTypeEffect: FfiConverterRustBuffer {
         
         case let .notify(peer):
             writeInt(&buf, Int32(15))
-            FfiConverterString.write(peer, into: &buf)
+            FfiConverterOptionString.write(peer, into: &buf)
             
         
         case let .actionFailed(action,status,code):
@@ -6240,7 +6296,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_hqchat_ffi_checksum_method_keyvault_agree() != 9311) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_hqchat_ffi_checksum_method_keyvault_tier() != 61692) {
+    if (uniffi_hqchat_ffi_checksum_method_keyvault_state_secret() != 17682) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_hqchat_ffi_checksum_method_keyvault_tier() != 19782) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_hqchat_ffi_checksum_method_store_get() != 58253) {

@@ -45,6 +45,8 @@ struct ChatComposer: View {
                 .font(HQFont.ui(14.5))
                 .foregroundColor(HQColor.textPrimary)
                 .lineLimit(1...5)
+                // What is typed here is the message: nothing learns from it.
+                .hqPrivateTextEntry(capitalize: true)
                 .focused(focused)
                 .accessibilityLabel("message")
         }

@@ -42,6 +42,13 @@ final class NotificationService: NSObject, ObservableObject {
              body: "Sent you an encrypted message")
     }
 
+    /// A message whose sender is not proven yet: it names no one.
+    func notifyFirstContact() {
+        post(id: "msg.first-contact.\(UUID().uuidString)",
+             title: "HQChat",
+             body: "You have a new encrypted message")
+    }
+
     func notifyInvite(from sender: String) {
         post(id: "invite.\(sender)",
              title: "Friend request",

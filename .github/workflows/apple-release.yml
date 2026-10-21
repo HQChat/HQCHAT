@@ -2,14 +2,17 @@
 # (apps/apple/release.sh). Every run ships a version and a build number strictly
 # above everything already in App Store Connect (apps/apple/asc-next.mjs):
 #
-#   push to main   when the Apple apps or the HQC library change; the patch
-#                  version goes up by one
+#   push to main   when the Apple apps, the Rust core, the HQC library or the
+#                  toolchain pins change; the patch version goes up by one
 #   manual run     optionally with a version (e.g. 3.1.0), which must be higher
 #                  than every version already uploaded; macOS can be picked too
 #   deploy.yml     after a successful verify, when ship_apple is on
 #
 # Only iOS ships unless a manual run asks for macOS, which needs its own App
 # Store Connect record (martin.rougeron.DissQus).
+#
+# The core's static libraries are built here, from the commit being shipped
+# (core/hqchat-ffi/build-apple.sh in `nix develop .#apple`); none is committed.
 #
 # Environment secrets (production): ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8: an
 # App Store Connect team API key with the Admin role, which cloud-managed
@@ -22,7 +25,10 @@ on:
     branches: [main]
     paths:
       - "apps/apple/**"
+      - "core/**"
       - "native/hqc/**"
+      - "flake.nix"
+      - "flake.lock"
       - "!**.md"
   workflow_dispatch:
     inputs:
@@ -52,10 +58,31 @@ jobs:
   # start one only to skip it.
   platforms:
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 5
     outputs:
       list: ${{ steps.list.outputs.list }}
     steps:
+      # Only main's history is uploaded with the App Store Connect key: main
+      # itself, or (called from deploy.yml) an app-store/ tag on main.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: The ref is main, or an App Store tag on main
+        run: |
+          case "$GITHUB_REF" in
+            refs/heads/main) ;;
+            refs/tags/app-store/*)
+              git merge-base --is-ancestor "$GITHUB_SHA" origin/main || {
+                echo "::error::$GITHUB_REF ($GITHUB_SHA) is not a commit on main"
+                exit 1
+              }
+              ;;
+            *)
+              echo "::error::Apple releases run from main, not $GITHUB_REF"
+              exit 1
+              ;;
+          esac
       - id: list
         env:
           PLATFORMS: ${{ inputs.platforms || 'ios' }}
@@ -76,6 +103,8 @@ jobs:
     environment: ${{ inputs.environment || 'production' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
@@ -83,6 +112,28 @@ jobs:
         run: |
           xcode="$(find /Applications -maxdepth 1 -name 'Xcode*.app' | sort -V | tail -n 1)"
           sudo xcode-select -s "$xcode/Contents/Developer"
+      - uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = false
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          primary-key: nix-apple-${{ runner.os }}-${{ hashFiles('flake.lock', 'flake.nix') }}
+          restore-prefixes-first-match: nix-apple-${{ runner.os }}-
+          gc-max-store-size-macos: 4G
+      # From source on this runner: what ships is what this commit's core,
+      # HQC pin and toolchain compile to. The bindings are committed so that
+      # changes to them are reviewed; ones that differ from what the core
+      # generates stop the release.
+      - name: Build the Rust core (HQChatCore)
+        run: nix develop .#apple --command core/hqchat-ffi/build-apple.sh
+      - name: The committed bindings are the generated ones
+        run: |
+          git diff --exit-code -- core/swift/HQChatCore/Sources || {
+            echo "::error::core/swift/HQChatCore/Sources differs from what the core generates: run build-apple.sh and commit the result"
+            exit 1
+          }
       - name: Archive, sign and upload
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}

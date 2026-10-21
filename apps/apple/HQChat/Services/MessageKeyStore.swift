@@ -129,10 +129,11 @@ enum MessageKeyStore {
         defer { BiometricCoordinator.end() }
 
         let context = LAContext()
-        // Each row's unwrap would otherwise re-authenticate. The context is
-        // invalidated by `clearCache()` on background and profile switch.
-        context.touchIDAuthenticationAllowableReuseDuration =
-            LATouchIDAuthenticationMaximumAllowableReuseDuration
+        // No reuse window: a recent Touch ID unlock of the device must not
+        // stand in for this one. Rows do not re-authenticate anyway, since
+        // they all use this evaluated context, which `clearCache()` drops on
+        // background and profile switch.
+        context.touchIDAuthenticationAllowableReuseDuration = 0
         do {
             let ok = try await BiometricAudit.measureAsync("LAContext.evaluatePolicy",
                                                            item: "message-read unlock",
@@ -192,6 +193,12 @@ enum MessageKeyStore {
     // MARK: - Sealing (no authentication)
 
     /// This profile's public key, creating the key pair on first use.
+    ///
+    /// Only a profile with no private key gets a new pair. When the stored
+    /// public half cannot be read but the private key is there, the public
+    /// half comes from the private key; failing that, nil. Minting then would
+    /// put a second key under the same tag: the core would seal to the new
+    /// one while the lookup that opens could return either.
     static func publicKey(for profileID: UUID) -> SecKey? {
         lock.lock()
         defer { lock.unlock() }
@@ -200,7 +207,20 @@ enum MessageKeyStore {
             publicCache[profileID] = stored
             return stored
         }
-        guard let priv = createKeyPair(profileID), let pub = SecKeyCopyPublicKey(priv) else { return nil }
+        let status = privateKeyStatus(profileID)
+        if status == errSecItemNotFound {
+            guard let priv = createKeyPair(profileID), let pub = SecKeyCopyPublicKey(priv) else { return nil }
+            publicCache[profileID] = pub
+            return pub
+        }
+        // There is a key, or the Keychain cannot say: never mint over it. A key
+        // reference needs no authentication; only using it does.
+        guard let priv = privateKeyRef(profileID, context: LAContext.nonInteractive()),
+              let pub = SecKeyCopyPublicKey(priv) else {
+            Log.keys.error("[MessageKeyStore] ❌ no public half for the Enclave key (Keychain status \(String(describing: status))); not creating another")
+            return nil
+        }
+        storePublicKey(pub, for: profileID)
         publicCache[profileID] = pub
         return pub
     }
@@ -211,6 +231,7 @@ enum MessageKeyStore {
     /// Keychain account holding the public half, readable without authentication
     /// so sealing never prompts.
     private static func publicAccount(_ profileID: UUID) -> String { "pub.\(profileID.uuidString)" }
+    private static func stateAccount(_ profileID: UUID) -> String { "state.\(profileID.uuidString)" }
 
     private static func storePublicKey(_ pub: SecKey, for profileID: UUID) {
         guard let data = SecKeyCopyExternalRepresentation(pub, nil) as Data? else { return }
@@ -295,6 +316,14 @@ enum MessageKeyStore {
         defer { lock.unlock() }
         if publicCache[profileID] != nil { return true }
         if loadStoredPublicKey(profileID) != nil { return true }
+        let status = privateKeyStatus(profileID)
+        return status == errSecSuccess || status == errSecInteractionNotAllowed
+    }
+
+    /// Whether the private key is in the Keychain, asked without prompting:
+    /// `errSecItemNotFound` is the only answer that means it is not. The
+    /// caller holds `lock`.
+    private static func privateKeyStatus(_ profileID: UUID) -> OSStatus {
         // Without interaction, a present item that needs a user answers
         // `errSecInteractionNotAllowed` instead of prompting.
         let probe: [String: Any] = [
@@ -310,7 +339,7 @@ enum MessageKeyStore {
                                             expectsPrompt: false) {
             SecItemCopyMatching(probe as CFDictionary, nil)
         }
-        return status == errSecSuccess || status == errSecInteractionNotAllowed
+        return status
     }
 
     /// Deletes the profile's key pair and stored public key. Call when the profile is deleted.
@@ -323,12 +352,14 @@ enum MessageKeyStore {
             kSecUseDataProtectionKeychain as String: true,
             kSecAttrApplicationTag as String: tag(profileID)
         ] as CFDictionary)
-        SecItemDelete([
-            kSecClass as String: kSecClassGenericPassword,
-            kSecUseDataProtectionKeychain as String: true,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: publicAccount(profileID)
-        ] as CFDictionary)
+        for account in [publicAccount(profileID), stateAccount(profileID)] {
+            SecItemDelete([
+                kSecClass as String: kSecClassGenericPassword,
+                kSecUseDataProtectionKeychain as String: true,
+                kSecAttrService as String: service,
+                kSecAttrAccount as String: account
+            ] as CFDictionary)
+        }
     }
 
     /// Forgets in-memory keys and the authentication (Keychain items survive).
@@ -586,6 +617,39 @@ extension MessageKeyStore {
     static func devicePublicKey(for profileID: UUID) -> Data? {
         guard let pub = publicKey(for: profileID) else { return nil }
         return SecKeyCopyExternalRepresentation(pub, nil) as Data?
+    }
+
+    /// The core's state secret: 32 random bytes in the data protection
+    /// Keychain, readable while the device is unlocked, on this device only,
+    /// never synced, made on first use. It needs no prompt of its own: the
+    /// user's gate stays on the Enclave key, whose ECDH every read of `state`
+    /// also needs. What it adds is that `state` does not rest on P-256 alone.
+    static func stateSecret(for profileID: UUID) throws -> Data {
+        let item: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecUseDataProtectionKeychain as String: true,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: stateAccount(profileID)
+        ]
+        var query = item
+        query[kSecReturnData as String] = true
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecSuccess, let data = result as? Data, data.count == 32 { return data }
+        guard status == errSecItemNotFound else { throw AgreementError.refused(Int(status)) }
+        var secret = Data(count: 32)
+        let drawn = secret.withUnsafeMutableBytes { buffer -> OSStatus in
+            guard let base = buffer.baseAddress else { return errSecAllocate }
+            return SecRandomCopyBytes(kSecRandomDefault, 32, base)
+        }
+        guard drawn == errSecSuccess else { throw AgreementError.refused(Int(drawn)) }
+        var add = item
+        add[kSecValueData as String] = secret
+        add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        add[kSecAttrSynchronizable as String] = false
+        let added = SecItemAdd(add as CFDictionary, nil)
+        guard added == errSecSuccess else { throw AgreementError.refused(Int(added)) }
+        return secret
     }
 
     /// One ECDH between the device key and `ephemeralPublic` (X9.63), under the

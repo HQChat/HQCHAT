@@ -83,6 +83,32 @@ fn a_key_that_does_not_hash_to_its_peer_is_refused_and_nothing_is_kept() {
         .expect("a refused import can be redone");
 }
 
+#[test]
+fn an_identity_whose_halves_do_not_match_is_refused() {
+    let store = Arc::new(MemoryStore::default());
+    let engine = Engine::new(
+        support::config("p"),
+        Arc::new(SoftwareVault::default()),
+        store.clone(),
+    )
+    .unwrap();
+    let pair = |public: &KeyPair, secret: &KeyPair| Import {
+        identity: ImportIdentity::KeyPair {
+            public: public.public.as_bytes().to_vec(),
+            secret: zeroize::Zeroizing::new(secret.secret.as_bytes().to_vec()),
+        },
+        ..only_seed(0)
+    };
+    assert!(matches!(
+        engine.import(pair(&identity(1), &identity(2)), 0),
+        Err(CoreError::State(_))
+    ));
+    assert!(store.snapshot().is_empty(), "nothing was written");
+    engine
+        .import(pair(&identity(1), &identity(1)), 0)
+        .expect("a matching pair imports");
+}
+
 /// Bob's prekey secrets, as `start_as_responder` reads them.
 struct Secrets {
     identity: SecretKey,
@@ -112,7 +138,7 @@ fn imported_sessions_keep_the_conversation_going_both_ways() {
         medium_pk: medium.public.clone(),
         one_time: None,
     };
-    let (alice_session, init) = ratchet::start_as_initiator(&HqcKem, &bundle, NOW).unwrap();
+    let (alice_session, init) = ratchet::start_as_initiator(&HqcKem, &bundle).unwrap();
     let secrets = Secrets {
         identity: bob_id.secret.clone(),
         medium: medium.secret.clone(),

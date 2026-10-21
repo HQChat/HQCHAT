@@ -43,18 +43,24 @@ auth=(-allowProvisioningUpdates -authenticationKeyPath "$key"
 project="$here/HQChat.xcodeproj"
 
 xcodebuild -version
-bash "$root/native/hqc/build-apple.sh"
-# The Rust core ships as committed (core/swift/HQChatCore, written by
-# core/hqchat-ffi/build-apple.sh, which needs Rust's Apple targets). A build
-# older than the core's sources is refused rather than shipped.
-if [[ "$(cat "$root/core/swift/HQChatCore/.source" 2>/dev/null)" != "$(bash "$root/core/hqchat-ffi/apple-source-hash.sh")" ]]; then
-  echo "core/swift/HQChatCore is not built from the current core: run" >&2
+# The Rust core is never committed: core/hqchat-ffi/build-apple.sh builds it on
+# this machine first (the release workflow does, from the commit it ships). A
+# package built from another commit, from uncommitted core changes, or whose
+# generated bindings differ from the committed ones is refused rather than
+# shipped.
+pkg="$root/core/swift/HQChatCore"
+head="$(git -C "$root" rev-parse HEAD)"
+if [[ ! -f "$pkg/HQChatCoreFFI.xcframework/Info.plist" || "$(cat "$pkg/.built-from" 2>/dev/null)" != "$head" ]] ||
+  [[ -n "$(git -C "$root" status --porcelain -- core native flake.nix flake.lock)" ]]; then
+  echo "core/swift/HQChatCore is not built from $head with a clean tree: run" >&2
   echo "  nix develop .#apple --command core/hqchat-ffi/build-apple.sh" >&2
-  echo "and commit the result." >&2
+  echo "on a clean checkout of the commit to ship, and commit any change it makes to the bindings." >&2
   exit 1
 fi
+# Swift packages exactly as Package.resolved pins them: nothing resolved afresh.
+spm=(-onlyUsePackageVersionsFromResolvedFile -disableAutomaticPackageResolution)
 
-settings="$(xcodebuild -project "$project" -scheme "$scheme" -configuration Release -showBuildSettings 2>/dev/null)"
+settings="$(xcodebuild -project "$project" -scheme "$scheme" -configuration Release "${spm[@]}" -showBuildSettings 2>/dev/null)"
 setting() { awk -F' = ' -v k="$1" '$1 ~ "^ *"k"$" {print $2; exit}' <<<"$settings"; }
 team="$(setting DEVELOPMENT_TEAM)"
 bundle_id="$(setting PRODUCT_BUNDLE_IDENTIFIER)"
@@ -72,7 +78,7 @@ read -r version build < <(node "$here/asc-next.mjs" "$bundle_id" "$asc_platform"
 
 echo "archiving $scheme $version ($build), team $team"
 xcodebuild archive -project "$project" -scheme "$scheme" -configuration Release \
-  -destination "$destination" -archivePath "$work/HQChat.xcarchive" \
+  -destination "$destination" -archivePath "$work/HQChat.xcarchive" "${spm[@]}" \
   "${auth[@]}" ${arch[@]+"${arch[@]}"} MARKETING_VERSION="$version" CURRENT_PROJECT_VERSION="$build" -quiet
 
 cat >"$work/export.plist" <<EOF
