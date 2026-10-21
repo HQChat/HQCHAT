@@ -1,1 +1,3 @@
 .build/
+# Built from the core by core/hqchat-ffi/build-apple.sh, never committed.
+HQChatCoreFFI.xcframework/

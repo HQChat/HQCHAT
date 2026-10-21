@@ -132,6 +132,14 @@
         // {
           ${hostSystem} = {
             inherit (pkgs) hqc hqchat-node hqcat-server;
+            # Deploy's Terraform, pinned by hash (infra/nixos/pkgs/terraform-bin.nix).
+            terraform =
+              (import nixpkgs {
+                system = hostSystem;
+                config.allowUnfreePredicate = pkg: lib.getName pkg == "terraform";
+              }).callPackage
+                ./infra/nixos/pkgs/terraform-bin.nix
+                { };
           }
           // lib.listToAttrs (
             lib.concatMap (
