@@ -74,7 +74,8 @@ fn a_sign_in_the_server_never_answered_is_tried_again_on_the_backoff() {
     // A timer that fires early is armed again for the same deadline.
     let e = c.engine.tick(at - 1);
     assert!(
-        e.iter().any(|e| matches!(e, Effect::Timer { at: t } if *t == at)),
+        e.iter()
+            .any(|e| matches!(e, Effect::Timer { at: t } if *t == at)),
         "an early wake-up leaves the retry armed"
     );
     assert!(paths(&server).is_empty());
