@@ -38,7 +38,7 @@ buildNpmPackage {
   inherit src;
 
   nodejs = nodejs_22;
-  npmDepsHash = "sha256-VjOWGJQH7E2cLRz5jI4Vb01b855R/xzDSNK+F9zx09A=";
+  npmDepsHash = "sha256-Ugs/4nNUnrGyAdkh2EdVkhCHIzUQeq6HBNXLKFCZgk4=";
 
   dontNpmBuild = true;
 
