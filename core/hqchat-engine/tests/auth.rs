@@ -71,6 +71,14 @@ fn a_sign_in_the_server_never_answered_is_tried_again_on_the_backoff() {
         .expect("a failed sign-in asks to be woken");
     assert!(at > NOW, "not at once: on the backoff");
     assert!(paths(&server).is_empty());
+    // A timer that fires early is armed again for the same deadline.
+    let e = c.engine.tick(at - 1);
+    assert!(
+        e.iter()
+            .any(|e| matches!(e, Effect::Timer { at: t } if *t == at)),
+        "an early wake-up leaves the retry armed"
+    );
+    assert!(paths(&server).is_empty());
     // Now it is up.
     let e = c.engine.tick(at);
     c.pump(e);

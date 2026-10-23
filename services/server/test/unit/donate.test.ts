@@ -527,7 +527,7 @@ test("a checkout URL the CSP would block is reported loudly", async () => {
 
   const err = out.lines.find((l) => /checkout URL origin is not/.test(l));
   assert.ok(err, `expected a loud error; got:\n${out.lines.join("\n")}`);
-  assert.match(err!, new RegExp(CHECKOUT_ORIGIN.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.ok(err!.includes(CHECKOUT_ORIGIN), err);
   assert.match(err!, /form-action/, "the message must name the mechanism, or it is unactionable");
   assert.match(err!, /https:\/\/pay\.example\.com/, "…and what it actually got");
   // Still redirects. Refusing here would break a live donation flow on the

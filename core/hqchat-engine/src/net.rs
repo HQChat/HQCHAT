@@ -620,6 +620,15 @@ impl Core {
 
     /// A timer fired or the shell resumed.
     pub fn tick(&mut self, now: i64) {
+        // Woken before the deadline asked for (Node's loop clock lags behind
+        // after a long burst of crypto): that timer is spent, so the same
+        // deadline is asked for again. Otherwise nothing is left armed, and a
+        // headless shell with no connection open simply exits. A deadline
+        // already reached keeps its dedup, so one still due is not re-armed
+        // in a loop.
+        if self.net.scheduled.is_some_and(|t| now < t) {
+            self.net.scheduled = None;
+        }
         if let Some(c) = self.net.conn.as_ref() {
             let id = c.id;
             let connack_late = !c.up && now.saturating_sub(c.opened_at) >= CONNACK_TIMEOUT_MS;

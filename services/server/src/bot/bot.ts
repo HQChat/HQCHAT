@@ -53,7 +53,11 @@ const WELCOME = (name: string) =>
 export function loadSeed(dir: string): Buffer {
   if (process.env.BOT_SEED) return Buffer.from(process.env.BOT_SEED.trim(), "hex");
   const file = path.join(dir, "seed");
-  if (fs.existsSync(file)) return Buffer.from(fs.readFileSync(file, "utf8").trim(), "hex");
+  try {
+    return Buffer.from(fs.readFileSync(file, "utf8").trim(), "hex");
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+  }
   fs.mkdirSync(dir, { recursive: true });
   const seed = crypto.randomBytes(32);
   try {
