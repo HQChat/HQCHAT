@@ -50,7 +50,7 @@ struct CreateProfileSheet: View {
                 VStack(alignment: .leading, spacing: 0) {
                     // A profile has one name: its username.
                     HQFieldLabel(text: "username").padding(.bottom, 9)
-                    HQTextField(placeholder: "handle", text: $username, monospaced: true, prefix: "@")
+                    HQTextField(placeholder: "handle", text: $username, monospaced: true, prefix: "@", ascii: true)
                         .onChange(of: username) { _, newValue in
                             // Filter as typed, with the same alphabet the server
                             // accepts — nothing else can be typed or pasted in.
@@ -71,7 +71,7 @@ struct CreateProfileSheet: View {
                     }
 
                     HQFieldLabel(text: "home server (optional)").padding(.top, 26).padding(.bottom, 9)
-                    HQTextField(placeholder: "wss://… (leave blank for default)", text: $serverURL, monospaced: true)
+                    HQTextField(placeholder: "wss://… (leave blank for default)", text: $serverURL, monospaced: true, ascii: true)
                     Text("the server this profile connects to. friends must share it.")
                         .font(HQFont.ui(12.5)).foregroundColor(HQColor.textDim)
                         .padding(.top, 9).padding(.horizontal, 2)

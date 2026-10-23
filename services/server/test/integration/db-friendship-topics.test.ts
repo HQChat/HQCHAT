@@ -9,11 +9,11 @@
 import assert from "node:assert/strict";
 import * as crypto from "node:crypto";
 import { test } from "node:test";
-import { peerId } from "../../src/protocol/identity";
-import { TOPIC_ID } from "../../src/protocol/topics";
 import { DB } from "../../src/server/db/api";
 import { createUser } from "../helpers/fixtures";
 import { closePg, requirePg } from "../pg-helper";
+import { peerId } from "../reference/protocol/identity";
+import { TOPIC_ID } from "../reference/protocol/topics";
 
 test.before(requirePg);
 
@@ -98,7 +98,7 @@ test("accepting an invite mints the ids too", async () => {
   try {
     const nb = (await DB.getUsername(b))!;
     await DB.invite(a, nb);
-    assert.ok(await DB.acceptInvite(a, b));
+    assert.equal(await DB.acceptInvite(a, b, 150), "accepted");
     const topics = await DB.getFriendshipTopics(a, b);
     assert.ok(topics);
     assert.match(topics.convoId, TOPIC_ID);

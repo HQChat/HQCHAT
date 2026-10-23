@@ -16,7 +16,7 @@ a system is an environment (`infra/environments/<name>.json`) and a role.
 |---|---|
 | `options.nix` | `hqcat.role`, `hqcat.environment`, admin keys |
 | `netconf.nix` | addressing, role and SSH host key from DigitalOcean's metadata service |
-| `host-agent.nix`, `../hqcat-host-agent.sh` | pull, switch and health-gated rollback from `channels/<env>/<role>` |
+| `host-agent.nix`, `../hqcat-host-agent.sh` | pull, switch and health-gated rollback from the signed, numbered `channels/<env>/<role>.signed` (`../hqcat-verify-signed.sh` checks the signature) |
 | `secrets.nix` | the host's age-encrypted secret bundle, installed under `/etc/hqcat/secrets` |
 | `wireguard.nix` | the app ↔ broker link, configured from the bundle |
 | `firewall.nix` | nftables per role; metadata service for root only |

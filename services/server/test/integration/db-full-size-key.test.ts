@@ -4,11 +4,11 @@
 import assert from "node:assert/strict";
 import * as crypto from "node:crypto";
 import { test } from "node:test";
-import { peerId } from "../../src/protocol/identity";
 import { DB } from "../../src/server/db/api";
 import { q } from "../../src/server/db/pg";
 import { createUser } from "../helpers/fixtures";
 import { closePg, requirePg } from "../pg-helper";
+import { peerId } from "../reference/protocol/identity";
 
 test.before(requirePg);
 
@@ -77,7 +77,7 @@ test("the identity, graph and ACL tables are keyed by a 64-character id", async 
 
   await DB.invite(a, nb);
   assert.equal((await DB.getMyInvites(b)).length, 1);
-  assert.ok(await DB.acceptInvite(a, b));
+  assert.equal(await DB.acceptInvite(a, b, 150), "accepted");
   assert.ok(await DB.areFriends(a, b), "friendship pair key");
 
   await DB.deleteUser(a);
@@ -93,9 +93,12 @@ test("the ephemeral tier is keyed by id too", async () => {
   await DB.setPushToken(a, "ios", "production", "tok-2");
   assert.equal((await DB.getPushToken(a))?.token, "tok-2");
 
-  await DB.startAuthChallenge(a, "proof-1");
-  await DB.startAuthChallenge(a, "proof-2");
-  assert.equal(await DB.takeAuthChallenge(a), "proof-2");
+  const first = await DB.startAuthChallenge(a, "source", "proof-1");
+  const second = await DB.startAuthChallenge(a, "source", "proof-2");
+  assert.deepEqual((await DB.openAuthChallenges(a)).map((c) => c.proof).sort(), ["proof-1", "proof-2"]);
+  assert.ok(await DB.spendAuthChallenge(a, second));
+  assert.ok(!(await DB.spendAuthChallenge(a, second)));
+  assert.ok(await DB.spendAuthChallenge(a, first));
 
   const token = await DB.mintSessionToken(a);
   assert.equal((await DB.resolveSessionToken(token))?.id, a);

@@ -78,19 +78,20 @@ enum Observability {
         Log.app.info("🛰️ Sentry enabled (env=\(String(describing: Self.environment())))")
     }
 
-    /// Crashes, hangs reported before a watchdog kill, memory terminations
-    /// reconstructed on the next launch, and light performance sampling.
+    /// Crashes, hangs reported before a watchdog kill, and memory terminations
+    /// reconstructed on the next launch. No performance tracing: a span names
+    /// the request it timed (`/peer/<id>/key` is a friend), and no scrubber
+    /// sees spans.
     private static func configureStability(_ options: Options) {
         options.enableCrashHandler = true
         options.attachStacktrace = true
         options.enableAppHangTracking = true
         options.appHangTimeoutInterval = 2.0
         options.enableWatchdogTerminationTracking = true
-        #if DEBUG
         options.tracesSampleRate = 0.0
+        options.enableAutoPerformanceTracing = false
+        #if DEBUG
         options.debug = true
-        #else
-        options.tracesSampleRate = 0.1
         #endif
     }
 
@@ -104,16 +105,26 @@ enum Observability {
         options.attachScreenshot = false
         options.attachViewHierarchy = false
         #endif
+        // Nothing about the app's own traffic: a URL names who is looked up
+        // (`/users?username=`) or befriended, a failed request would make the
+        // server able to trigger reports, and trace headers would go to every
+        // host the app talks to.
+        options.enableNetworkTracking = false
+        options.enableNetworkBreadcrumbs = false
+        options.enableCaptureFailedRequests = false
+        options.tracePropagationTargets = []
+        options.beforeSendSpan = { _ in nil }
         options.maxBreadcrumbs = 50
         options.beforeSend = { event in Observability.scrub(event) }
         options.beforeBreadcrumb = { crumb in Observability.scrub(crumb) }
     }
 
-    /// iOS only: a replay of the last ~30 s of UI for each error, never for
-    /// ordinary sessions, with every text node and image masked.
+    /// No session replay: even masked, frames of a messenger's screens show
+    /// who is in the list and when the user was in a conversation. Set
+    /// explicitly, with the masks kept, so an SDK upgrade cannot flip it on.
     private static func configureReplay(_ options: Options) {
         #if os(iOS)
-        options.sessionReplay.onErrorSampleRate = 1.0
+        options.sessionReplay.onErrorSampleRate = 0.0
         options.sessionReplay.sessionSampleRate = 0.0
         options.sessionReplay.maskAllText = true
         options.sessionReplay.maskAllImages = true
@@ -169,15 +180,12 @@ enum Observability {
     /// Scrub a Sentry event before it leaves the device: drop network/topology
     /// identifiers, then redact message + exception strings + breadcrumbs + bags.
     static func scrub(_ event: Event) -> Event {
-        // Structural drops — never ship these.
+        // Structural drops — never ship these. No user at all: the SDK fills
+        // in a persistent installation id, which links every report from one
+        // device.
         event.serverName = nil
         event.request = nil
-        if let user = event.user {
-            user.ipAddress = nil
-            user.email = nil
-            user.username = nil
-            event.user = user
-        }
+        event.user = nil
         // Message. `formatted` is read-only on SentryMessage, so rebuild it.
         if let m = event.message {
             let nm = SentryMessage(formatted: redact(m.formatted) ?? m.formatted)

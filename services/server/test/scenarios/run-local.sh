@@ -5,7 +5,8 @@
 #
 #   bash services/server/test/scenarios/run-local.sh        # LOAD=1 adds the load test
 #
-# Needs Docker and the native HQC library.
+# Needs Docker and the core's Node addon (built with Nix when HQCHAT_NODE is
+# unset).
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
@@ -54,6 +55,12 @@ command -v docker >/dev/null || {
   echo "docker is required" >&2
   exit 1
 }
+
+step "Core addon"
+if [ -z "${HQCHAT_NODE:-}" ]; then
+  HQCHAT_NODE="$(nix build "$ROOT#hqchat-node" --no-link --print-out-paths)/lib/hqchat_node.node"
+fi
+export HQCHAT_NODE
 
 step "Postgres"
 docker rm -f "$NAME_PG" >/dev/null 2>&1 || true
@@ -128,7 +135,7 @@ export SCENARIOS_REQUIRED=1
 
 step "Helper bot"
 setsid env BASE_URL="$TEST_BASE_URL" MQTT_URL="$TEST_MQTT_URL" BOT_STATE_DIR="$WORK/bot" \
-  BOT_USERNAME=helper FRIEND_POLL_MS=2000 \
+  BOT_USERNAME=helper \
   npm run bot >"$WORK/bot.log" 2>&1 &
 BOT_PID=$!
 for _ in $(seq 1 45); do
@@ -147,7 +154,7 @@ npm run --silent test:scenarios || {
 }
 
 if [ "$(uname)" = "Darwin" ] && command -v xcrun >/dev/null; then
-  step "Swift client over hqn/1 and WSS"
+  step "The app's store over hqn/1 and WSS"
   bash "$ROOT/apps/apple/e2e/hqn-live/run.sh"
 fi
 

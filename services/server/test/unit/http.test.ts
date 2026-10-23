@@ -210,35 +210,53 @@ describe("readJson", () => {
 
 describe("clientIp", () => {
   const CF = "cf-connecting-ip";
+  const ALL = { [CF]: "198.51.100.7", "x-real-ip": "198.51.100.8", "x-forwarded-for": "1.2.3.4, 198.51.100.9" };
 
-  it("prefers the edge's own header", () => {
-    assert.equal(clientIp(req({ [CF]: "198.51.100.7", "x-forwarded-for": "1.2.3.4" })), "198.51.100.7");
+  /** Runs `fn` with TRUSTED_PROXY set to `mode` (undefined: unset). */
+  function withProxy(mode: string | undefined, fn: () => void): void {
+    const saved = process.env.TRUSTED_PROXY;
+    if (mode === undefined) delete process.env.TRUSTED_PROXY;
+    else process.env.TRUSTED_PROXY = mode;
+    try {
+      fn();
+    } finally {
+      if (saved === undefined) delete process.env.TRUSTED_PROXY;
+      else process.env.TRUSTED_PROXY = saved;
+    }
+  }
+
+  // Every header here is client-supplied. Believing one by default lets any
+  // caller not behind the proxy choose the address every per-IP limit keys on.
+  it("believes no header unless TRUSTED_PROXY names one", () => {
+    for (const mode of [undefined, "", "none", "nonsense"]) {
+      withProxy(mode, () => assert.equal(clientIp(req(ALL)), "203.0.113.9", `TRUSTED_PROXY=${mode}`));
+    }
   });
 
-  it("falls back to x-real-ip, then the socket", () => {
-    assert.equal(clientIp(req({ "x-real-ip": "198.51.100.8" })), "198.51.100.8");
-    assert.equal(clientIp(req({})), "203.0.113.9");
+  it("believes exactly the header it is told to", () => {
+    withProxy("x-real-ip", () => assert.equal(clientIp(req(ALL)), "198.51.100.8"));
+    withProxy("cf-connecting-ip", () => assert.equal(clientIp(req(ALL)), "198.51.100.7"));
+    withProxy("x-forwarded-for", () => assert.equal(clientIp(req(ALL)), "198.51.100.9"));
   });
 
-  // THE POINT OF THE WHOLE FUNCTION. Anyone can send X-Forwarded-For, so the
-  // leftmost entry is attacker-chosen; only the rightmost entries were written
-  // by proxies we run. Taking the left one lets a caller pick the identity every
-  // per-IP rate limit and admission check keys on.
+  it("falls back to the socket when the trusted header is missing", () => {
+    withProxy("x-real-ip", () => assert.equal(clientIp(req({ [CF]: "1.1.1.1" })), "203.0.113.9"));
+    withProxy("cf-connecting-ip", () => assert.equal(clientIp(req({})), "203.0.113.9"));
+  });
+
+  // Anyone can send X-Forwarded-For, so the leftmost entry is attacker-chosen;
+  // only the rightmost entries were written by proxies we run.
   it("ignores a spoofed X-Forwarded-For prefix", () => {
-    const spoofed = clientIp(req({ "x-forwarded-for": "1.1.1.1, 2.2.2.2, 198.51.100.20" }));
-    assert.notEqual(spoofed, "1.1.1.1", "must not take the leftmost, attacker-supplied entry");
-    assert.equal(spoofed, "198.51.100.20", "counts back from the right by TRUSTED_PROXY_HOPS");
-  });
-
-  it("a longer spoofed prefix does not move the answer", () => {
-    const a = clientIp(req({ "x-forwarded-for": "9.9.9.9, 198.51.100.20" }));
-    const b = clientIp(req({ "x-forwarded-for": "8.8.8.8, 7.7.7.7, 6.6.6.6, 198.51.100.20" }));
-    assert.equal(a, b, "the value depends on the right-hand end, not on length");
-  });
-
-  it("falls back to the socket when the header is empty or junk", () => {
-    assert.equal(clientIp(req({ "x-forwarded-for": "" })), "203.0.113.9");
-    assert.equal(clientIp(req({ "x-forwarded-for": " , , " })), "203.0.113.9");
+    withProxy("x-forwarded-for", () => {
+      const spoofed = clientIp(req({ "x-forwarded-for": "1.1.1.1, 2.2.2.2, 198.51.100.20" }));
+      assert.notEqual(spoofed, "1.1.1.1", "must not take the leftmost, attacker-supplied entry");
+      assert.equal(spoofed, "198.51.100.20", "counts back from the right by TRUSTED_PROXY_HOPS");
+      const a = clientIp(req({ "x-forwarded-for": "9.9.9.9, 198.51.100.20" }));
+      const b = clientIp(req({ "x-forwarded-for": "8.8.8.8, 7.7.7.7, 6.6.6.6, 198.51.100.20" }));
+      assert.equal(a, b, "the value depends on the right-hand end, not on length");
+      assert.equal(clientIp(req({ "x-forwarded-for": "" })), "203.0.113.9");
+      assert.equal(clientIp(req({ "x-forwarded-for": " , , " })), "203.0.113.9");
+    });
   });
 
   it("reports 'unknown' rather than undefined with no socket address", () => {

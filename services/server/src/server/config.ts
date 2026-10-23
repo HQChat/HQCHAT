@@ -4,7 +4,7 @@ import { donationSummary, donationsDead, resolvePrices } from "./donations-confi
 
 /** Validates the server's configuration at boot; exits on what cannot work. */
 export function assertServerConfig(): void {
-  assertConfig(["stripe", "apns"]);
+  assertConfig(["stripe", "apns", "proxy"]);
   const prices = resolvePrices(process.env);
   if (/^(1|true|yes)$/i.test(process.env.DONATIONS_ENABLED || "") && donationsDead(prices)) {
     logger.error(`[server] ${donationSummary(prices)}`);

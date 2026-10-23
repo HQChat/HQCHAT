@@ -1,0 +1,304 @@
+//! The hqn/1 responder for `src/gateway/gateway.ts`, replacing
+//! `protocol/noise.ts`'s `HqnResponder`, `FrameReader` and transport.
+
+use hqc::{KeyPair, SharedSecret};
+use hqchat_protocol::noise::{
+    self, FrameReader, HqnResponder, ServerStatic, Transport, X25519Secret,
+};
+use hqchat_protocol::{OsEntropy, wire};
+use napi::bindgen_prelude::{AsyncTask, Buffer};
+use napi::{Env, Task};
+use napi_derive::napi;
+
+use crate::err;
+
+/// The gateway's static keys: its X25519 secret and the 32-byte seed of its
+/// HQC keypair, as the key file holds them.
+#[napi(object)]
+pub struct GatewayKey {
+    /// Which key pair, during a rotation.
+    pub key_id: u8,
+    /// X25519 secret, 32 bytes.
+    pub x25519: Buffer,
+    /// HQC seed, 32 bytes.
+    pub hqc_seed: Buffer,
+}
+
+/// The public half, as `/auth/transport` advertises it.
+#[napi(object)]
+pub struct GatewayPublicKey {
+    /// Which key pair.
+    pub key_id: u8,
+    /// X25519 public key, 32 bytes.
+    pub x25519: Buffer,
+    /// HQC public key, 7237 bytes.
+    pub hqc: Buffer,
+}
+
+fn server_static(k: &GatewayKey) -> napi::Result<ServerStatic> {
+    let x: [u8; 32] = k
+        .x25519
+        .as_ref()
+        .try_into()
+        .map_err(|_| err("x25519 is 32 bytes"))?;
+    let seed: [u8; 32] = k
+        .hqc_seed
+        .as_ref()
+        .try_into()
+        .map_err(|_| err("hqcSeed is 32 bytes"))?;
+    let hqc: KeyPair = hqc::keypair_from_seed(&hqc::Seed::from_bytes(seed)).map_err(err)?;
+    Ok(ServerStatic {
+        key_id: k.key_id,
+        x25519: X25519Secret(x),
+        hqc,
+    })
+}
+
+/// The `hqn/1` version byte that opens every connection.
+#[napi]
+pub const HQN_VERSION: u8 = noise::HQN_VERSION;
+
+/// A gateway key pair, derived once from its seeds: the HQC key generation
+/// takes milliseconds, so it happens at startup and never per connection.
+#[napi]
+pub struct GatewayKeyPair {
+    server: ServerStatic,
+}
+
+#[napi]
+impl GatewayKeyPair {
+    /// Derives the key pair from the key file's seeds.
+    #[napi(constructor, catch_unwind)]
+    pub fn new(key: GatewayKey) -> napi::Result<Self> {
+        Ok(Self {
+            server: server_static(&key)?,
+        })
+    }
+
+    /// Which key pair, during a rotation.
+    #[napi(getter, catch_unwind)]
+    pub fn key_id(&self) -> u8 {
+        self.server.key_id
+    }
+
+    /// The public half, as `/auth/transport` advertises it and the app pins it.
+    #[napi(catch_unwind)]
+    pub fn public_key(&self) -> GatewayPublicKey {
+        let p = self.server.public();
+        GatewayPublicKey {
+            key_id: p.key_id,
+            x25519: p.x25519.to_vec().into(),
+            hqc: p.hqc.as_bytes().to_vec().into(),
+        }
+    }
+
+    /// Decapsulates `ct` on libuv's thread pool, so the event loop keeps
+    /// serving established streams. The HQC secret key never leaves Rust,
+    /// and neither does the shared secret: JS gets an [`HqnSecret`] handle.
+    #[napi]
+    pub fn decapsulate(&self, ct: Buffer) -> napi::Result<AsyncTask<Decapsulate>> {
+        Ok(AsyncTask::new(Decapsulate {
+            sk: self.server.hqc.secret.clone(),
+            ct: hqc::Ciphertext::from_bytes(&ct).map_err(err)?,
+        }))
+    }
+
+    /// The public half's fingerprint, as the apps' `hqnPins` list it.
+    #[napi(catch_unwind)]
+    pub fn fingerprint(&self) -> String {
+        hqchat_engine::hqn_key_fingerprint(&self.server.public())
+    }
+}
+
+/// A decapsulation, run off the event loop by [`GatewayKeyPair::decapsulate`].
+pub struct Decapsulate {
+    sk: hqc::SecretKey,
+    ct: hqc::Ciphertext,
+}
+
+impl Task for Decapsulate {
+    type Output = SharedSecret;
+    type JsValue = HqnSecret;
+
+    fn compute(&mut self) -> napi::Result<SharedSecret> {
+        hqc::decapsulate(&self.sk, &self.ct).map_err(err)
+    }
+
+    fn resolve(&mut self, _env: Env, ss: SharedSecret) -> napi::Result<HqnSecret> {
+        Ok(HqnSecret { ss })
+    }
+}
+
+/// A decapsulated HQC secret, held by the core: JS passes the handle to
+/// `finishMessage1` and never sees the bytes. Wiped when collected.
+#[napi]
+pub struct HqnSecret {
+    ss: SharedSecret,
+}
+
+#[napi]
+impl HqnSecret {
+    /// A secret from known bytes: for tests that drive the handshake with a
+    /// stand-in KEM. The gateway itself only gets one from `decapsulate`.
+    #[napi(factory, catch_unwind)]
+    pub fn from_bytes(ss: Buffer) -> napi::Result<Self> {
+        let ss: [u8; 32] = ss
+            .as_ref()
+            .try_into()
+            .map_err(|_| err("a shared secret is 32 bytes"))?;
+        Ok(Self {
+            ss: SharedSecret::from_bytes(ss),
+        })
+    }
+}
+
+/// msg1's exact length for a payload of `payloadLen` bytes.
+#[napi(catch_unwind)]
+pub fn hqn_msg1_length(payload_len: u32) -> napi::Result<u32> {
+    u32::try_from(noise::msg1_length(wire::usize_from(payload_len)))
+        .map_err(|_| napi::Error::from_reason("msg1 length does not fit a u32"))
+}
+
+/// The gateway's side of one connection. msg1 is read in two steps so the
+/// decapsulation can run off the event loop (`GatewayKeyPair.decapsulate`).
+#[napi]
+pub struct HqnGatewayHandshake {
+    responder: Option<HqnResponder>,
+}
+
+#[napi]
+impl HqnGatewayHandshake {
+    /// A handshake as `key`.
+    #[napi(constructor, catch_unwind)]
+    pub fn new(key: &GatewayKeyPair) -> Self {
+        Self {
+            responder: Some(HqnResponder::new(key.server.clone())),
+        }
+    }
+
+    /// The client's ephemeral key, for the replay cache, before any work.
+    #[napi(catch_unwind)]
+    pub fn ephemeral_of(msg1: Buffer) -> napi::Result<Buffer> {
+        Ok(HqnResponder::ephemeral_of(&msg1)
+            .map_err(err)?
+            .to_vec()
+            .into())
+    }
+
+    fn responder(&mut self) -> napi::Result<&mut HqnResponder> {
+        self.responder
+            .as_mut()
+            .ok_or_else(|| err("the handshake is finished"))
+    }
+
+    /// First half of msg1: returns the KEM ciphertext to decapsulate.
+    #[napi(catch_unwind)]
+    pub fn open_message1(&mut self, msg1: Buffer) -> napi::Result<Buffer> {
+        Ok(self
+            .responder()?
+            .open_message1(&msg1)
+            .map_err(err)?
+            .as_bytes()
+            .to_vec()
+            .into())
+    }
+
+    /// Second half: the decapsulated secret in, the payload (the CONNECT) out.
+    #[napi(catch_unwind)]
+    pub fn finish_message1(&mut self, secret: &HqnSecret) -> napi::Result<Buffer> {
+        Ok(self
+            .responder()?
+            .finish_message1(&secret.ss)
+            .map_err(err)?
+            .into())
+    }
+
+    /// msg2 (unframed) and the transport; the handshake is then finished.
+    #[napi(catch_unwind)]
+    pub fn write_message2(&mut self, payload: Buffer) -> napi::Result<HqnMessage2> {
+        let responder = self
+            .responder
+            .take()
+            .ok_or_else(|| err("the handshake is finished"))?;
+        let (message, transport) = responder
+            .write_message2(&payload, &mut OsEntropy)
+            .map_err(err)?;
+        Ok(HqnMessage2 {
+            message: Some(message.into()),
+            transport: Some(HqnTransport::from(transport)),
+        })
+    }
+}
+
+/// What `writeMessage2` returns.
+#[napi]
+pub struct HqnMessage2 {
+    message: Option<Buffer>,
+    transport: Option<HqnTransport>,
+}
+
+#[napi]
+impl HqnMessage2 {
+    /// msg2, to frame and send.
+    #[napi(catch_unwind)]
+    pub fn take_message(&mut self) -> napi::Result<Buffer> {
+        self.message.take().ok_or_else(|| err("taken"))
+    }
+
+    /// The transport, once.
+    #[napi(catch_unwind)]
+    pub fn take_transport(&mut self) -> napi::Result<HqnTransport> {
+        self.transport.take().ok_or_else(|| err("taken"))
+    }
+}
+
+/// An established hqn/1 channel, gateway side: frames in, MQTT bytes out.
+#[napi]
+pub struct HqnTransport {
+    transport: Transport,
+    reader: FrameReader,
+}
+
+impl From<Transport> for HqnTransport {
+    fn from(transport: Transport) -> Self {
+        Self {
+            transport,
+            reader: FrameReader::default(),
+        }
+    }
+}
+
+#[napi]
+impl HqnTransport {
+    /// Seals bytes for the client as length-prefixed frames.
+    #[napi(catch_unwind)]
+    pub fn seal(&mut self, data: Buffer) -> napi::Result<Buffer> {
+        Ok(noise::seal_frames(&mut self.transport.send, &data)
+            .map_err(err)?
+            .into())
+    }
+
+    /// Feeds bytes from the socket; returns the plaintext of every whole
+    /// frame. Throws on a frame that does not open: close the connection.
+    #[napi(catch_unwind)]
+    pub fn open(&mut self, chunk: Buffer) -> napi::Result<Buffer> {
+        self.reader.push(&chunk);
+        let mut out = Vec::new();
+        while let Some(frame) = self.reader.next_frame() {
+            out.extend(self.transport.recv.decrypt(&frame).map_err(err)?);
+        }
+        Ok(out.into())
+    }
+
+    /// The handshake hash: a channel binding.
+    #[napi(getter, catch_unwind)]
+    pub fn handshake_hash(&self) -> Buffer {
+        self.transport.handshake_hash.to_vec().into()
+    }
+}
+
+/// One length-prefixed hqn/1 message (`frame`).
+#[napi(catch_unwind)]
+pub fn hqn_frame(body: Buffer) -> napi::Result<Buffer> {
+    Ok(noise::frame(&body).map_err(err)?.into())
+}

@@ -1,15 +1,11 @@
-// At-rest protection for message bodies: sealing must work with no user
-// present (a message arriving in the background), opening must need the user.
-// A symmetric key cannot do both, so the scheme is hybrid:
+// The profile's Secure Enclave key, which the core's vault uses
+// (SecureEnclaveVault): its public half seals with no user present (a message
+// arriving in the background), one ECDH with the private half opens and needs
+// the user, gated by the profile's protection tier.
 //
-//   seal   AES-GCM(body, Km) with a fresh Km, ECIES-wrapped to the profile's
-//          Secure Enclave PUBLIC key. No authentication.
-//   open   ECIES-unwrap Km with the PRIVATE key (gated by the profile's
-//          protection tier), then AES-GCM open. Needs the user.
-//
-// One authenticated `LAContext` is reused across unwraps, so opening a screen
-// of messages costs one prompt. Deleting a profile deletes its key pair, which
-// makes its rows permanently unreadable.
+// One authenticated `LAContext` (the unlock) is reused for every operation of
+// the session, so it costs one prompt. Deleting a profile deletes its key
+// pair, which makes everything sealed to it permanently unreadable.
 
 import Foundation
 import CryptoKit
@@ -133,10 +129,11 @@ enum MessageKeyStore {
         defer { BiometricCoordinator.end() }
 
         let context = LAContext()
-        // Each row's unwrap would otherwise re-authenticate. The context is
-        // invalidated by `clearCache()` on background and profile switch.
-        context.touchIDAuthenticationAllowableReuseDuration =
-            LATouchIDAuthenticationMaximumAllowableReuseDuration
+        // No reuse window: a recent Touch ID unlock of the device must not
+        // stand in for this one. Rows do not re-authenticate anyway, since
+        // they all use this evaluated context, which `clearCache()` drops on
+        // background and profile switch.
+        context.touchIDAuthenticationAllowableReuseDuration = 0
         do {
             let ok = try await BiometricAudit.measureAsync("LAContext.evaluatePolicy",
                                                            item: "message-read unlock",
@@ -196,6 +193,12 @@ enum MessageKeyStore {
     // MARK: - Sealing (no authentication)
 
     /// This profile's public key, creating the key pair on first use.
+    ///
+    /// Only a profile with no private key gets a new pair. When the stored
+    /// public half cannot be read but the private key is there, the public
+    /// half comes from the private key; failing that, nil. Minting then would
+    /// put a second key under the same tag: the core would seal to the new
+    /// one while the lookup that opens could return either.
     static func publicKey(for profileID: UUID) -> SecKey? {
         lock.lock()
         defer { lock.unlock() }
@@ -204,7 +207,20 @@ enum MessageKeyStore {
             publicCache[profileID] = stored
             return stored
         }
-        guard let priv = createKeyPair(profileID), let pub = SecKeyCopyPublicKey(priv) else { return nil }
+        let status = privateKeyStatus(profileID)
+        if status == errSecItemNotFound {
+            guard let priv = createKeyPair(profileID), let pub = SecKeyCopyPublicKey(priv) else { return nil }
+            publicCache[profileID] = pub
+            return pub
+        }
+        // There is a key, or the Keychain cannot say: never mint over it. A key
+        // reference needs no authentication; only using it does.
+        guard let priv = privateKeyRef(profileID, context: LAContext.nonInteractive()),
+              let pub = SecKeyCopyPublicKey(priv) else {
+            Log.keys.error("[MessageKeyStore] ❌ no public half for the Enclave key (Keychain status \(String(describing: status))); not creating another")
+            return nil
+        }
+        storePublicKey(pub, for: profileID)
         publicCache[profileID] = pub
         return pub
     }
@@ -215,6 +231,7 @@ enum MessageKeyStore {
     /// Keychain account holding the public half, readable without authentication
     /// so sealing never prompts.
     private static func publicAccount(_ profileID: UUID) -> String { "pub.\(profileID.uuidString)" }
+    private static func stateAccount(_ profileID: UUID) -> String { "state.\(profileID.uuidString)" }
 
     private static func storePublicKey(_ pub: SecKey, for profileID: UUID) {
         guard let data = SecKeyCopyExternalRepresentation(pub, nil) as Data? else { return }
@@ -229,21 +246,12 @@ enum MessageKeyStore {
         ] as CFDictionary, nil)
     }
 
-    /// Wraps a per-message key to the profile's public key. No prompt.
-    static func wrap(_ messageKey: SymmetricKey, for profileID: UUID) -> Data? {
-        guard let pub = publicKey(for: profileID) else { return nil }
-        let raw = messageKey.withUnsafeBytes { Data($0) }
-        var error: Unmanaged<CFError>?
-        guard let wrapped = SecKeyCreateEncryptedData(pub, algorithm, raw as CFData, &error) as Data? else {
-            return nil
-        }
-        return wrapped
-    }
-
     // MARK: - Opening (requires the user)
 
-    /// Unwraps a per-message key with `context`, or with the read context from
-    /// `authenticateForReading`; nil (never a prompt) when neither is available.
+    /// Unwraps a 3.1.1 per-message key with `context`, or with the read
+    /// context from `authenticateForReading`; nil (never a prompt) when
+    /// neither is available. TRANSITION: only the move to the core
+    /// (`Migration/`) opens 3.1.1 messages, and this goes with it.
     static func unwrap(_ wrapped: Data, for profileID: UUID, context: LAContext? = nil) -> SymmetricKey? {
         if isLockedOut { return nil }
         lock.lock()
@@ -308,6 +316,14 @@ enum MessageKeyStore {
         defer { lock.unlock() }
         if publicCache[profileID] != nil { return true }
         if loadStoredPublicKey(profileID) != nil { return true }
+        let status = privateKeyStatus(profileID)
+        return status == errSecSuccess || status == errSecInteractionNotAllowed
+    }
+
+    /// Whether the private key is in the Keychain, asked without prompting:
+    /// `errSecItemNotFound` is the only answer that means it is not. The
+    /// caller holds `lock`.
+    private static func privateKeyStatus(_ profileID: UUID) -> OSStatus {
         // Without interaction, a present item that needs a user answers
         // `errSecInteractionNotAllowed` instead of prompting.
         let probe: [String: Any] = [
@@ -323,7 +339,7 @@ enum MessageKeyStore {
                                             expectsPrompt: false) {
             SecItemCopyMatching(probe as CFDictionary, nil)
         }
-        return status == errSecSuccess || status == errSecInteractionNotAllowed
+        return status
     }
 
     /// Deletes the profile's key pair and stored public key. Call when the profile is deleted.
@@ -336,12 +352,14 @@ enum MessageKeyStore {
             kSecUseDataProtectionKeychain as String: true,
             kSecAttrApplicationTag as String: tag(profileID)
         ] as CFDictionary)
-        SecItemDelete([
-            kSecClass as String: kSecClassGenericPassword,
-            kSecUseDataProtectionKeychain as String: true,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: publicAccount(profileID)
-        ] as CFDictionary)
+        for account in [publicAccount(profileID), stateAccount(profileID)] {
+            SecItemDelete([
+                kSecClass as String: kSecClassGenericPassword,
+                kSecUseDataProtectionKeychain as String: true,
+                kSecAttrService as String: service,
+                kSecAttrAccount as String: account
+            ] as CFDictionary)
+        }
     }
 
     /// Forgets in-memory keys and the authentication (Keychain items survive).
@@ -487,17 +505,25 @@ final class MessageKeyGate: ObservableObject {
     @Published private(set) var isUnlocked = false
     /// Set once the user declined, so appearing views stop asking; `unlock(retry: true)` clears it.
     @Published private(set) var wasDeclined = false
-    private var inFlight = false
+    /// The attempt in progress; concurrent callers wait for it.
+    private var current: Task<Void, Never>?
 
     private init() {}
 
-    /// Asks once; concurrent callers share the prompt. An interrupted attempt
-    /// (a colliding prompt) is retried with backoff; only the user's refusal stops it.
+    /// Asks once; concurrent callers share the prompt and return when it
+    /// settles. An interrupted attempt (a colliding prompt) is retried with
+    /// backoff; only the user's refusal stops it.
     func unlock(reason: String = "Read your messages", retry: Bool = false) async {
         if retry { wasDeclined = false }
-        guard !isUnlocked, !inFlight, !wasDeclined else { return }
-        inFlight = true
-        defer { inFlight = false }
+        if let current { return await current.value }
+        guard !isUnlocked, !wasDeclined else { return }
+        let attempt = Task { await self.attempt(reason: reason) }
+        current = attempt
+        await attempt.value
+        current = nil
+    }
+
+    private func attempt(reason: String) async {
 
         for attempt in 0..<Self.maxInterruptedRetries {
             // SwiftUI cancels a `.task` when its view rebuilds; stop asking then.
@@ -567,5 +593,88 @@ extension LAContext {
         let context = LAContext()
         context.interactionNotAllowed = true
         return context
+    }
+}
+
+// MARK: - The core's device key
+
+/// What the core's `KeyVault` needs from the profile's Enclave key: its public
+/// half, which seals without the user, and one ECDH, which opens. The same key
+/// that wraps message keys today, with the same tier and the same session
+/// context, so moving to the core adds no key and no prompt.
+extension MessageKeyStore {
+    enum AgreementError: Error, Equatable {
+        /// No authenticated context: the user has not unlocked this session.
+        case locked
+        /// The profile has no Enclave key.
+        case missing
+        /// The Enclave refused (a key from another device, a bad point, …).
+        case refused(Int)
+    }
+
+    /// The device key's public half, X9.63 uncompressed (65 bytes), creating
+    /// the pair on first use. Never prompts.
+    static func devicePublicKey(for profileID: UUID) -> Data? {
+        guard let pub = publicKey(for: profileID) else { return nil }
+        return SecKeyCopyExternalRepresentation(pub, nil) as Data?
+    }
+
+    /// The core's state secret: 32 random bytes in the data protection
+    /// Keychain, readable while the device is unlocked, on this device only,
+    /// never synced, made on first use. It needs no prompt of its own: the
+    /// user's gate stays on the Enclave key, whose ECDH every read of `state`
+    /// also needs. What it adds is that `state` does not rest on P-256 alone.
+    static func stateSecret(for profileID: UUID) throws -> Data {
+        let item: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecUseDataProtectionKeychain as String: true,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: stateAccount(profileID)
+        ]
+        var query = item
+        query[kSecReturnData as String] = true
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecSuccess, let data = result as? Data, data.count == 32 { return data }
+        guard status == errSecItemNotFound else { throw AgreementError.refused(Int(status)) }
+        var secret = Data(count: 32)
+        let drawn = secret.withUnsafeMutableBytes { buffer -> OSStatus in
+            guard let base = buffer.baseAddress else { return errSecAllocate }
+            return SecRandomCopyBytes(kSecRandomDefault, 32, base)
+        }
+        guard drawn == errSecSuccess else { throw AgreementError.refused(Int(drawn)) }
+        var add = item
+        add[kSecValueData as String] = secret
+        add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        add[kSecAttrSynchronizable as String] = false
+        let added = SecItemAdd(add as CFDictionary, nil)
+        guard added == errSecSuccess else { throw AgreementError.refused(Int(added)) }
+        return secret
+    }
+
+    /// One ECDH between the device key and `ephemeralPublic` (X9.63), under the
+    /// session's authenticated context. Never prompts: without that context it
+    /// throws `.locked`, and the core asks the app for the unlock.
+    static func agree(ephemeralPublic: Data, for profileID: UUID) throws -> Data {
+        if isLockedOut { throw AgreementError.locked }
+        guard let context = sharedAuthenticatedContext() else { throw AgreementError.locked }
+        guard let priv = privateKeyRef(profileID, context: context) else {
+            throw hasKey(for: profileID) ? AgreementError.locked : AgreementError.missing
+        }
+        guard let peer = SecKeyCreateWithData(ephemeralPublic as CFData, [
+            kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
+            kSecAttrKeyClass as String: kSecAttrKeyClassPublic
+        ] as CFDictionary, nil) else { throw AgreementError.refused(Int(errSecParam)) }
+        var error: Unmanaged<CFError>?
+        let shared = BiometricAudit.measure("SecKeyCopyKeyExchangeResult",
+                                            item: "device key (core)",
+                                            expectsPrompt: false) {
+            SecKeyCopyKeyExchangeResult(priv, .ecdhKeyExchangeStandard, peer, [:] as CFDictionary, &error) as Data?
+        }
+        guard let shared else {
+            let code = (error?.takeRetainedValue()).map { CFErrorGetCode($0) } ?? 0
+            throw code == aclOperationNotAllowed ? AgreementError.locked : AgreementError.refused(code)
+        }
+        return shared
     }
 }

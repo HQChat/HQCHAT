@@ -1,6 +1,4 @@
 import SwiftUI
-import SwiftData
-import CryptoKit
 
 /// A message bubble's fill and stroke, in one place.
 enum HQBubble {
@@ -16,7 +14,7 @@ enum HQBubble {
 }
 
 struct MessageBubble: View {
-    let message: Message
+    let message: ChatMessage
     /// Called when the user taps a failed message. Nil where retry doesn't
     /// apply (previews, read-only contexts).
     var onRetry: (() -> Void)?

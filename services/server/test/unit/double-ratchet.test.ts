@@ -24,7 +24,7 @@ import {
   RATCHET_MIN_STEP_INTERVAL_MS,
   rootStep,
   walkChain,
-} from "../../src/protocol/double-ratchet";
+} from "../reference/protocol/double-ratchet";
 
 const V = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "helpers", "double-ratchet-vectors.json"), "utf8"));
 

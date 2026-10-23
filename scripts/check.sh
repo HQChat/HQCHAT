@@ -6,6 +6,7 @@
 #   scripts/check.sh integration      server against real Postgres + EMQX (DATABASE_URL, TEST_EMQX_*)
 #   scripts/check.sh scenarios        end-to-end user scenarios on a full local stack
 #   scripts/check.sh infra             Terraform policy tests and NixOS evaluation
+#   scripts/check.sh core              the Rust core: format, lints, tests, the Node addon
 #
 # Run inside `nix develop` so every tool is the pinned one.
 set -euo pipefail
@@ -37,17 +38,6 @@ finish() {
   return 1
 }
 
-# The committed Apple builds of HQC name the source they came from (a Nix store
-# path or git:<commit>:…); both carry the pinned commit's short id.
-apple_hqc_pinned() {
-  local pin
-  pin="$(sed -n 's/^PINNED_COMMIT=//p' "$root/native/hqc/HQC_UPSTREAM.txt")"
-  grep -q "${pin:0:7}" "$root/native/hqc/dist/apple/.source" || {
-    echo "native/hqc/dist/apple was not built from ${pin:0:7}: run native/hqc/build-apple.sh and commit it"
-    return 1
-  }
-}
-
 lint() {
   local shell_files
   mapfile -t shell_files < <(git -C "$root" ls-files '*.sh')
@@ -64,23 +54,20 @@ lint() {
   run "nixfmt" bash -c "cd '$root' && git ls-files '*.nix' | xargs nixfmt --check"
   run "statix" statix check "$root"
   run "deadnix" deadnix --fail "$root"
-  run "apple hqc build" apple_hqc_pinned
   run "names" "$root/scripts/lint-text.sh" names
   run "comments" "$root/scripts/lint-text.sh" comments
   finish
 }
 
-# The HQC library the server loads, built from the pinned source when HQC_LIB is unset.
-hqc() {
-  [[ -n "${HQC_LIB:-}" ]] && return 0
-  local ext=so
-  [[ "$(uname)" == Darwin ]] && ext=dylib
-  HQC_LIB="$(nix build "$root#hqc" --no-link --print-out-paths)/lib/libhqc_wrap.$ext"
-  export HQC_LIB
+# The core's Node addon the server loads, built by Nix when HQCHAT_NODE is unset.
+core_addon() {
+  [[ -n "${HQCHAT_NODE:-}" ]] && return 0
+  HQCHAT_NODE="$(nix build "$root#hqchat-node" --no-link --print-out-paths)/lib/hqchat_node.node"
+  export HQCHAT_NODE
 }
 
 unit() {
-  hqc
+  core_addon
   run "server unit" bash -c "cd '$server' && npm run --silent test:unit"
   run "envelope fuzz" bash -c "cd '$server' && npx tsx test/fuzz/envelope-v3-invariants.ts --iterations 200000 --seed ${FUZZ_SEED:-1}"
   run "http body fuzz" bash -c "cd '$server' && npx tsx test/fuzz/http-body.ts --iterations 400 --seed ${FUZZ_SEED:-1}"
@@ -90,7 +77,7 @@ unit() {
 }
 
 integration() {
-  hqc
+  core_addon
   : "${DATABASE_URL:?integration needs DATABASE_URL}"
   run "migrate" bash -c "cd '$server' && npm run --silent migrate"
   run "server integration" bash -c "cd '$server' && npm run --silent test:integration"
@@ -98,7 +85,7 @@ integration() {
 }
 
 scenarios() {
-  hqc
+  core_addon
   run "scenarios" bash "$server/test/scenarios/run-local.sh"
   finish
 }
@@ -111,7 +98,38 @@ infra() {
   finish
 }
 
-cmd="${1:?usage: scripts/check.sh lint|unit|integration|scenarios|infra}"
+# The Rust core (core/): every crate's tests, including the shared vectors,
+# and the Node addon against them and the TS hqn/1 initiator. Needs
+# HQC_SOURCE and the toolchain from `nix develop`, and the server's
+# node_modules for the addon tests.
+core() {
+  local test_lints
+  test_lints=$(printf -- '-A clippy::%s ' unwrap_used expect_used panic indexing_slicing string_slice \
+    arithmetic_side_effects as_conversions cast_possible_truncation cast_possible_wrap cast_sign_loss \
+    print_stdout print_stderr)
+  run "rustfmt" bash -c "cd '$root/core' && cargo fmt --check"
+  # Library code meets every lint in core/Cargo.toml. Tests may also unwrap,
+  # index, cast and do plain arithmetic: a panic there is a failed test.
+  run "clippy" bash -c "cd '$root/core' && cargo clippy --workspace --lib --bins --locked -- -D warnings"
+  run "clippy tests" bash -c "cd '$root/core' && cargo clippy --workspace --tests --locked -- -D warnings $test_lints"
+  run "cargo deny" bash -c "cd '$root/core' && cargo deny --locked check"
+  run "core tests" bash -c "cd '$root/core' && cargo test --locked"
+  run "node addon" bash -c "'$root/core/hqchat-node/build.sh' && cd '$server' && node --import tsx --test ../../core/hqchat-node/test/*.test.ts"
+  # Rust against TypeScript on mutated frames: same verdicts, same bytes.
+  run "verdict build" bash -c "cd '$root/core' && cargo build --locked --release -p hqchat-verdict"
+  local seed="${FUZZ_SEED:-1}" fuzz="npx tsx test/fuzz"
+  run "differential envelope" bash -c "cd '$server' && $fuzz/envelope-v3-differential.ts --iterations 50000 --seed $seed"
+  run "differential encode" bash -c "cd '$server' && $fuzz/envelope-v3-encode-differential.ts --iterations 50000 --seed $seed"
+  for mode in decode encode round; do
+    run "differential handshake $mode" bash -c "cd '$server' && $fuzz/handshake-differential.ts --mode $mode --iterations 10000 --seed $seed"
+  done
+  for mode in frames msg2; do
+    run "differential noise $mode" bash -c "cd '$server' && $fuzz/noise-differential.ts --mode $mode --iterations 10000 --seed $seed"
+  done
+  finish
+}
+
+cmd="${1:?usage: scripts/check.sh lint|unit|integration|scenarios|infra|core}"
 shift
 case "$cmd" in
   lint) lint "$@" ;;
@@ -119,6 +137,7 @@ case "$cmd" in
   integration) integration ;;
   scenarios) scenarios ;;
   infra) infra ;;
+  core) core ;;
   *)
     echo "unknown check: $cmd" >&2
     exit 2

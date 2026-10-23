@@ -5,8 +5,8 @@
  * effort: failures are logged and never fail the operation that triggered them.
  */
 
+import { core } from "../common/core";
 import { logger } from "../common/logger";
-import { conversationTopic, handshakeTopic } from "../protocol/topics";
 
 function credentials(): { key: string; secret: string } | null {
   const key = process.env.EMQX_API_KEY || "";
@@ -92,8 +92,8 @@ export const EMQX = {
     topics: { convoId: string; handshakeId: string },
   ): Promise<void> {
     await Promise.all([
-      EMQX.revokeTopic(idA, idB, conversationTopic(topics.convoId)),
-      EMQX.revokeTopic(idA, idB, handshakeTopic(topics.handshakeId)),
+      EMQX.revokeTopic(idA, idB, core.conversationTopic(topics.convoId)),
+      EMQX.revokeTopic(idA, idB, core.handshakeTopic(topics.handshakeId)),
     ]);
   },
 

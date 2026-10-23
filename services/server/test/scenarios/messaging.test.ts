@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ApiError, identityFromSeed, newSeed } from "../../src/client";
-import { encodeFrame } from "../../src/protocol/envelope";
-import { keyMatchesId, peerId } from "../../src/protocol/identity";
-import { inboxTopic } from "../../src/protocol/topics";
+import { ApiError, identityFromSeed, newSeed } from "../reference/client";
+import { encodeFrame } from "../reference/protocol/envelope";
+import { keyMatchesId, peerId } from "../reference/protocol/identity";
+import { inboxTopic } from "../reference/protocol/topics";
 import { friends, pause, signedUp, stackUp } from "./stack";
 
 test("a first message opens the session through the handshake challenge, both ways", async (t) => {

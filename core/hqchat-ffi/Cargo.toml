@@ -1,0 +1,66 @@
+[package]
+name = "hqchat-ffi"
+description = "The HQChat Engine for Swift and Kotlin (uniffi): the apps implement KeyVault and Store"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib", "staticlib", "lib"]
+name = "hqchat_ffi"
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+required-features = ["bindgen"]
+
+[features]
+# The binding generator: a build-machine tool, kept out of the library the
+# apps link.
+bindgen = ["uniffi/cli"]
+
+[dependencies]
+hqc = { path = "../hqc" }
+hqchat-engine = { path = "../hqchat-engine" }
+hqchat-protocol = { path = "../hqchat-protocol" }
+thiserror = "2"
+uniffi = "0.32"
+zeroize = "1"
+
+# No unsafe is written here. uniffi's macros expand to unsafe under their own
+# allow, which `forbid` rejects; `deny` still refuses any we write.
+[lints.rust]
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+missing_docs = "warn"
+unused_must_use = "deny"
+unused_qualifications = "warn"
+
+# The workspace set (see ../Cargo.toml); Cargo cannot inherit part of it.
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+todo = "warn"
+unimplemented = "warn"
+unreachable = "warn"
+indexing_slicing = "warn"
+string_slice = "warn"
+get_unwrap = "warn"
+arithmetic_side_effects = "warn"
+as_conversions = "warn"
+cast_possible_truncation = "warn"
+cast_possible_wrap = "warn"
+cast_sign_loss = "warn"
+cast_lossless = "warn"
+mem_forget = "warn"
+undocumented_unsafe_blocks = "warn"
+multiple_unsafe_ops_per_block = "warn"
+dbg_macro = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+exit = "warn"

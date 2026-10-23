@@ -1,6 +1,7 @@
 /**
  * noise-gw entrypoint: hqn/1 in front of EMQX's internal plain-TCP listener.
- * See gateway.ts for the threat model and protocol/noise.ts for the protocol.
+ * See gateway.ts for the threat model; the protocol is the core's
+ * (core/hqchat-protocol/src/noise.rs).
  *
  *   NOISE_GW_PORT         client listen port                     (8443)
  *   NOISE_GW_HOST         client listen address           (every interface)
@@ -8,7 +9,8 @@
  *   NOISE_GW_HEALTH_HOST  comma-separated addresses for it  (every interface)
  *   NOISE_KEYS_FILE       secret seeds, see keys.ts              (required)
  *   EMQX_TCP_HOST/PORT    the broker's internal TCP listener  (127.0.0.1:1883)
- *   NOISE_GW_WORKERS      decapsulation workers         (cpus - 1, at least 1)
+ *   NOISE_GW_WORKERS      decapsulations at once        (cpus - 1, at least 1;
+ *                         UV_THREADPOOL_SIZE bounds how many run in parallel)
  *   NOISE_GW_QUEUE        decapsulations allowed to wait            (64)
  */
 
@@ -29,9 +31,10 @@ if (require.main === module) {
   const healthPort = Number(process.env.NOISE_GW_HEALTH_PORT || process.env.PORT || 8081);
   const keysFile = process.env.NOISE_KEYS_FILE;
   if (!keysFile) throw new Error("NOISE_KEYS_FILE is required");
-  const keys = loadServerKeys(readKeySeeds(keysFile));
+  const seeds = readKeySeeds(keysFile);
+  const keys = loadServerKeys(seeds);
   const pool = new DecapPool(
-    [...keys.values()].map((k) => ({ keyId: k.keyId, sk: k.hqc.sk })),
+    keys,
     Number(process.env.NOISE_GW_WORKERS || Math.max(1, os.cpus().length - 1)),
     Number(process.env.NOISE_GW_QUEUE || 64),
   );

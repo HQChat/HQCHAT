@@ -1,7 +1,7 @@
 import type * as http from "node:http";
 import { DONATIONS_ENABLED } from "../common/config";
+import { core, isPeerId } from "../common/core";
 import { logger } from "../common/logger";
-import { isPeerId, PEER_ID_LENGTH } from "../protocol/identity";
 import { DB, type PushEnvironment, type PushPlatform, REPORT_CATEGORIES, type ReportCategory } from "./db/api";
 import { handleDonate } from "./donate";
 import { EMQX } from "./emqx";
@@ -16,10 +16,17 @@ import {
   requireString,
   send,
 } from "./http";
-import { displayNameFromSession, StripeService } from "./stripe";
+import { StripeService, type SupporterEvent, supporterFromEvent } from "./stripe";
 
 const HQC_PUBLIC_KEY_BYTES = 7237;
 const MAX_ONETIME_PER_UPLOAD = 8;
+/** Largest one-time prekey id: the column is a Postgres integer. */
+const MAX_PREKEY_ID = 2 ** 31 - 1;
+const PREKEY_UPLOADS_PER_DAY = Number(process.env.PREKEY_UPLOADS_PER_DAY || 30);
+const PREKEY_CLAIMS_PER_HOUR = Number(process.env.PREKEY_CLAIMS_PER_HOUR || 120);
+/** One-time prekeys one friend may take from another per window; later claims get the medium-term key. */
+const ONETIME_CLAIMS_PER_PAIR = 1;
+const ONETIME_CLAIM_WINDOW_SECONDS = 10 * 60;
 const MAX_PEER_IDENTIFIER = 128;
 const FRIEND_CAP = Number(process.env.FRIEND_CAP || 150);
 const INVITES_PER_DAY = Number(process.env.INVITES_PER_DAY || 20);
@@ -57,15 +64,47 @@ async function friendCapReached(id: string): Promise<boolean> {
   return (await DB.countFriends(id)) >= FRIEND_CAP;
 }
 
+/** C0 except tab and newline, DEL, C1. */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: matching control characters is the purpose
+const REPORT_TEXT_CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/;
+
+/**
+ * The reporter's own note. Control characters other than tab and newline are
+ * refused: the note is printed on the operator's terminal, where an escape
+ * sequence could rewrite the queue or the clipboard.
+ */
+function reportNote(body: Record<string, unknown>): string | null {
+  const value = optionalString(body, "note", { max: MAX_REPORT_NOTE });
+  if (value !== null && REPORT_TEXT_CONTROL.test(value)) {
+    throw new HttpError(400, "INVALID_FIELD", "note must not contain control characters");
+  }
+  return value;
+}
+
+/**
+ * The quoted message. Its text is the reported person's, so a control
+ * character in it must not make the report fail: each becomes U+FFFD.
+ */
+function reportExcerpt(body: Record<string, unknown>): string | null {
+  const value = optionalString(body, "excerpt", { max: MAX_REPORT_EXCERPT });
+  return value === null ? null : value.replace(new RegExp(REPORT_TEXT_CONTROL.source, "g"), "\ufffd");
+}
+
 function reportMessageId(body: Record<string, unknown>): string | null {
   const value = optionalString(body, "messageId", { max: MAX_REPORT_MESSAGE_ID_BYTES });
   if (value === null) return null;
-  const hasControl = [...value].some((c) => c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f);
+  // C1 too: the database's [[:cntrl:]] check refuses it, and a 400 says why.
+  const hasControl = [...value].some(
+    (c) => c.charCodeAt(0) < 0x20 || (c.charCodeAt(0) >= 0x7f && c.charCodeAt(0) <= 0x9f),
+  );
   if (Buffer.byteLength(value, "utf8") > MAX_REPORT_MESSAGE_ID_BYTES || hasControl) {
     throw new HttpError(400, "INVALID_FIELD", "messageId must be at most 128 bytes with no control characters");
   }
   return value;
 }
+
+/** The refusals `setUsername` names; any other error is not the client's to read. */
+const USERNAME_REFUSALS = new Set(["USERNAME_RESERVED", "INVALID_USERNAME", "UNKNOWN_IDENTITY"]);
 
 /** Routes that need a session, keyed by "METHOD path". */
 const authenticated: Record<string, Route> = {
@@ -76,7 +115,8 @@ const authenticated: Record<string, Route> = {
     } catch (e) {
       const code = (e as Error).message;
       if (code === "USERNAME_TAKEN") throw new HttpError(409, code, "That username is taken");
-      throw new HttpError(400, code, "That username is not allowed");
+      if (USERNAME_REFUSALS.has(code)) throw new HttpError(400, code, "That username is not allowed");
+      throw e; // anything else is a 500 with no detail
     }
     ok(res, { username });
   },
@@ -112,8 +152,11 @@ const authenticated: Record<string, Route> = {
     const fromId = await peerArg(req, "from");
     if (!fromId) return send(res, 400, { ok: false });
     if (await DB.isBlocked(id, fromId)) return send(res, 404, { error: "NOT_FOUND" });
-    if (await friendCapReached(fromId)) return send(res, 409, { error: "FRIEND_LIMIT", limit: FRIEND_CAP, peer: true });
-    if (!(await DB.acceptInvite(fromId, id))) return send(res, 400, { ok: false });
+    // The cap is enforced again inside the accept, where concurrent accepts cannot race it.
+    const outcome = await DB.acceptInvite(fromId, id, FRIEND_CAP);
+    if (outcome === "full") return send(res, 409, { error: "FRIEND_LIMIT", limit: FRIEND_CAP });
+    if (outcome === "peer-full") return send(res, 409, { error: "FRIEND_LIMIT", limit: FRIEND_CAP, peer: true });
+    if (outcome === "no-invite") return send(res, 400, { ok: false });
     await EMQX.notifyGraphChanged([fromId, id]);
     const topics = await DB.getFriendshipTopics(id, fromId);
     ok(res, topics ? { friend: { id: fromId, convo_id: topics.convoId, handshake_id: topics.handshakeId } } : {});
@@ -165,7 +208,8 @@ const authenticated: Record<string, Route> = {
     }
     const body = await readJson(req);
     const conversation = requireHex(body, "conversation", 32).toLowerCase();
-    const members = await DB.getTopicMembers(conversation);
+    // An ended friendship still counts for a while, so unfriending first does not make abuse unreportable.
+    const members = await DB.reportableMembers(conversation);
     if (members.length !== 2) return send(res, 404, { error: "NO_CONVERSATION" });
     if (!members.includes(id)) return send(res, 403, { error: "NOT_A_MEMBER" });
     const reportedId = members[0] === id ? members[1]! : members[0]!;
@@ -181,16 +225,23 @@ const authenticated: Record<string, Route> = {
       reportedId,
       conversationId: conversation,
       category: category as ReportCategory,
-      note: optionalString(body, "note", { max: MAX_REPORT_NOTE }),
-      excerpt: optionalString(body, "excerpt", { max: MAX_REPORT_EXCERPT }),
+      note: reportNote(body),
+      excerpt: reportExcerpt(body),
       frame: optionalBase64(body, "frame", MAX_REPORT_FRAME_BYTES),
       messageId: reportMessageId(body),
     });
-    logger.event(`[report] filed ${reportId}: ${category} against ${reportedId.slice(0, 12)}…`);
+    // Every report is a journal line; Sentry gets the first and then a count per window.
+    logger.eventBatched(
+      "[report] reports filed",
+      `[report] filed ${reportId}: ${category} against ${reportedId.slice(0, 12)}…`,
+    );
     ok(res, { id: reportId });
   },
 
   "POST /prekeys": async ({ req, res, id }) => {
+    if (!(await withinDailyLimit(`prekeys:day:${id}`, PREKEY_UPLOADS_PER_DAY))) {
+      return send(res, 429, { error: "RATE_LIMITED", limit: PREKEY_UPLOADS_PER_DAY });
+    }
     const body = await readJson(req);
     const medium = requireHex(body, "medium", HQC_PUBLIC_KEY_BYTES);
     const raw: unknown[] = Array.isArray(body.oneTime) ? body.oneTime : [];
@@ -199,19 +250,24 @@ const authenticated: Record<string, Route> = {
     }
     const oneTime = raw.map((entry, i) => {
       const item = entry as Record<string, unknown>;
-      if (!Number.isInteger(item?.id) || (item.id as number) < 0) {
-        throw new HttpError(400, "INVALID_FIELD", `oneTime[${i}].id must be a non-negative integer`);
+      if (!Number.isInteger(item?.id) || (item.id as number) < 0 || (item.id as number) > MAX_PREKEY_ID) {
+        throw new HttpError(400, "INVALID_FIELD", `oneTime[${i}].id must be an integer in 0..${MAX_PREKEY_ID}`);
       }
       return { id: item.id as number, prekey: requireHex(item, "prekey", HQC_PUBLIC_KEY_BYTES) };
     });
-    await DB.putPrekeyBundle(id, medium, oneTime);
-    ok(res, { accepted: oneTime.length });
+    ok(res, { accepted: await DB.putPrekeyBundle(id, medium, oneTime) });
   },
 
   "POST /prekeys/claim": async ({ req, res, id }) => {
+    if ((await DB.bumpCounter(`prekeys:claim:${id}`, 60 * 60)) > PREKEY_CLAIMS_PER_HOUR) {
+      return send(res, 429, { error: "RATE_LIMITED", limit: PREKEY_CLAIMS_PER_HOUR });
+    }
     const peer = await peerArg(req, "peer");
     if (!peer || !(await DB.areFriends(id, peer))) return send(res, 403, { error: "NOT_FRIENDS" });
-    const claimed = await DB.claimPrekey(peer);
+    // One friend cannot drain another's pool: past the per-pair allowance a
+    // claim still gets the medium-term key, and the one-time keys stay for others.
+    const pairClaims = await DB.bumpCounter(`prekeys:pair:${id}:${peer}`, ONETIME_CLAIM_WINDOW_SECONDS);
+    const claimed = await DB.claimPrekey(peer, pairClaims <= ONETIME_CLAIMS_PER_PAIR);
     if (!claimed) return send(res, 404, { error: "NO_PREKEYS" });
     send(res, 200, claimed);
   },
@@ -232,15 +288,25 @@ const authenticated: Record<string, Route> = {
     if (environment !== "production" && environment !== "sandbox") {
       throw new HttpError(400, "INVALID_FIELD", "environment is production or sandbox");
     }
-    const token = requireString(body, "token", { min: 8, max: 512 });
-    await DB.setPushToken(id, platform as PushPlatform, environment as PushEnvironment, token);
+    // An APNs device token is hex; it is put into the request path sent to Apple.
+    const token = requireString(body, "token", { min: 64, max: 200 });
+    if (!/^[0-9a-fA-F]+$/.test(token))
+      throw new HttpError(400, "INVALID_FIELD", "token must be an APNs device token (hex)");
+    await DB.setPushToken(id, platform as PushPlatform, environment as PushEnvironment, token.toLowerCase());
     ok(res);
   },
 
   "POST /account/delete": async ({ req, res, id }) => {
+    const friends = await DB.getFriendsList(id);
     await DB.deleteUser(id);
     await DB.revokeSessionToken(bearer(req));
     await EMQX.kick(id);
+    // Former friends are taken off the retired topics and told to refetch,
+    // as for an unfriend, rather than finding out at their next poll.
+    await Promise.all(
+      friends.map((f) => EMQX.revokeFriendshipTopics(id, f.id, { convoId: f.convo_id, handshakeId: f.handshake_id })),
+    );
+    await EMQX.notifyGraphChanged(friends.map((f) => f.id));
     ok(res);
   },
 };
@@ -256,9 +322,14 @@ async function publicRoute(res: http.ServerResponse, method: string, url: string
   } else {
     const peerKey = url.match(/^\/peer\/([^/?]+)\/key$/);
     if (!peerKey) return false;
-    const id = decodeURIComponent(peerKey[1]!).toLowerCase();
+    let id: string;
+    try {
+      id = decodeURIComponent(peerKey[1]!).toLowerCase();
+    } catch {
+      throw new HttpError(400, "INVALID_FIELD", "id is not a valid URL path segment");
+    }
     if (!isPeerId(id))
-      throw new HttpError(400, "INVALID_FIELD", `id must be ${PEER_ID_LENGTH} lowercase hex characters`);
+      throw new HttpError(400, "INVALID_FIELD", `id must be ${core.PEER_ID_LENGTH} lowercase hex characters`);
     const publicKey = await DB.identityKey(id);
     if (publicKey) send(res, 200, { id, publicKey });
     else send(res, 404, { error: "UNKNOWN_PEER" });
@@ -272,10 +343,8 @@ function stripeWebhook(req: http.IncomingMessage, res: http.ServerResponse): voi
   req.on("end", async () => {
     try {
       const event = StripeService.constructEvent(Buffer.concat(chunks), String(req.headers["stripe-signature"] || ""));
-      if (event.type === "checkout.session.completed") {
-        const name = displayNameFromSession(event.data.object);
-        if (name) await DB.recordSupporter(name);
-      }
+      const name = supporterFromEvent(event as unknown as SupporterEvent);
+      if (name) await DB.recordSupporter(name);
       res.writeHead(200).end("ok");
     } catch (e) {
       logger.error(`[stripe-webhook] ${(e as Error).message}`);

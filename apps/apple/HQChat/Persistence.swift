@@ -1,4 +1,6 @@
+import CryptoKit
 import Foundation
+import SQLite3
 import SwiftData
 
 struct PersistenceController {
@@ -15,48 +17,29 @@ struct PersistenceController {
         #endif
     }
 
-    @MainActor
-    static let preview: ModelContainer = {
-        let config = ModelConfiguration(isStoredInMemoryOnly: true)
-        let container = try! ModelContainer(for: Profile.self, Friend.self, Message.self, PendingFrame.self,
-                                       configurations: config)
-        
-        // Add sample data for preview
-        let sampleProfile = Profile(username: "tester", publicKeyHex: Data(count: 7237).hexString)
-        container.mainContext.insert(sampleProfile)
-        
-        let samplePk = Data(count: 7237)
-        let sampleFriend = Friend(username: "alice",
-                                  peerID: PeerID.from(publicKey: samplePk),
-                                  publicKey: samplePk,
-                                  profile: sampleProfile)
-        container.mainContext.insert(sampleFriend)
-        
-        let sampleMessage = Message(content: "Hello!", isOutgoing: false, friend: sampleFriend)
-        container.mainContext.insert(sampleMessage)
-        
-        return container
-    }()
-    
     let container: ModelContainer
     
     init() {
+        // The 3.1.1 models stay in the schema until Migration/ goes: the move
+        // reads and deletes their rows.
         let schema = Schema([Profile.self, Friend.self, Message.self, PendingFrame.self])
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: Self.isDemo)
+        if !Self.isDemo {
+            Self.compactIfAsked(config.url)
+        }
 
         do {
             container = try ModelContainer(for: schema, configurations: [config])
+            if !Self.isDemo {
+                Self.openedStoreURL = config.url
+                Self.protectStoreFiles(config.url)
+            }
             // Encrypt the store at rest. iOS supports per-file Data Protection
             // (applied below). macOS has no FileProtectionType equivalent, so on
             // the Mac the store relies on FileVault for at-rest encryption — but
             // the identity seed/secret key are never written to this store
             // regardless (they live in the Keychain; see H1), so a readable store
             // does not expose key material.
-            #if os(iOS)
-            if !Self.isDemo {
-                Self.applyFileProtection(to: config.url)
-            }
-            #endif
             if Self.isDemo {
                 Self.seedDemoData(into: container)
             }
@@ -74,6 +57,88 @@ struct PersistenceController {
             Note: All profiles, friends, and messages will be lost if you delete the database.
             """)
         }
+    }
+
+    // MARK: - The store's files
+
+    /// The on-disk store this process opened; nil in demo mode and in tests,
+    /// whose containers are their own.
+    private static var openedStoreURL: URL?
+
+    /// The store's file and its WAL/SHM sidecars.
+    private static func storeFiles(_ url: URL) -> [URL] {
+        [url, URL(fileURLWithPath: url.path + "-wal"), URL(fileURLWithPath: url.path + "-shm")]
+    }
+
+    /// Out of iCloud and Finder backups, and (on iOS) encrypted at rest. It
+    /// holds the profile list, and for a profile not yet moved to the core,
+    /// 3.1.1 rows with the conversation topics that grant access to them.
+    /// None of it is any use elsewhere: the keys it goes with never leave
+    /// this device. Applied to the files that exist, so it runs at launch and
+    /// again after the store is written for the move.
+    static func protectStoreFiles(_ url: URL) {
+        for var file in storeFiles(url) where FileManager.default.fileExists(atPath: file.path) {
+            var values = URLResourceValues()
+            values.isExcludedFromBackup = true
+            do {
+                try file.setResourceValues(values)
+            } catch {
+                Log.storage.warning("[Persistence] ⚠️ Could not exclude \(file.lastPathComponent) from backups: \(String(describing: error))")
+            }
+        }
+        #if os(iOS)
+        applyFileProtection(to: url)
+        #endif
+    }
+
+    /// Asks for the store to be compacted at the next launch: SQLite leaves a
+    /// deleted row's bytes in free pages and in the WAL, and the 3.1.1 rows
+    /// held topic ids. Called once those rows are deleted.
+    static func storeNeedsCompacting() {
+        guard let url = openedStoreURL else { return }
+        protectStoreFiles(url)
+        let marker = compactMarker(url)
+        if !FileManager.default.createFile(atPath: marker.path, contents: Data()) {
+            Log.storage.warning("[Persistence] ⚠️ Could not ask for the store to be compacted")
+        }
+    }
+
+    private static func compactMarker(_ url: URL) -> URL {
+        URL(fileURLWithPath: url.path + ".compact")
+    }
+
+    /// Runs the compaction `storeNeedsCompacting` asked for, before anything
+    /// opens the store. The marker stays when it fails, so the next launch
+    /// tries again.
+    private static func compactIfAsked(_ url: URL) {
+        let marker = compactMarker(url)
+        guard FileManager.default.fileExists(atPath: marker.path) else { return }
+        guard compactStore(at: url) else { return }
+        do {
+            try FileManager.default.removeItem(at: marker)
+        } catch {
+            Log.storage.warning("[Persistence] ⚠️ Could not clear the compaction request: \(String(describing: error))")
+        }
+    }
+
+    /// Rewrites the store with nothing in it but live rows: the WAL is folded
+    /// in and truncated, then VACUUM rebuilds the file, then the WAL is
+    /// truncated again. Nothing else may have the store open.
+    static func compactStore(at url: URL) -> Bool {
+        var db: OpaquePointer?
+        defer { sqlite3_close(db) }
+        guard sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK, let db else {
+            Log.storage.error("[Persistence] ❌ Could not open the store to compact it")
+            return false
+        }
+        for sql in ["PRAGMA wal_checkpoint(TRUNCATE)", "VACUUM", "PRAGMA wal_checkpoint(TRUNCATE)"] {
+            guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else {
+                Log.storage.error("[Persistence] ❌ Compacting the store failed at \(sql): \(String(cString: sqlite3_errmsg(db)))")
+                return false
+            }
+        }
+        Log.storage.info("[Persistence] 🧹 store compacted")
+        return true
     }
 
     #if os(iOS)
@@ -95,79 +160,47 @@ struct PersistenceController {
     }
     #endif
 
-    /// An inert session, so demo contacts derive `hasSession == true` the same
-    /// way a real one does. The key material is zeroed — nothing in the demo
-    /// encrypts anything, and random bytes here would only look like secrets.
-    private static func demoSession() -> RatchetSessionState {
-        RatchetSessionState(
-            root: Data(count: 32),
-            rkPub: Data(count: 32),
-            rkSec: Data(count: 32),
-            peerRkPub: Data(count: 32),
-            send: RatchetChain(ck: Data(count: 32), n: 0),
-            recv: RatchetChain(ck: Data(count: 32), n: 0),
-            prevSendN: 0,
-            skipped: [],
-            seenChains: [],
-            sentOnChain: 0,
-            chainStartedAt: Date()
-        )
-    }
-
-    /// Populate the demo store with a believable conversation set.
+    /// The demo profile, so the profile chrome has something to show.
     static func seedDemoData(into container: ModelContainer) {
         let context = ModelContext(container)
-        let profile = Profile(username: "alexrivera",
-                              publicKeyHex: Data(count: 7237).hexString)
+        let profile = Profile(username: "alexrivera", publicKeyHex: "")
+        profile.clientID = String(repeating: "a1", count: 32)
         profile.isActive = true
         context.insert(profile)
+        try? context.save()
+    }
 
-        func friend(_ name: String, online: Bool, secure: Bool) -> Friend {
-            // A real-size key, and the id it commits to. Deriving rather than
-            // inventing keeps the demo store internally consistent: a screenshot
-            // taken from it shows an id that really is the hash of the key beside
-            // it, which is the invariant every other layer relies on.
-            let pk = Data((0..<7237).map { _ in UInt8.random(in: 0...255) })
-            let f = Friend(username: name,
-                           peerID: PeerID.from(publicKey: pk),
-                           publicKey: pk,
-                           isOnline: online,
-                           inviteStatus: .accepted,
-                           profile: profile)
-            context.insert(f)
-            // A contact is ready when it has a ratchet session, so the demo writes a real
-            // (inert) session.
-            if secure { f.ratchetSession = Self.demoSession() }
-            return f
+    /// A believable conversation set, served by a store with no engine.
+    @MainActor
+    static func demoStore() -> ChatStore {
+        func id(_ name: String) -> String {
+            SHA256.hash(data: Data(name.utf8)).map { String(format: "%02x", $0) }.joined()
         }
-
-        let sarah = friend("sarah_k", online: true, secure: true)
-        _ = friend("mike99", online: true, secure: true)
-        _ = friend("elena.m", online: false, secure: true)
-        _ = friend("tom_dev", online: false, secure: false)
-        // An invite we sent: a handle and nothing else (`Friend.isPending`).
-        let pending = Friend(username: "jordan",
-                             isOnline: true,
-                             inviteStatus: .inviteReceived,
-                             profile: profile)
-        context.insert(pending)
-
-        // A short conversation with Sarah.
+        let sarah = id("sarah_k")
         let now = Date()
-        let convo: [(String, Bool, TimeInterval, Message.DeliveryStatus)] = [
+        let convo: [(String, Bool, TimeInterval, ChatMessage.DeliveryStatus)] = [
             ("Hey! Did the post-quantum keys sync ok?", false, -3600, .sent),
             ("Yep — handshake went through, fully encrypted 🔒", true, -3500, .delivered),
             ("Nice. Calling you in a bit to test voice", false, -3400, .sent),
             ("Standing by 👍", true, -3300, .delivered),
-            ("Sent you the build too", true, -120, .queued)
+            ("Sent you the build too", true, -120, .queued),
         ]
-        for (text, outgoing, offset, status) in convo {
-            let m = Message(content: text, isOutgoing: outgoing, friend: sarah,
-                            messageId: UUID().uuidString, deliveryStatus: status)
-            m.timestamp = now.addingTimeInterval(offset)
-            context.insert(m)
+        let messages = convo.map { text, outgoing, offset, status in
+            ChatMessage(id: UUID().uuidString, peer: sarah, isOutgoing: outgoing, content: text,
+                        timestamp: now.addingTimeInterval(offset), deliveryStatus: status)
         }
-
-        try? context.save()
+        func friend(_ name: String, online: Bool, secure: Bool) -> Contact {
+            Contact(peerID: id(name), username: name, inviteStatus: .accepted, isOnline: online,
+                    hasSession: secure, hasPinnedKey: true,
+                    lastMessage: name == "sarah_k" ? messages.last : nil)
+        }
+        let contacts = [
+            friend("sarah_k", online: true, secure: true),
+            friend("mike99", online: true, secure: true),
+            friend("elena.m", online: false, secure: true),
+            friend("tom_dev", online: false, secure: false),
+            Contact(peerID: id("jordan"), username: "jordan", inviteStatus: .inviteReceived),
+        ]
+        return ChatStore(demo: contacts, conversations: [sarah: messages], myID: id("alexrivera"))
     }
 }

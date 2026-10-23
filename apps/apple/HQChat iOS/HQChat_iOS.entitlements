@@ -4,5 +4,12 @@
 <dict>
 	<key>aps-environment</key>
 	<string>production</string>
+	<!-- Every file the app writes is unreadable while the device is locked,
+	     unless it says otherwise: the SwiftData store (completeUnlessOpen,
+	     Persistence.swift) and the core's store (completeUntilFirstUser-
+	     Authentication, CoreShell/FileStore.swift), which a push may need
+	     while locked. -->
+	<key>com.apple.developer.default-data-protection</key>
+	<string>NSFileProtectionComplete</string>
 </dict>
 </plist>

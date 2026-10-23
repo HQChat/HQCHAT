@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import SwiftData
 
@@ -16,7 +17,11 @@ final class Profile {
     /// means the build's default server. A profile is an
     /// identity + a home server, so each profile can live on a different server.
     var serverURL: String?
+    /// This identity's client id, as the core reports it. Nil on a profile
+    /// from before the core, until the move fills it in.
+    var clientID: String?
 
+    /// 3.1.1 rows, until the move to the core deletes them (`Migration/`).
     @Relationship(deleteRule: .cascade) var friends: [Friend]?
 
     init(username: String, publicKeyHex: String, serverURL: String? = nil) {
@@ -53,20 +58,18 @@ final class Profile {
         return raw.split(separator: "/").first.map(String.init)
     }
     
-    /// Get public key as Data
+    /// The 3.1.1 identity public key, until the move; empty after.
     var publicKey: Data? {
-        return Data(hexString: publicKeyHex)
+        publicKeyHex.isEmpty ? nil : Data(hexString: publicKeyHex)
     }
 
-    /// This identity's CLIENT ID — `sha256(lowercase-hex(publicKeyHex))`.
-    ///
-    /// What the server, the broker and every peer call this profile: the MQTT
-    /// client id and username, the owner of `u/{id}/presence`, and the `sender`
-    /// on every frame it publishes. Derived rather than stored, because it is a
-    /// pure function of a column that never changes — a stored copy could only
-    /// ever be a way for the two to disagree.
+    /// This identity's client id — `sha256(lowercase-hex(publicKey))`: what the
+    /// server, the broker and every peer call this profile. The core's answer,
+    /// or derived from the 3.1.1 key before the move.
     var peerID: String {
-        PeerID.from(publicKeyHex: publicKeyHex)
+        if let clientID { return clientID }
+        guard !publicKeyHex.isEmpty else { return "" }
+        return SHA256.hash(data: Data(publicKeyHex.lowercased().utf8)).map { String(format: "%02x", $0) }.joined()
     }
 }
 

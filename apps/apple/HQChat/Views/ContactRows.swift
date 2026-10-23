@@ -7,7 +7,7 @@ import SwiftUI
 /// presence/encryption state. Actions are injected so the same row serves the
 /// conversation list, the contact list, and the pending-invite section.
 struct ContactRow: View {
-    let friend: Friend
+    let friend: Contact
     /// Conversation rows (Chats tab) show the last message, its time and the
     /// unread badge. Contact rows (Contacts tab) show identity and presence.
     var style: Style = .contact
@@ -17,12 +17,10 @@ struct ContactRow: View {
     enum Style { case conversation, contact }
 
     /// Unread incoming messages in this conversation, for the row badge.
-    private var unreadCount: Int { (friend.messages ?? []).filter(\.isUnread).count }
+    private var unreadCount: Int { friend.unread }
 
     /// The most recent message either way, for the preview line.
-    private var lastMessage: Message? {
-        (friend.messages ?? []).max(by: { $0.timestamp < $1.timestamp })
-    }
+    private var lastMessage: ChatMessage? { friend.lastMessage }
 
     /// One line of the last message, prefixed `you:` when it is ours.
     private var preview: String? {
@@ -141,7 +139,7 @@ struct ContactRow: View {
             Text("wants to connect")
                 .font(HQFont.mono(11.5, weight: .medium))
                 .foregroundColor(HQColor.purpleLight)
-        case .accepted, .none:
+        case .accepted:
             // A vanished identity has no presence and no session to describe —
             // it is gone. Showing "offline · setting up" for it was the bug this
             // row had all along: key-change state was visible ONLY after opening

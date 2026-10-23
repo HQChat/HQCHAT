@@ -17,12 +17,12 @@
 import assert from "node:assert/strict";
 import * as crypto from "node:crypto";
 import { test } from "node:test";
-import type { Friend } from "../../src/client/api";
-import { Conversations, type Outbound } from "../../src/client/conversation";
-import { MemoryStore } from "../../src/client/store";
-import { HANDSHAKE_TRANSCRIPT_BYTES, initTranscript } from "../../src/protocol/handshake";
-import { peerId } from "../../src/protocol/identity";
-import type { InitHeader, Kem } from "../../src/protocol/ratchet";
+import type { Friend } from "../reference/client/api";
+import { Conversations, type Outbound } from "../reference/client/conversation";
+import { MemoryStore } from "../reference/client/store";
+import { HANDSHAKE_TRANSCRIPT_BYTES, initTranscript } from "../reference/protocol/handshake";
+import { peerId } from "../reference/protocol/identity";
+import type { InitHeader, Kem } from "../reference/protocol/ratchet";
 
 const PK = 7237;
 const SK = 7333;

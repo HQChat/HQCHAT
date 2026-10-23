@@ -31,6 +31,18 @@ apps/apple/tests/.coverage/
 tfplan
 tfplan.json
 
-# Built from native/hqc (nix build .#hqc). The Apple builds of it
-# (native/hqc/dist/apple, apps/apple/libhqc_wrap.dylib) are committed.
+# Built from native/hqc (nix build .#hqc). The apps get HQC through the
+# Rust core (core/swift/HQChatCore).
 native/hqc/result
+
+# Cargo build output
+core/target/
+
+# The core's Apple libraries: built by core/hqchat-ffi/build-apple.sh, locally
+# and by the Apple release workflow, never committed. The generated bindings
+# (core/swift/HQChatCore/Sources) are.
+core/swift/HQChatCore/HQChatCoreFFI.xcframework/
+core/swift/HQChatCore/.built-from
+
+# The Node addon, built by core/hqchat-node/build.sh
+core/hqchat-node/hqchat_node.node

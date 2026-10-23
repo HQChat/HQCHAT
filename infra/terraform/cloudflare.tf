@@ -20,10 +20,11 @@ resource "cloudflare_record" "origin" {
   zone_id  = local.zone_id
   name     = each.value
   type     = "A"
-  content  = digitalocean_droplet.host["app"].ipv4_address
-  proxied  = true
-  ttl      = 1
-  comment  = "${local.name} origin"
+  # Marked sensitive so a plan or apply log never shows the origin's address.
+  content = sensitive(digitalocean_droplet.host["app"].ipv4_address)
+  proxied = true
+  ttl     = 1
+  comment = "${local.name} origin"
 }
 
 resource "cloudflare_record" "hqn" {
@@ -43,7 +44,7 @@ resource "cloudflare_zone_settings_override" "this" {
     ssl                      = "strict"
     always_use_https         = "on"
     automatic_https_rewrites = "on"
-    min_tls_version          = "1.2"
+    min_tls_version          = "1.3"
     tls_1_3                  = "on"
     websockets               = "on"
     brotli                   = "on"
@@ -57,6 +58,63 @@ resource "cloudflare_zone_settings_override" "this" {
       include_subdomains = true
       preload            = true
       nosniff            = true
+    }
+  }
+}
+
+# Zone-wide records and rules belong to the environment that owns the zone
+# settings, like the settings themselves.
+locals {
+  zone_owner = local.env.cloudflare.zoneSettings
+  # The CAs Cloudflare's edge certificates come from; Cloudflare adds its own
+  # CAA entries for them too. The origin certificate is Cloudflare's private
+  # Origin CA and is not subject to CAA.
+  caa_issuers = try(local.env.cloudflare.caaIssuers, ["letsencrypt.org", "pki.goog", "ssl.com"])
+}
+
+# DNSSEC for the zone; the DS record at the registrar is set by hand.
+resource "cloudflare_zone_dnssec" "this" {
+  count   = local.zone_owner ? 1 : 0
+  zone_id = local.zone_id
+}
+
+# Only these CAs may issue for the zone: the apps trust any public CA for the
+# API host, so a mis-issued certificate is otherwise accepted.
+resource "cloudflare_record" "caa" {
+  for_each = local.zone_owner ? toset(local.caa_issuers) : toset([])
+  zone_id  = local.zone_id
+  name     = "@"
+  type     = "CAA"
+  ttl      = 3600
+  comment  = "${local.name} CAA"
+  data {
+    flags = 0
+    tag   = "issue"
+    value = each.value
+  }
+}
+
+# Per-address limits at the edge for sign-in and the username lookup, on top
+# of the origin's own. Rate-limiting rules depend on the Cloudflare plan, so
+# an environment turns them on (cloudflare.rateLimit); the free plan allows
+# one rule with a 10 s period and a 10 s block.
+resource "cloudflare_ruleset" "rate_limit" {
+  count   = local.zone_owner && try(local.env.cloudflare.rateLimit, false) ? 1 : 0
+  zone_id = local.zone_id
+  name    = "${local.name} rate limits"
+  kind    = "zone"
+  phase   = "http_ratelimit"
+
+  rules {
+    description = "sign-in and username lookup"
+    expression  = "(starts_with(http.request.uri.path, \"/auth/\") or http.request.uri.path eq \"/users\")"
+    action      = "block"
+    enabled     = true
+    ratelimit {
+      characteristics     = ["ip.src", "cf.colo.id"]
+      period              = 10
+      requests_per_period = 50
+      mitigation_timeout  = 10
     }
   }
 }

@@ -1,4 +1,4 @@
-// The v1 MQTT CONNECT proof's pure half (src/protocol/mqtt-proof.ts): the signed bytes,
+// The v1 MQTT CONNECT proof's pure half (test/reference/protocol/mqtt-proof.ts): the signed bytes,
 // the password grammar, the timestamp window. The auth hook that uses them is
 // driven end to end, against a real database, in auth-routes.test.ts.
 //
@@ -22,7 +22,7 @@ import {
   parseProofPassword,
   proofMessage,
   verifyProofSignature,
-} from "../../src/protocol/mqtt-proof";
+} from "../reference/protocol/mqtt-proof";
 
 const vectors = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "helpers", "mqtt-proof-vectors.json"), "utf8"));
 
@@ -142,7 +142,7 @@ test("only a real 32-byte Ed25519 key is a key", () => {
 
 test("newSigningKey + signConnect produce passwords the verifier accepts, fresh each time", () => {
   const { newSigningKey, signConnect } =
-    require("../../src/protocol/mqtt-proof") as typeof import("../../src/protocol/mqtt-proof");
+    require("../reference/protocol/mqtt-proof") as typeof import("../reference/protocol/mqtt-proof");
   const k = newSigningKey();
   const pub = Buffer.from(k.publicKeyB64, "base64");
   assert.equal(pub.length, 32);

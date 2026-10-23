@@ -32,7 +32,9 @@ enum Deployment {
 
     /// SHA-256 of the server's SubjectPublicKeyInfo, base64: the TLS pins.
     ///
-    /// Empty means system trust only. A wrong pin locks every installed copy out
+    /// Empty means system trust only. An entry that is not a base64 SHA-256
+    /// digest refuses every connection rather than pinning less: see
+    /// `PinPolicy`. A wrong pin locks every installed copy out
     /// with no server-side fix, so before filling this in
     /// (`scripts/compute-spki-pins.sh` prints candidates):
     ///
@@ -44,18 +46,12 @@ enum Deployment {
     /// Overridable per build with the Info.plist array `ServerPinnedSPKIHashes`.
     static let pinnedSPKIHashes: [String] = []
 
-    /// The default server's hqn/1 gateway: host, port and its pinned static public
-    /// keys. Empty means the build relies on `GET /auth/transport` discovery, and
-    /// connects over WSS when nothing is discovered. Fill from
-    /// `services/server/scripts/noise-gw-keys.ts --public` (current and next key id).
-    static let hqnHost: String? = nil
-    static let hqnPort: UInt16 = 443
-    static let hqnKeys: [NoiseHQN.ServerKeys] = []
-
-    static func hqnEndpoint(forHost host: String) -> HQNEndpoint? {
-        guard host == serverHost, let h = hqnHost, !hqnKeys.isEmpty else { return nil }
-        return HQNEndpoint(host: h, port: hqnPort, keys: hqnKeys)
-    }
+    /// Fingerprints of the hqn/1 gateway keys this build trusts, as the
+    /// gateway's key pair prints them (`GatewayKeyPair.fingerprint()`).
+    /// Empty: the key `/auth/transport` serves is taken on TLS alone. With
+    /// entries, a served key not listed is refused and the app keeps to WSS,
+    /// so list the next key here before the gateway rotates to it.
+    static let hqnKeyPins: [String] = []
 
     /// Sentry DSN for the app's project. Send-only, so it ships in the bundle
     /// ("" turns reporting off). Overridable per build with Info.plist

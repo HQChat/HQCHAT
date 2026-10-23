@@ -4,16 +4,16 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
-import type { Api, Friend, PrekeyClaim } from "../../src/client/api";
-import { Conversations, initHeaderOf, messageHeaderOf, type Outbound } from "../../src/client/conversation";
-import { ApiError } from "../../src/client/http";
-import { type Identity, identityFromSeed, newSeed } from "../../src/client/identity";
-import { decodeSession, encodeSession, FileStore, MemoryStore } from "../../src/client/store";
-import { openPayload, sealPayload } from "../../src/protocol/aead";
-import { decodeFrame, encodeFrame } from "../../src/protocol/envelope";
-import { hqcKem } from "../../src/protocol/hqc";
-import { startAsInitiator } from "../../src/protocol/ratchet";
-import { conversationTopic, handshakeTopic, inboxTopic } from "../../src/protocol/topics";
+import type { Api, Friend, PrekeyClaim } from "../reference/client/api";
+import { Conversations, initHeaderOf, messageHeaderOf, type Outbound } from "../reference/client/conversation";
+import { ApiError } from "../reference/client/http";
+import { type Identity, identityFromSeed, newSeed } from "../reference/client/identity";
+import { decodeSession, encodeSession, FileStore, MemoryStore } from "../reference/client/store";
+import { openPayload, sealPayload } from "../reference/protocol/aead";
+import { decodeFrame, encodeFrame } from "../reference/protocol/envelope";
+import { hqcKem } from "../reference/protocol/hqc";
+import { startAsInitiator } from "../reference/protocol/ratchet";
+import { conversationTopic, handshakeTopic, inboxTopic } from "../reference/protocol/topics";
 
 const topicId = () => crypto.randomBytes(32).toString("hex");
 
@@ -281,7 +281,7 @@ test("payload sealing binds the AAD and refuses a short tag", () => {
 });
 
 test("the client delivers a released burst before a later frame whose receipt is quicker", async () => {
-  const { Client } = await import("../../src/client/client");
+  const { Client } = await import("../reference/client/client");
   const identity = identityFromSeed(newSeed());
   const c = new Client({ baseUrl: "https://hqchat.invalid", endpoint: { url: "wss://hqchat.invalid/mqtt" }, identity });
   const receipt = (topic: string) => ({ topic, payload: Buffer.alloc(0) });

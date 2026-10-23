@@ -1,8 +1,7 @@
-import * as path from "node:path";
-import { Worker } from "node:worker_threads";
+import type { GatewayKeyPair, HqnSecret } from "../common/core";
 
 /**
- * A fixed pool of decapsulation workers behind a BOUNDED queue.
+ * A BOUNDED queue in front of HQC decapsulation.
  *
  * Bounded is the point: every queued job is a well-formed handshake from
  * somewhere on the internet, and an unbounded queue under a burst is memory
@@ -10,65 +9,51 @@ import { Worker } from "node:worker_threads";
  * full the job is refused at once and the gateway closes that connection —
  * the client's fallback to WSS handles it, and everyone already connected is
  * unaffected.
+ *
+ * The decapsulation itself is the core's (`GatewayKeyPair.decapsulate`): it
+ * runs on libuv's thread pool against the key Rust holds, and hands back a
+ * handle, so neither the HQC secret key nor any shared secret is ever in the
+ * JS heap. `size` caps how many run at once; libuv's pool (UV_THREADPOOL_SIZE)
+ * bounds how many run in parallel.
  */
 export class DecapPool {
-  private workers: { w: Worker; busy: boolean }[] = [];
-  private queue: { id: number; keyId: number; ct: Buffer }[] = [];
-  private waiting = new Map<number, { resolve: (b: Buffer) => void; reject: (e: Error) => void }>();
-  private nextId = 1;
+  private running = 0;
+  private queue: { key: GatewayKeyPair; ct: Buffer; resolve: (s: HqnSecret) => void; reject: (e: Error) => void }[] =
+    [];
 
   constructor(
-    keys: { keyId: number; sk: Buffer }[],
+    private readonly keys: Map<number, GatewayKeyPair>,
     readonly size: number,
     readonly queueMax: number,
-    workerFile = path.join(__dirname, "decap-worker.ts"),
-  ) {
-    for (let i = 0; i < size; i++) {
-      // Workers do not inherit the `--import tsx` hook, so a CommonJS
-      // bootstrap registers tsx before loading the TypeScript worker.
-      const w = workerFile.endsWith(".ts")
-        ? new Worker(`require("tsx/cjs/api").register(); require(${JSON.stringify(workerFile)});`, {
-            eval: true,
-            workerData: { keys },
-          })
-        : new Worker(workerFile, { workerData: { keys } });
-      const slot = { w, busy: false };
-      w.on("message", (m: { id: number; ss?: Uint8Array; error?: string }) => {
-        slot.busy = false;
-        const p = this.waiting.get(m.id);
-        this.waiting.delete(m.id);
-        if (p) m.ss ? p.resolve(Buffer.from(m.ss)) : p.reject(new Error(m.error ?? "decapsulation failed"));
-        this.dispatch();
-      });
-      w.on("error", (e) => {
-        // A dead worker fails only its in-flight job.
-        slot.busy = false;
-        for (const [id, p] of this.waiting) {
-          p.reject(e as Error);
-          this.waiting.delete(id);
-        }
-      });
-      this.workers.push(slot);
-    }
-  }
+  ) {}
 
-  decapsulate(keyId: number, ct: Buffer): Promise<Buffer> {
+  decapsulate(keyId: number, ct: Buffer): Promise<HqnSecret> {
     if (this.queue.length >= this.queueMax) return Promise.reject(new Error("decapsulation queue full"));
-    const id = this.nextId++;
+    const key = this.keys.get(keyId);
+    if (!key) return Promise.reject(new Error("unknown key id"));
     return new Promise((resolve, reject) => {
-      this.waiting.set(id, { resolve, reject });
-      this.queue.push({ id, keyId, ct });
+      this.queue.push({ key, ct, resolve, reject });
       this.dispatch();
     });
   }
 
   private dispatch(): void {
-    for (const slot of this.workers) {
-      if (slot.busy) continue;
+    while (this.running < this.size) {
       const job = this.queue.shift();
       if (!job) return;
-      slot.busy = true;
-      slot.w.postMessage(job);
+      this.running++;
+      let started: Promise<HqnSecret>;
+      try {
+        started = job.key.decapsulate(job.ct);
+      } catch (e) {
+        started = Promise.reject(e as Error);
+      }
+      started
+        .then(job.resolve, (e: Error) => job.reject(e))
+        .finally(() => {
+          this.running--;
+          this.dispatch();
+        });
     }
   }
 
@@ -77,6 +62,6 @@ export class DecapPool {
   }
 
   async close(): Promise<void> {
-    await Promise.all(this.workers.map((s) => s.w.terminate()));
+    for (const job of this.queue.splice(0)) job.reject(new Error("closing"));
   }
 }

@@ -1,11 +1,12 @@
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 
-/** A response: the status, the body parsed as JSON (undefined when it is not), and the raw text. */
+/** A response: the status, the body parsed as JSON (undefined when it is not), the raw text and the headers. */
 export interface Reply {
   status: number;
   body: any;
   text: string;
+  headers: http.IncomingHttpHeaders;
 }
 
 /** What to send: a JSON `body`, or `raw` bytes sent as-is, plus a bearer `token` and extra headers. */
@@ -53,7 +54,7 @@ export async function call(
             } catch {
               body = undefined;
             }
-            resolve({ status: res.statusCode ?? 0, body, text });
+            resolve({ status: res.statusCode ?? 0, body, text, headers: res.headers });
           });
         },
       );

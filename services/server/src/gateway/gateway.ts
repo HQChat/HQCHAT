@@ -1,20 +1,10 @@
 import * as net from "node:net";
-import {
-  FrameReader,
-  frame,
-  HQN_VERSION,
-  HqnResponder,
-  msg1Length,
-  NoiseError,
-  type ServerStatic,
-  sealFrames,
-  type Transport,
-} from "../protocol/noise";
+import { core, type GatewayKeyPair, type HqnGatewayHandshake, type HqnSecret, type HqnTransport } from "../common/core";
 import { Admission } from "./admission";
 import { connectClientId } from "./mqtt-connect";
 
 /**
- * noise-gw: terminates hqn/1 (protocol/noise.ts) and pipes the decrypted MQTT byte
+ * noise-gw: terminates hqn/1 (the core's responder) and pipes the decrypted MQTT byte
  * stream to EMQX's internal plain-TCP listener.
  *
  * This process is the first thing on the public internet that reads a raw-TCP
@@ -30,7 +20,7 @@ import { connectClientId } from "./mqtt-connect";
  *     decapsulation. (A real Noise client can still spend one decapsulation per
  *     handshake; that is what the per-IP handshake rate is for.)
  *   - Decapsulation runs off the event loop (`decapsulate` is async; main.ts
- *     backs it with a worker pool) behind a bounded queue, so a burst of
+ *     backs it with the core's, on libuv's pool) behind a bounded queue, so a burst of
  *     well-formed handshakes sheds load instead of stalling every established
  *     stream on this process.
  *   - Every failure is a silent close. No error frame, no timing difference
@@ -42,9 +32,9 @@ import { connectClientId } from "./mqtt-connect";
 
 export interface GatewayOptions {
   /** Loaded server key pairs, by key id. */
-  keys: Map<number, ServerStatic>;
+  keys: Map<number, GatewayKeyPair>;
   /** HQC-256 decapsulation, off the event loop. Rejects when overloaded. */
-  decapsulate: (keyId: number, ct: Buffer) => Promise<Buffer>;
+  decapsulate: (keyId: number, ct: Buffer) => Promise<HqnSecret>;
   /** Where the decrypted stream goes: EMQX's internal plain-TCP listener. */
   upstream: { host: string; port: number };
   limits?: Partial<GatewayLimits>;
@@ -59,8 +49,12 @@ export interface GatewayLimits {
   maxConnectBytes: number;
   /** Time from accept to a complete msg1. */
   handshakeTimeoutMs: number;
+  /** Time from accept to the two header bytes; a silent socket gives its slot back sooner. */
+  headerTimeoutMs: number;
   /** Handshakes in progress from one address. */
   perIpHandshakes: number;
+  /** Handshakes in progress from one IPv4 /24 or IPv6 /56, so a few hundred addresses cannot fill maxHalfOpen. */
+  perPrefixHandshakes: number;
   /** Established streams from one address — high, because carrier NAT puts
    *  thousands of phones behind one IPv4 address. */
   perIpConnections: number;
@@ -77,7 +71,9 @@ export interface GatewayLimits {
 export const DEFAULT_LIMITS: GatewayLimits = {
   maxConnectBytes: 4096,
   handshakeTimeoutMs: 5000,
+  headerTimeoutMs: 1000,
   perIpHandshakes: 8,
+  perPrefixHandshakes: 64,
   perIpConnections: 512,
   perIpHandshakesPerMinute: 120,
   maxHalfOpen: 1024,
@@ -95,6 +91,7 @@ export type RefusalReason =
   | "length"
   | "timeout"
   | "ip-handshakes"
+  | "prefix-handshakes"
   | "ip-rate"
   | "ip-connections"
   | "half-open"
@@ -119,6 +116,8 @@ interface Connection {
   /** Ends the handshake accounting; idempotent. */
   leaveHandshake: () => void;
   timer: NodeJS.Timeout;
+  /** Until the two header bytes arrive. */
+  headerTimer: NodeJS.Timeout;
 }
 
 /** The hqn/1 front door: admission, the handshake, then the decrypted pipe to EMQX. */
@@ -132,7 +131,7 @@ class Gateway {
     this.limits = { ...DEFAULT_LIMITS, ...(opts.limits ?? {}) };
     this.now = opts.now ?? Date.now;
     this.admission = new Admission(this.limits, this.now);
-    this.msg1Window = { min: msg1Length(0), max: msg1Length(this.limits.maxConnectBytes) };
+    this.msg1Window = { min: core.hqnMsg1Length(0), max: core.hqnMsg1Length(this.limits.maxConnectBytes) };
   }
 
   private refuse(sock: net.Socket, ip: string, reason: RefusalReason): void {
@@ -156,9 +155,13 @@ class Gateway {
       /* a reset client is not an event worth logging */
     });
     const timer = setTimeout(() => this.refuse(sock, ip, "timeout"), this.limits.handshakeTimeoutMs);
-    sock.once("close", () => clearTimeout(timer));
+    const headerTimer = setTimeout(() => this.refuse(sock, ip, "timeout"), this.limits.headerTimeoutMs);
+    sock.once("close", () => {
+      clearTimeout(timer);
+      clearTimeout(headerTimer);
+    });
 
-    const conn: Connection = { sock, ip, started: this.now(), leaveHandshake, timer };
+    const conn: Connection = { sock, ip, started: this.now(), leaveHandshake, timer, headerTimer };
     this.readMessage1(conn, (keyId, msg1) => void this.handshake(conn, keyId, msg1));
   }
 
@@ -172,8 +175,9 @@ class Gateway {
       buf = buf.length ? Buffer.concat([buf, chunk]) : chunk;
       if (keyId < 0) {
         if (buf.length < 2) return;
-        if (buf[0] !== HQN_VERSION || !this.opts.keys.has(buf[1]!)) return this.refuse(sock, ip, "header");
+        if (buf[0] !== core.HQN_VERSION || !this.opts.keys.has(buf[1]!)) return this.refuse(sock, ip, "header");
         keyId = buf[1]!;
+        clearTimeout(conn.headerTimer);
         buf = buf.subarray(2);
       }
       if (need === 2) {
@@ -194,15 +198,20 @@ class Gateway {
   /** Opens the KEM ciphertext, decapsulates off the event loop and answers with msg2. */
   private async handshake(conn: Connection, keyId: number, msg1: Buffer): Promise<void> {
     const { sock, ip } = conn;
-    if (!this.admission.freshEphemeral(HqnResponder.ephemeralOf(msg1))) return this.refuse(sock, ip, "replay");
-    const responder = new HqnResponder(this.opts.keys.get(keyId)!);
+    const key = this.opts.keys.get(keyId);
+    if (!key) return this.refuse(sock, ip, "header");
+    let responder: HqnGatewayHandshake;
     let ct: Buffer;
     try {
+      if (!this.admission.freshEphemeral(core.HqnGatewayHandshake.ephemeralOf(msg1))) {
+        return this.refuse(sock, ip, "replay");
+      }
+      responder = new core.HqnGatewayHandshake(key);
       ct = responder.openMessage1(msg1);
     } catch {
       return this.refuse(sock, ip, "noise");
     }
-    let ss: Buffer;
+    let ss: HqnSecret;
     try {
       ss = await this.opts.decapsulate(keyId, ct);
     } catch {
@@ -210,13 +219,15 @@ class Gateway {
     }
     if (sock.destroyed) return;
     let connect: Buffer;
-    let transport: Transport;
+    let transport: HqnTransport;
     let msg2: Buffer;
     try {
       connect = responder.finishMessage1(ss);
-      ({ message: msg2, transport } = responder.writeMessage2(Buffer.alloc(0)));
-    } catch (e) {
-      if (!(e instanceof NoiseError)) throw e;
+      const second = responder.writeMessage2(Buffer.alloc(0));
+      msg2 = second.takeMessage();
+      transport = second.takeTransport();
+    } catch {
+      // The core refuses with a thrown error; every refusal is a silent close.
       return this.refuse(sock, ip, "noise");
     }
     clearTimeout(conn.timer);
@@ -224,7 +235,7 @@ class Gateway {
   }
 
   /** Pipes the decrypted MQTT stream to EMQX and back. */
-  private pipe(conn: Connection, connect: Buffer, msg2: Buffer, t: Transport) {
+  private pipe(conn: Connection, connect: Buffer, msg2: Buffer, t: HqnTransport) {
     const { sock, ip } = conn;
     const clientId = connectClientId(connect);
     const up = net.connect({ host: this.opts.upstream.host, port: this.opts.upstream.port, noDelay: true });
@@ -247,21 +258,19 @@ class Gateway {
       this.opts.onEvent?.({ t: "established", ip, clientId, handshakeMs: this.now() - conn.started });
       // msg2 goes out without waiting for CONNACK, which then follows as the
       // first transport frame: the client's connect costs no extra round trip.
-      sock.write(frame(msg2));
+      sock.write(core.hqnFrame(msg2));
       up.write(connect);
       bytesUp += connect.length;
       sock.resume();
     });
 
-    const reader = new FrameReader();
     sock.on("data", (chunk: Buffer) => {
-      reader.push(chunk);
       try {
-        for (let f = reader.next(); f; f = reader.next()) {
-          const pt = t.recv.decryptWithAd(Buffer.alloc(0), f);
-          bytesUp += pt.length;
-          if (!up.write(pt)) sock.pause();
-        }
+        // Whole frames open as one plaintext; a partial one waits inside.
+        const pt = t.open(chunk);
+        if (pt.length === 0) return;
+        bytesUp += pt.length;
+        if (!up.write(pt)) sock.pause();
       } catch {
         this.admission.countRefusal("stream");
         closeBoth();
@@ -271,7 +280,7 @@ class Gateway {
 
     up.on("data", (chunk: Buffer) => {
       bytesDown += chunk.length;
-      if (!sock.write(sealFrames(t.send, chunk))) up.pause();
+      if (!sock.write(t.seal(chunk))) up.pause();
     });
     sock.on("drain", () => up.resume());
 

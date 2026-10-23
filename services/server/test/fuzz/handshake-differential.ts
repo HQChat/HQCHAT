@@ -1,6 +1,6 @@
 /**
  * Differential fuzzing: `encodeHandshake` / `decodeHandshake` (TypeScript)
- * against `Handshake.encode` / `Handshake.decode` (Swift), on identical inputs.
+ * against the Rust core's handshake codec, on identical inputs.
  *
  * The handshake topic carries the challenge and proof that authenticate an
  * `init`'s sender, and both ends parse it with hand-written offsets. A
@@ -19,8 +19,8 @@
  *   round   decode(encode(f)) == f on each side: self-consistent halves can
  *           still fail to be inverses.
  *
- * Run:
- *   cd apps/apple/fuzz && ./run.sh handshake-verdict
+ * Run against the Rust core (the default; scripts/check.sh core does this):
+ *   cd core && cargo build --release -p hqchat-verdict
  *   cd services/server && npx tsx test/fuzz/handshake-differential.ts --iterations 20000
  *   …                                                                 --mode encode
  */
@@ -37,9 +37,10 @@ import {
   HANDSHAKE_PROOF_BYTES,
   HANDSHAKE_VERSION,
   type HandshakeFrame,
-} from "../../src/protocol/handshake";
+} from "../reference/protocol/handshake";
+import { type Oracle, oracle } from "./oracle";
 
-const SWIFT = path.join(__dirname, "../../../../apps/apple/fuzz/build/handshake-verdict");
+let ORACLE: Oracle;
 const VECTORS = path.join(__dirname, "..", "helpers", "handshake-vectors.json");
 const FINDINGS = path.join(__dirname, "findings");
 const BATCH = 1000;
@@ -251,14 +252,17 @@ function tsRound(f: HandshakeFrame): string {
   return why.length ? `F ${why.join(",")}` : "T";
 }
 
-function swiftVerdicts(mode: string, lines: string[]): string[] {
+function oracleVerdicts(mode: string, lines: string[]): string[] {
   // A private directory, not a predictable name in a shared /tmp: a pid is
   // guessable, so `handshake-batch-1234.jsonl` is a path somebody else on the
   // box can create as a symlink first and have this overwrite for them.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "handshake-batch-"));
   const file = path.join(dir, "batch.jsonl");
   fs.writeFileSync(file, `${lines.join("\n")}\n`);
-  const stdout = execFileSync(SWIFT, [mode, file], { maxBuffer: 512 * 1024 * 1024, encoding: "utf8" });
+  const stdout = execFileSync(ORACLE.command, [...ORACLE.args, mode, file], {
+    maxBuffer: 512 * 1024 * 1024,
+    encoding: "utf8",
+  });
   fs.rmSync(dir, { recursive: true, force: true });
   return stdout.split("\n").filter((l) => l.length > 0);
 }
@@ -278,11 +282,7 @@ function main() {
     console.error("--mode must be decode, encode or round");
     process.exit(2);
   }
-  if (!fs.existsSync(SWIFT)) {
-    console.error(`❌ no Swift half at ${SWIFT}`);
-    console.error("   build it:  cd apps/apple/fuzz && ./run.sh handshake-verdict");
-    process.exit(2);
-  }
+  ORACLE = oracle("handshake");
 
   console.log(
     `handshake differential · mode ${mode} · ${iterations} iterations · seed ${seed} · v${HANDSHAKE_VERSION}`,
@@ -321,16 +321,16 @@ function main() {
       }
     }
 
-    const swift = swiftVerdicts(mode, lines);
-    if (swift.length !== n) {
-      console.error(`❌ Swift returned ${swift.length} verdicts for ${n} inputs`);
+    const theirs = oracleVerdicts(mode, lines);
+    if (theirs.length !== n) {
+      console.error(`❌ ${ORACLE.name} returned ${theirs.length} verdicts for ${n} inputs`);
       process.exit(2);
     }
 
     for (let i = 0; i < n; i++) {
       const input = inputs[i];
       const ts = mode === "decode" ? tsDecode(input) : mode === "encode" ? tsEncode(input) : tsRound(input);
-      const sw = swift[i]!;
+      const sw = theirs[i]!;
 
       // In `round` mode each side checks ITSELF, so both must say T. A pair of
       // R's is agreement that the frame was unencodable, which is fine.
@@ -343,8 +343,8 @@ function main() {
       const file = path.join(FINDINGS, `handshake-${mode}-${seed}-${done + i}.json`);
       const payload =
         mode === "decode"
-          ? { mode, seed, inputBase64: (input as Buffer).toString("base64"), swift: sw, ts }
-          : { mode, seed, frame: lines[i], swift: sw, ts };
+          ? { mode, seed, inputBase64: (input as Buffer).toString("base64"), oracle: sw, ts }
+          : { mode, seed, frame: lines[i], oracle: sw, ts };
       fs.writeFileSync(file, JSON.stringify(payload, null, 2));
 
       console.error("");
@@ -355,7 +355,7 @@ function main() {
       } else {
         console.error(`  ${lines[i]!.slice(0, 160)}`);
       }
-      console.error(`  swift  ${sw.slice(0, 160)}`);
+      console.error(`  ${ORACLE.name.padEnd(5)}  ${sw.slice(0, 160)}`);
       console.error(`  ts     ${ts.slice(0, 160)}`);
       console.error(`  saved  ${path.relative(process.cwd(), file)}`);
       if (mismatches >= 10) {

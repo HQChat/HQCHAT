@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import * as crypto from "node:crypto";
 import * as net from "node:net";
 import { test } from "node:test";
-import { Transport } from "../../src/client";
-import type { ServerStaticPublic } from "../../src/protocol/noise";
-import { inboxTopic } from "../../src/protocol/topics";
+import { Transport } from "../reference/client";
+import type { ServerStaticPublic } from "../reference/protocol/noise";
+import { inboxTopic } from "../reference/protocol/topics";
 import { newClient, pause, signIn, stackUp } from "./stack";
 
 /**

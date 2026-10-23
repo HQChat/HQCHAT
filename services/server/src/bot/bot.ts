@@ -1,7 +1,8 @@
 /**
- * The helper bot: an ordinary HQChat account built on the reference client
- * (src/client), so it uses nothing a third-party client could not. It accepts
- * every invite, greets each new friend once and answers messages (replies.ts).
+ * The helper bot: an ordinary HQChat account on the Rust core (the same Engine
+ * the apps link, through src/common/core-client.ts), so it uses nothing a
+ * third-party client could not. It accepts every invite, greets each new
+ * friend once and answers messages (replies.ts).
  *
  *   BASE_URL        the server's origin                (http://127.0.0.1:8090)
  *   MQTT_URL        the broker's WebSocket endpoint     (ws://127.0.0.1:8083/mqtt)
@@ -9,16 +10,25 @@
  *   BOT_SEED        32-byte hex identity seed; generated into BOT_STATE_DIR when unset
  *   BOT_STATE_DIR   where the seed and state persist    (./.bot)
  *   SUPPORT_EMAIL   address given by /support
- *   FRIEND_POLL_MS  how often the friend graph is re-read  (15000)
  *
- * The server befriends every new account to the identity named by BOT_ID;
- * `bot --print-id` prints that id for the configured seed and exits.
+ * The identity still derives from the seed, so the bot keeps its id across
+ * the move to the core. The server befriends every new account to the
+ * identity named by BOT_ID; `bot --print-id` prints that id for the
+ * configured seed and exits.
+ *
+ * State in BOT_STATE_DIR: `seed` (when BOT_SEED is unset; in production the
+ * seed is a credential and is not here), `core/` (the engine's sealed blobs,
+ * under a device key derived from the seed), `greeted.json`, and
+ * `state.json.imported`, the TS client's state
+ * the core imported on its first start, kept as a backup.
  */
 
 import "../common/config";
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { ApiError, Client, FileStore, identityFromSeed, newSeed } from "../client";
+import { core } from "../common/core";
+import { CoreClient, type CoreClientOptions } from "../common/core-client";
 import { startHealthMonitor } from "../common/health-monitor";
 import { logger } from "../common/logger";
 import { initObservability } from "../common/observability";
@@ -29,7 +39,6 @@ const MQTT_URL = process.env.MQTT_URL || "ws://127.0.0.1:8083/mqtt";
 const USERNAME = process.env.BOT_USERNAME || "helper";
 const STATE_DIR = process.env.BOT_STATE_DIR || path.join(process.cwd(), ".bot");
 const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL || "support@example.com";
-const FRIEND_POLL_MS = Number(process.env.FRIEND_POLL_MS || 15_000);
 
 const WELCOME = (name: string) =>
   [
@@ -44,9 +53,13 @@ const WELCOME = (name: string) =>
 export function loadSeed(dir: string): Buffer {
   if (process.env.BOT_SEED) return Buffer.from(process.env.BOT_SEED.trim(), "hex");
   const file = path.join(dir, "seed");
-  if (fs.existsSync(file)) return Buffer.from(fs.readFileSync(file, "utf8").trim(), "hex");
+  try {
+    return Buffer.from(fs.readFileSync(file, "utf8").trim(), "hex");
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+  }
   fs.mkdirSync(dir, { recursive: true });
-  const seed = newSeed();
+  const seed = crypto.randomBytes(32);
   try {
     fs.writeFileSync(file, seed.toString("hex"), { mode: 0o600, flag: "wx" });
     return seed;
@@ -54,6 +67,47 @@ export function loadSeed(dir: string): Buffer {
     if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
     return Buffer.from(fs.readFileSync(file, "utf8").trim(), "hex");
   }
+}
+
+/** The id a seed derives: what the server's BOT_ID names. */
+export function idOfSeed(seed: Buffer): string {
+  return core.peerId(core.hqcKeypairFromSeed(seed).pk.toString("hex"));
+}
+
+/**
+ * The bot's client on the core: the engine under `dir/core`, sealed to a
+ * device key derived from the seed (in production a credential, not in
+ * `dir`), so a copy of `dir` opens nothing. A first start builds the profile
+ * from the seed, importing the friends, sessions and prekeys the TS client
+ * left in `state.json`. A `device-key` file from a build that stored the key
+ * is deleted, with the store it sealed, and the profile is built again.
+ */
+export function openBot(
+  dir: string,
+  seed: Buffer,
+  opts: Omit<CoreClientOptions, "dir" | "deviceKey" | "profileId">,
+): CoreClient {
+  const coreDir = path.join(dir, "core");
+  const deviceKey = core.deviceKeyFromSeed(seed);
+  const stored = path.join(dir, "device-key");
+  if (fs.existsSync(stored)) {
+    fs.rmSync(coreDir, { recursive: true, force: true });
+    fs.rmSync(stored, { force: true });
+  }
+  if (fs.existsSync(path.join(coreDir, "state"))) {
+    return new CoreClient({ ...opts, profileId: "bot", dir: coreDir, deviceKey });
+  }
+  fs.mkdirSync(dir, { recursive: true });
+  fs.rmSync(coreDir, { recursive: true, force: true });
+  const client = new CoreClient({ ...opts, profileId: "bot", dir: coreDir, deviceKey });
+  const legacy = [path.join(dir, "state.json"), path.join(dir, "state.json.imported")].find((f) => fs.existsSync(f));
+  const imported = client.engine.importLegacy(seed, legacy ? fs.readFileSync(legacy, "utf8") : null, Date.now());
+  for (const id of imported.unreadable) {
+    logger.warn(`[bot] the session with ${id.slice(0, 12)}… could not be read; the next message opens a new one`);
+  }
+  if (legacy?.endsWith("state.json")) fs.renameSync(legacy, `${legacy}.imported`);
+  logger.startup(`[bot] moved to the core${legacy ? ` with the state in ${path.basename(legacy)}` : ""}`);
+  return client;
 }
 
 /** The ids already welcomed, persisted so a restart never greets twice. */
@@ -74,90 +128,92 @@ export class Greeted {
   }
 }
 
-/** The bot's behaviour on top of a connected client. */
+/** The bot's behaviour on top of a started client. */
 export class Bot {
-  private readonly greeting = new Set<string>();
+  /** Welcomes in flight, by message id: a friend counts as greeted once the broker has it. */
+  private readonly greeting = new Map<string, string>();
+  private claimed = false;
 
   constructor(
-    private readonly client: Client,
+    private readonly client: CoreClient,
     private readonly greeted: Greeted,
+    private readonly username = USERNAME,
   ) {
-    client.onGraphChanged(() => this.syncGraph());
-    client.onMessage((m) => {
-      client.send(m.from, reply(m.text, { supportEmail: SUPPORT_EMAIL })).catch((e: Error) => {
-        logger.warn(`[bot] could not reply to ${m.from.slice(0, 12)}…: ${e.message}`);
-      });
+    client.onMessage((m) => this.answer(m.peer, m.text));
+    client.onEffect((e) => {
+      if (e.kind === "invitesChanged") this.acceptInvites();
+      else if (e.kind === "friendsChanged") this.greetFriends();
+      else if (e.kind === "messageStatus") this.settleGreeting(e.msgId!, e.state!);
+      else if (e.kind === "connection" && e.state === "connected") this.claimUsername();
     });
   }
 
-  /** Accepts pending invites, re-reads the graph and greets new friends. */
-  async syncGraph(): Promise<void> {
-    for (const invite of await this.client.api.invites()) await this.client.api.accept(invite.id);
-    await this.client.sync();
-    if (!this.client.connected) return;
-    for (const id of Object.keys(this.client.conversations.state.peers)) await this.greet(id);
+  private answer(peer: string, text: string): void {
+    try {
+      this.client.send(peer, reply(text, { supportEmail: SUPPORT_EMAIL }));
+    } catch (e) {
+      logger.warn(`[bot] could not reply to ${peer.slice(0, 12)}…: ${(e as Error).message}`);
+    }
   }
 
-  private async greet(id: string): Promise<void> {
-    if (this.greeted.has(id) || this.greeting.has(id)) return;
-    this.greeting.add(id);
-    try {
-      const name = this.client.conversations.peer(id)?.username || "there";
-      await this.client.send(id, WELCOME(name));
+  private claimUsername(): void {
+    if (this.claimed) return;
+    this.claimed = true;
+    this.client.run(() => this.client.engine.setUsername(this.username));
+  }
+
+  acceptInvites(): void {
+    for (const invite of this.client.engine.invites()) {
+      this.client.run(() => this.client.engine.accept(invite.id));
+    }
+  }
+
+  greetFriends(): void {
+    const pending = new Set(this.greeting.values());
+    for (const friend of this.client.engine.friends()) {
+      if (this.greeted.has(friend.id) || pending.has(friend.id)) continue;
+      try {
+        this.greeting.set(this.client.send(friend.id, WELCOME(friend.username || "there")), friend.id);
+      } catch (e) {
+        logger.warn(`[bot] could not greet ${friend.id.slice(0, 12)}…: ${(e as Error).message}`);
+      }
+    }
+  }
+
+  /** A welcome the broker took counts; a failed one is retried at the next friend change. */
+  private settleGreeting(msgId: string, state: string): void {
+    const id = this.greeting.get(msgId);
+    if (!id) return;
+    if (state === "failed") this.greeting.delete(msgId);
+    else if (state === "sent" || state === "queued" || state === "delivered") {
+      this.greeting.delete(msgId);
       this.greeted.add(id);
-    } catch (e) {
-      if (e instanceof ApiError && e.code === "NO_PREKEYS") return;
-      logger.warn(`[bot] could not greet ${id.slice(0, 12)}…: ${(e as Error).message}`);
-    } finally {
-      this.greeting.delete(id);
     }
   }
 }
 
-async function main(): Promise<void> {
+function main(): void {
   initObservability("bot");
   startHealthMonitor();
-  const identity = identityFromSeed(loadSeed(STATE_DIR));
-  logger.startup(`[bot] id ${identity.id} (set BOT_ID to this on the server)`);
-  const client = new Client({
-    baseUrl: BASE_URL,
-    endpoint: { url: MQTT_URL },
-    identity,
-    store: new FileStore(path.join(STATE_DIR, "state.json")),
-    reconnect: true,
+  const seed = loadSeed(STATE_DIR);
+  logger.startup(`[bot] id ${idOfSeed(seed)} (set BOT_ID to this on the server)`);
+  const client = openBot(STATE_DIR, seed, {
+    serverUrl: BASE_URL,
+    wssUrl: MQTT_URL,
+    // The broker's WebSocket is the bot's private path; hqn/1 is for the internet.
+    hqn: false,
     log: (line) => logger.debug(`[bot] ${line}`),
   });
-  const bot = new Bot(client, new Greeted(path.join(STATE_DIR, "greeted.json")));
-
-  for (let attempt = 1; ; attempt++) {
-    try {
-      await client.signIn();
-      await client.api.setUsername(USERNAME).catch((e: Error) => {
-        logger.warn(`[bot] could not claim @${USERNAME}: ${e.message}`);
-      });
-      await client.connect();
+  new Bot(client, new Greeted(path.join(STATE_DIR, "greeted.json")));
+  client.onEffect((e) => {
+    if (e.kind === "connection") logger.debug(`[bot] ${e.state}`);
+    if (e.kind === "connection" && e.state === "connected")
       logger.startup(`[bot] connected to the broker at ${MQTT_URL}`);
-      break;
-    } catch (e) {
-      const wait = Math.min(30_000, 2_000 * attempt);
-      logger.warn(`[bot] start attempt ${attempt} failed (${(e as Error).message}); retrying in ${wait}ms`);
-      await new Promise((r) => setTimeout(r, wait));
-    }
-  }
-
-  const poll = async () => {
-    try {
-      await bot.syncGraph();
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 401) await client.auth.signIn();
-      else logger.warn(`[bot] friend poll: ${(e as Error).message}`);
-    }
-  };
-  await poll();
-  setInterval(() => void poll(), FRIEND_POLL_MS);
+  });
+  client.start();
 }
 
 if (require.main === module) {
-  if (process.argv.includes("--print-id")) console.log(identityFromSeed(loadSeed(STATE_DIR)).id);
-  else void main();
+  if (process.argv.includes("--print-id")) console.log(idOfSeed(loadSeed(STATE_DIR)));
+  else main();
 }

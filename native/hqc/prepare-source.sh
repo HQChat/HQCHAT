@@ -5,9 +5,9 @@
 #
 # copies the upstream `src` and `lib` into <out>, guards the x86 intrinsics
 # headers the reference C includes but never uses (so it compiles for ARM), and
-# adds the wrapper sources. package.nix (Nix) and build-apple.sh (Xcode, the
-# Deploy workflow) both run this, so the Linux library and the Apple ones are
-# built from the same bytes. POSIX tools only: it runs on GNU and BSD alike.
+# adds the wrapper sources. package.nix runs this; the Linux library and the
+# Rust core (core/hqc-sys, through HQC_SOURCE) both build from its output, so
+# every target compiles the same bytes. POSIX tools only: it runs on GNU and BSD alike.
 set -euo pipefail
 
 upstream="$1"

@@ -60,6 +60,14 @@ lib.mkIf (cfg.role == "mqtt") {
       message = "emqx.conf must keep client wildcard subscriptions off; the ACL depends on it.";
     }
     {
+      assertion = lib.all (s: lib.hasInfix s template) [
+        "mqtt.max_packet_size = "
+        "mqtt.max_subscriptions = "
+        "delayed { enable = false }"
+      ];
+      message = "emqx.conf must cap packets and subscriptions and keep delayed publish off: any client may publish to any inbox.";
+    }
+    {
       assertion = !(lib.hasInfix "cookie =" template);
       message = "emqx.conf must not carry a cookie; it is generated per host.";
     }
@@ -94,12 +102,19 @@ lib.mkIf (cfg.role == "mqtt") {
     description = "Render EMQX's cookie, dashboard password and admin API key";
     before = [ "podman-emqx.service" ];
     requiredBy = [ "podman-emqx.service" ];
-    serviceConfig = {
+    serviceConfig = cfg.rootService // {
       Type = "oneshot";
       RemainAfterExit = true;
       RuntimeDirectory = "hqcat-emqx";
       RuntimeDirectoryMode = "0750";
       RuntimeDirectoryPreserve = "yes";
+      ReadWritePaths = [ "/var/lib/hqcat-emqx" ];
+      # Hands the API key file to EMQX's uid and then narrows its mode.
+      CapabilityBoundingSet = [
+        "CAP_CHOWN"
+        "CAP_FOWNER"
+      ];
+      RestrictAddressFamilies = [ "AF_UNIX" ];
     };
     path = [
       pkgs.coreutils
@@ -135,6 +150,11 @@ lib.mkIf (cfg.role == "mqtt") {
       imageFile = image;
       environment = {
         EMQX_NODE__NAME = "emqx@127.0.0.1";
+        # A single node: Erlang distribution (4370) listens on loopback only,
+        # as rpc does, never on every address of the host network.
+        # ERL_AFLAGS, not ERL_FLAGS: those land after -emqx_data_dir on the
+        # command line, where `emqx ctl` reads the data directory back from.
+        ERL_AFLAGS = "-kernel inet_dist_use_interface {127,0,0,1}";
         EMQX_API_KEY__BOOTSTRAP_FILE = "/run/hqcat-emqx/api_bootstrap";
       };
       environmentFiles = [ "/run/hqcat-emqx/emqx.env" ];

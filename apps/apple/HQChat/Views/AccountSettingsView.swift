@@ -9,7 +9,7 @@ struct AccountSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
 
-    @ObservedObject var userService: UserService
+    @EnvironmentObject private var chat: ChatStore
     let profileManager: ProfileManager?
 
     @State private var isEditingUsername = false
@@ -20,8 +20,15 @@ struct AccountSettingsView: View {
     @State private var isDeletingAccount = false
 
     private var fingerprint: String? {
-        guard let key = profileManager?.currentProfile?.publicKey else { return nil }
-        return HQFingerprint.short(key)
+        guard let id = profileManager?.currentProfile?.peerID, !id.isEmpty else { return nil }
+        return HQFingerprint.short(clientID: id)
+    }
+
+    /// The handle the server confirmed, or nil before one is claimed.
+    private var currentUsername: String? {
+        guard let profile = profileManager?.currentProfile, profile.desiredUsername == nil,
+              appState.usernameRejected == nil else { return nil }
+        return profile.username
     }
 
     /// Nothing to save when the name hasn't actually changed. Without this the
@@ -31,7 +38,7 @@ struct AccountSettingsView: View {
     /// refused here rather than after a round-trip.
     private var canSaveUsername: Bool {
         let trimmed = UsernameRule.normalized(draftUsername)
-        return UsernameRule.isValid(trimmed) && trimmed != (userService.currentUsername ?? "")
+        return UsernameRule.isValid(trimmed) && trimmed != (currentUsername ?? "")
     }
 
     /// Why the draft can't be saved, once something has been typed.
@@ -69,9 +76,12 @@ struct AccountSettingsView: View {
         .alert("Reset all data?", isPresented: $showingResetConfirm) {
             Button("Cancel", role: .cancel) {}
             Button("Reset everything", role: .destructive) {
-                _ = DataResetService.resetAllData(modelContext: modelContext, profileManager: profileManager)
-                appState.hasActiveProfile = false
-                dismiss()
+                Task {
+                    await appState.disconnectSession()
+                    _ = DataResetService.resetAllData(modelContext: modelContext, profileManager: profileManager)
+                    appState.hasActiveProfile = false
+                    dismiss()
+                }
             }
         } message: {
             Text("This permanently deletes all profiles, keys, contacts, and messages on this device. Your account on the server is left untouched.")
@@ -102,7 +112,7 @@ struct AccountSettingsView: View {
             HQFieldLabel(text: "username", tint: HQColor.green)
 
             if isEditingUsername {
-                HQTextField(placeholder: "username", text: $draftUsername, prefix: "@")
+                HQTextField(placeholder: "username", text: $draftUsername, prefix: "@", ascii: true)
                     .onChange(of: draftUsername) { _, newValue in
                         // Same alphabet as the server, filtered as typed: the
                         // field can't hold a handle the server would reject, and
@@ -127,13 +137,13 @@ struct AccountSettingsView: View {
                 }
             } else {
                 HStack {
-                    Text(userService.currentUsername.map { "@\($0)" } ?? "not set yet")
+                    Text(currentUsername.map { "@\($0)" } ?? "not set yet")
                         .font(HQFont.ui(16, weight: .semibold))
-                        .foregroundColor(userService.currentUsername == nil
+                        .foregroundColor(currentUsername == nil
                                          ? HQColor.textMuted : HQColor.textPrimary)
                     Spacer()
                     Button("[change]") {
-                        draftUsername = userService.currentUsername ?? ""
+                        draftUsername = currentUsername ?? ""
                         isEditingUsername = true
                     }
                     .buttonStyle(HQInlineActionStyle())
@@ -210,7 +220,7 @@ struct AccountSettingsView: View {
         guard canSaveUsername else { return }
         Task {
             do {
-                try await userService.setUsername(name)
+                try await chat.setUsername(name)
                 isEditingUsername = false
                 // This screen is where a refused handle gets fixed, so a handle
                 // that lands here clears the banner that sent the user over.
@@ -223,7 +233,7 @@ struct AccountSettingsView: View {
             } catch {
                 // Server rejections (taken, length, reserved) are shown, not swallowed.
                 appError = .from(error)
-                if AppState.isUsernameTaken(error) { appState.usernameRejected = name }
+                if ChatStore.isUsernameTaken(error) { appState.usernameRejected = name }
             }
         }
     }

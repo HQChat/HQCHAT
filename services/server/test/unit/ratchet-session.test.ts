@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import * as crypto from "node:crypto";
 import { test } from "node:test";
-import { chainId, chainNext, initRoot, messageKey, rootStep, walkChain } from "../../src/protocol/double-ratchet";
+import { chainId, chainNext, initRoot, messageKey, rootStep, walkChain } from "../reference/protocol/double-ratchet";
 import {
   type Kem,
   MAX_SKIPPED,
@@ -20,7 +20,7 @@ import {
   shouldStep,
   startAsInitiator,
   startAsResponder,
-} from "../../src/protocol/ratchet";
+} from "../reference/protocol/ratchet";
 
 // ── A stub KEM ───────────────────────────────────────────────────────────────
 // pk is a random tag; sk is the same tag. Encapsulating produces a random secret
@@ -48,7 +48,7 @@ function stubKem(): Kem {
       if (ct.length !== 64) throw new Error("bad ciphertext");
       const mask = crypto.createHash("sha256").update(sk).digest();
       if (!ct.subarray(0, 32).equals(mask)) {
-        // Implicit rejection, as the real KEM does (src/protocol/hqc.ts): a
+        // Implicit rejection, as the real KEM does (test/reference/protocol/hqc.ts): a
         // pseudo-random key, never an error. A stub that threw would test against a
         // KEM stronger than the shipped one and grant the forged-step defence for free.
         return crypto

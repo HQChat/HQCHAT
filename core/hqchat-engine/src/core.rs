@@ -1,0 +1,559 @@
+//! The engine's state between calls, and the operations every feature
+//! shares: sealing state, sessions and messages.
+
+use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
+
+use hqc::{KeyPair, PublicKey, SecretKey};
+use hqchat_protocol::ratchet::{PrekeySecrets, SessionState};
+use hqchat_protocol::topics::TopicId;
+use hqchat_protocol::{HqcKem, PeerId};
+use zeroize::Zeroizing;
+
+use crate::effect::Effect;
+use crate::persist::{self, StoredMessage, StoredPeer, StoredPrekeys, StoredSession, StoredState};
+use crate::ports::{KeyVault, Store, Tier};
+use crate::types::{Config, CoreError, FriendView, Message};
+
+/// A friend, as the directory holds them. Public metadata: kept in memory
+/// after the first unlock, through later locks.
+#[derive(Debug, Clone)]
+pub(crate) struct Peer {
+    pub id: PeerId,
+    pub username: Option<String>,
+    pub convo: Option<TopicId>,
+    pub handshake: Option<TopicId>,
+    /// Their identity key, once fetched and checked against their id.
+    pub pinned: Option<PublicKey>,
+    pub online: bool,
+    /// Received messages opened and not read yet.
+    pub unread: u32,
+    /// Received messages at or before this time are read.
+    pub read_until: i64,
+    /// Frames from them that arrived while locked, not opened yet.
+    pub pending: u32,
+    /// When this user blocked them: the conversation is kept, read-only.
+    pub blocked_at: Option<i64>,
+    /// When their identity was replaced by another under the same username:
+    /// the conversation is kept, read-only, until the user forgets it.
+    pub vanished_at: Option<i64>,
+    /// The user compared the safety number with them.
+    pub verified: bool,
+}
+
+impl Peer {
+    pub fn new(id: PeerId) -> Self {
+        Self {
+            id,
+            username: None,
+            convo: None,
+            handshake: None,
+            pinned: None,
+            online: false,
+            unread: 0,
+            read_until: 0,
+            pending: 0,
+            blocked_at: None,
+            vanished_at: None,
+            verified: false,
+        }
+    }
+
+    /// Nothing can be sent to or received from them any more.
+    pub fn is_read_only(&self) -> bool {
+        self.blocked_at.is_some() || self.vanished_at.is_some()
+    }
+}
+
+/// My prekeys: the medium-term key and the one-time secrets not yet consumed.
+pub(crate) struct Prekeys {
+    pub identity_sk: SecretKey,
+    pub medium: KeyPair,
+    pub rotated_at: i64,
+    pub one_time: BTreeMap<u32, SecretKey>,
+    pub next_id: u32,
+}
+
+impl PrekeySecrets for Prekeys {
+    fn identity_sk(&self) -> &SecretKey {
+        &self.identity_sk
+    }
+    fn medium_sk(&self) -> &SecretKey {
+        &self.medium.secret
+    }
+    fn one_time_sk(&self, id: u32) -> Option<&SecretKey> {
+        self.one_time.get(&id)
+    }
+}
+
+/// What only an unlock opens. Dropped, and so wiped, on lock.
+pub(crate) struct Unlocked {
+    pub identity: KeyPair,
+    pub data_key: Zeroizing<[u8; 32]>,
+    pub prekeys: Option<Prekeys>,
+    /// Sessions read so far; the rest stay sealed in the store.
+    pub sessions: HashMap<PeerId, SessionState>,
+}
+
+pub(crate) struct Core {
+    pub config: Config,
+    pub vault: Arc<dyn KeyVault>,
+    pub store: Arc<dyn Store>,
+    pub kem: HqcKem,
+    pub has_identity: bool,
+    pub tier: Tier,
+    /// This client's id, known from the first unlock on.
+    pub me: Option<PeerId>,
+    pub unlocked: Option<Unlocked>,
+    pub peers: BTreeMap<PeerId, Peer>,
+    pub convo: crate::convo::Convo,
+    /// The last message time handed out: stamps are strictly increasing, so
+    /// two messages in one millisecond keep their order at rest.
+    pub last_stamp: i64,
+    pub auth: crate::auth::Auth,
+    pub http_next: u64,
+    pub http_pending: HashMap<u64, crate::http::Pending>,
+    /// `start` was called: sign in and connect whenever possible.
+    pub started: bool,
+    pub network: Option<crate::types::NetworkInfo>,
+    pub invites: Vec<crate::types::InviteView>,
+    /// Requests this user sent that are not answered yet.
+    pub sent: Vec<crate::types::SentInviteView>,
+    /// Friends whose key is being fetched for pinning.
+    pub key_fetches: std::collections::BTreeSet<PeerId>,
+    pub net: crate::net::Net,
+    /// Effects of the call in progress, in order.
+    pub out: Vec<Effect>,
+    /// A write failed while handling the current inbound frame: it is not
+    /// acknowledged, so the broker delivers it again.
+    pub write_failed: bool,
+    /// How slots are named, known from the first unlock on.
+    pub names: Option<persist::SlotNames>,
+}
+
+impl Core {
+    pub fn new(config: Config, vault: Arc<dyn KeyVault>, store: Arc<dyn Store>) -> Self {
+        let has_identity = store.get(persist::STATE.into()).is_some();
+        let tier = vault.tier();
+        Self {
+            config,
+            vault,
+            store,
+            kem: HqcKem,
+            has_identity,
+            tier,
+            me: None,
+            unlocked: None,
+            peers: BTreeMap::new(),
+            convo: Default::default(),
+            last_stamp: 0,
+            auth: Default::default(),
+            http_next: 0,
+            http_pending: HashMap::new(),
+            started: false,
+            network: None,
+            invites: Vec::new(),
+            sent: Vec::new(),
+            key_fetches: Default::default(),
+            net: Default::default(),
+            out: Vec::new(),
+            write_failed: false,
+            names: None,
+        }
+    }
+
+    pub fn emit(&mut self, effect: Effect) {
+        self.out.push(effect);
+    }
+
+    pub fn unlocked(&self) -> Result<&Unlocked, CoreError> {
+        self.unlocked
+            .as_ref()
+            .ok_or(CoreError::Vault(crate::ports::VaultError::Locked))
+    }
+
+    pub fn unlocked_mut(&mut self) -> Result<&mut Unlocked, CoreError> {
+        self.unlocked
+            .as_mut()
+            .ok_or(CoreError::Vault(crate::ports::VaultError::Locked))
+    }
+
+    // ── Identity and state ─────────────────────────────────────────────────
+
+    pub fn create_identity(&mut self) -> Result<(), CoreError> {
+        if self.has_identity {
+            return Err(CoreError::State(
+                "this profile already has an identity".into(),
+            ));
+        }
+        let tier = self.vault.create()?;
+        let identity = hqc::keypair_from_seed(&hqc::Seed::generate()?)?;
+        let mut data_key = Zeroizing::new([0u8; 32]);
+        getrandom::fill(data_key.as_mut()).map_err(|_| CoreError::State("no entropy".into()))?;
+        self.me = Some(PeerId::of(&identity.public));
+        self.names = Some(persist::SlotNames::of(&data_key));
+        self.unlocked = Some(Unlocked {
+            identity,
+            data_key,
+            prekeys: None,
+            sessions: HashMap::new(),
+        });
+        self.has_identity = true;
+        self.save_state()?;
+        self.tier = tier;
+        self.emit(Effect::TierChanged(tier));
+        Ok(())
+    }
+
+    /// Writes the `state` blob, sealed to the device key.
+    pub fn save_state(&self) -> Result<(), CoreError> {
+        let u = self.unlocked()?;
+        let state = StoredState {
+            format: persist::FORMAT,
+            identity_pk: u.identity.public.as_bytes().to_vec(),
+            identity_sk: u.identity.secret.as_bytes().to_vec(),
+            data_key: *u.data_key,
+            prekeys: u.prekeys.as_ref().map(|p| StoredPrekeys {
+                medium_pk: p.medium.public.as_bytes().to_vec(),
+                medium_sk: p.medium.secret.as_bytes().to_vec(),
+                rotated_at: p.rotated_at,
+                one_time: p
+                    .one_time
+                    .iter()
+                    .map(|(id, sk)| (*id, sk.as_bytes().to_vec()))
+                    .collect(),
+                next_id: p.next_id,
+            }),
+            peers: self
+                .peers
+                .values()
+                .map(|p| StoredPeer {
+                    id: p.id.to_string(),
+                    username: p.username.clone(),
+                    convo_id: p.convo.as_ref().map(|t| t.as_str().to_owned()),
+                    handshake_id: p.handshake.as_ref().map(|t| t.as_str().to_owned()),
+                    pinned_pk: p.pinned.as_ref().map(|k| k.as_bytes().to_vec()),
+                    unread: p.unread,
+                    read_until: p.read_until,
+                    blocked_at: p.blocked_at,
+                    vanished_at: p.vanished_at,
+                    verified: p.verified,
+                })
+                .collect(),
+            sent: self.sent.iter().map(|s| (s.to.clone(), s.at)).collect(),
+            outbox: self
+                .convo
+                .outbox
+                .iter()
+                .map(|o| (o.peer.to_string(), o.msg_id.clone()))
+                .collect(),
+        };
+        let plain = persist::encode(&state)?;
+        let blob = persist::seal_state(self.vault.as_ref(), &plain)?;
+        self.store.put(persist::STATE.into(), blob)?;
+        Ok(())
+    }
+
+    /// Saves the state, or tells the app it could not: a write that fails
+    /// quietly would lose ratchet, prekey or outbox state at the next launch.
+    /// While locked there is nothing to save with; the unlock saves.
+    pub fn persist_state(&mut self) {
+        if self.unlocked.is_none() {
+            return;
+        }
+        if let Err(e) = self.save_state() {
+            self.storage_failed("state", &e);
+        }
+    }
+
+    /// Reports a store write that failed.
+    pub fn storage_failed(&mut self, what: &str, e: &CoreError) {
+        self.write_failed = true;
+        self.emit(Effect::StorageFailed {
+            reason: format!("could not save {what}: {e:?}"),
+        });
+    }
+
+    /// Opens `state` (one hardware ECDH) and adopts it.
+    pub fn open_state(&mut self) -> Result<(), CoreError> {
+        if !self.has_identity {
+            return Err(CoreError::NoIdentity);
+        }
+        let blob = self
+            .store
+            .get(persist::STATE.into())
+            .ok_or(CoreError::NoIdentity)?;
+        let plain = persist::open_state(self.vault.as_ref(), &blob)?;
+        let state: StoredState = persist::decode(persist::STATE, &plain)?;
+        if state.format != persist::FORMAT {
+            return Err(CoreError::State(format!("state format {}", state.format)));
+        }
+        let bad = |e: hqc::Error| CoreError::State(e.to_string());
+        let identity = KeyPair {
+            public: PublicKey::from_bytes(&state.identity_pk).map_err(bad)?,
+            secret: SecretKey::from_bytes(&state.identity_sk).map_err(bad)?,
+        };
+        let prekeys = match &state.prekeys {
+            Some(p) => Some(Prekeys {
+                identity_sk: identity.secret.clone(),
+                medium: KeyPair {
+                    public: PublicKey::from_bytes(&p.medium_pk).map_err(bad)?,
+                    secret: SecretKey::from_bytes(&p.medium_sk).map_err(bad)?,
+                },
+                rotated_at: p.rotated_at,
+                one_time: p
+                    .one_time
+                    .iter()
+                    .map(|(id, sk)| Ok((*id, SecretKey::from_bytes(sk).map_err(bad)?)))
+                    .collect::<Result<_, CoreError>>()?,
+                next_id: p.next_id,
+            }),
+            None => None,
+        };
+        let mut peers = BTreeMap::new();
+        for p in &state.peers {
+            let id = PeerId::parse(&p.id)?;
+            let previous = self.peers.get(&id);
+            peers.insert(
+                id.clone(),
+                Peer {
+                    id,
+                    username: p.username.clone(),
+                    convo: p.convo_id.as_deref().map(TopicId::parse).transpose()?,
+                    handshake: p.handshake_id.as_deref().map(TopicId::parse).transpose()?,
+                    pinned: p
+                        .pinned_pk
+                        .as_deref()
+                        .map(PublicKey::from_bytes)
+                        .transpose()
+                        .map_err(bad)?,
+                    online: previous.is_some_and(|p| p.online),
+                    unread: p.unread,
+                    read_until: p.read_until,
+                    pending: previous.map_or(0, |p| p.pending),
+                    blocked_at: p.blocked_at,
+                    vanished_at: p.vanished_at,
+                    verified: p.verified,
+                },
+            );
+        }
+        self.me = Some(PeerId::of(&identity.public));
+        self.peers = peers;
+        self.sent = state
+            .sent
+            .iter()
+            .map(|(to, at)| crate::types::SentInviteView {
+                to: to.clone(),
+                at: *at,
+            })
+            .collect();
+        self.convo.outbox = state
+            .outbox
+            .iter()
+            .filter_map(|(peer, msg_id)| {
+                Some(crate::convo::Outgoing {
+                    peer: PeerId::parse(peer).ok()?,
+                    msg_id: msg_id.clone(),
+                    in_flight: false,
+                })
+            })
+            .collect();
+        self.names = Some(persist::SlotNames::of(&state.data_key));
+        self.unlocked = Some(Unlocked {
+            identity,
+            data_key: Zeroizing::new(state.data_key),
+            prekeys,
+            sessions: HashMap::new(),
+        });
+        Ok(())
+    }
+
+    // ── Sessions ───────────────────────────────────────────────────────────
+
+    /// The slot of the session with `peer`.
+    pub fn session_slot(&self, peer: &PeerId) -> Result<String, CoreError> {
+        self.names
+            .as_ref()
+            .map(|n| n.session(peer))
+            .ok_or(CoreError::Vault(crate::ports::VaultError::Locked))
+    }
+
+    /// The prefix of every message slot with `peer`.
+    pub fn messages_prefix(&self, peer: &PeerId) -> Result<String, CoreError> {
+        self.names
+            .as_ref()
+            .map(|n| n.messages_prefix(peer))
+            .ok_or(CoreError::Vault(crate::ports::VaultError::Locked))
+    }
+
+    /// Every message slot with `peer`, oldest first; none before an unlock.
+    pub fn message_slots(&self, peer: &PeerId) -> Vec<String> {
+        self.messages_prefix(peer)
+            .map(|p| self.store.list(p))
+            .unwrap_or_default()
+    }
+
+    /// The session with `peer`, read from the store on first use.
+    pub fn session(&mut self, peer: &PeerId) -> Result<Option<&mut SessionState>, CoreError> {
+        let store = self.store.clone();
+        let slot = self.session_slot(peer)?;
+        let u = self.unlocked_mut()?;
+        if !u.sessions.contains_key(peer)
+            && let Some(stored) =
+                persist::get_data::<StoredSession>(store.as_ref(), &u.data_key, &slot)?
+        {
+            u.sessions.insert(peer.clone(), stored.to_session()?);
+        }
+        Ok(u.sessions.get_mut(peer))
+    }
+
+    /// Stores and keeps `session` as the session with `peer`.
+    pub fn put_session(&mut self, peer: &PeerId, session: SessionState) -> Result<(), CoreError> {
+        let store = self.store.clone();
+        let slot = self.session_slot(peer)?;
+        let u = self.unlocked_mut()?;
+        persist::put_data(
+            store.as_ref(),
+            &u.data_key,
+            &slot,
+            &StoredSession::from_session(&session),
+        )?;
+        u.sessions.insert(peer.clone(), session);
+        Ok(())
+    }
+
+    /// Forgets the in-memory copy of the session with `peer`, so the next use
+    /// reads the stored one: an advance that could not be written is undone.
+    pub fn drop_cached_session(&mut self, peer: &PeerId) {
+        if let Some(u) = self.unlocked.as_mut() {
+            u.sessions.remove(peer);
+        }
+    }
+
+    /// Writes the in-memory session with `peer` back after it advanced.
+    pub fn save_session(&mut self, peer: &PeerId) -> Result<(), CoreError> {
+        let store = self.store.clone();
+        let slot = self.session_slot(peer)?;
+        let u = self.unlocked_mut()?;
+        if let Some(s) = u.sessions.get(peer) {
+            persist::put_data(
+                store.as_ref(),
+                &u.data_key,
+                &slot,
+                &StoredSession::from_session(s),
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn forget_session(&mut self, peer: &PeerId) {
+        self.convo.proven.retain(|_, p| p != peer);
+        self.convo.unanswered.remove(peer);
+        if let Ok(slot) = self.session_slot(peer) {
+            self.store.delete(slot);
+        }
+        if let Some(u) = self.unlocked.as_mut() {
+            u.sessions.remove(peer);
+        }
+    }
+
+    // ── Messages ───────────────────────────────────────────────────────────
+
+    /// A message time at or after `now`, after every one handed out before.
+    pub fn stamp(&mut self, now: i64) -> i64 {
+        self.last_stamp = now.max(self.last_stamp.saturating_add(1));
+        self.last_stamp
+    }
+
+    pub fn put_message(&self, peer: &PeerId, m: &StoredMessage) -> Result<(), CoreError> {
+        let u = self.unlocked()?;
+        let names = self
+            .names
+            .as_ref()
+            .ok_or(CoreError::Vault(crate::ports::VaultError::Locked))?;
+        persist::put_data(
+            self.store.as_ref(),
+            &u.data_key,
+            &names.message(peer, m.at, &m.msg_id),
+            m,
+        )
+    }
+
+    /// The slot of the message `msg_id` with `peer`, found by key alone.
+    pub fn message_slot_of(&self, peer: &PeerId, msg_id: &str) -> Option<String> {
+        let suffix = format!("/{}", self.names.as_ref()?.message_tag(msg_id));
+        self.message_slots(peer)
+            .into_iter()
+            .find(|k| k.ends_with(&suffix))
+    }
+
+    pub fn get_message(&self, slot: &str) -> Result<Option<StoredMessage>, CoreError> {
+        let u = self.unlocked()?;
+        persist::get_data(self.store.as_ref(), &u.data_key, slot)
+    }
+
+    pub fn history(
+        &self,
+        peer: &PeerId,
+        before: Option<i64>,
+        limit: u32,
+    ) -> Result<Vec<Message>, CoreError> {
+        self.unlocked()?;
+        let prefix = self.messages_prefix(peer)?;
+        let mut slots = self.store.list(prefix.clone());
+        if let Some(before) = before {
+            let cut = format!("{prefix}{:020}", before.max(0));
+            slots.retain(|s| *s < cut);
+        }
+        let limit = usize::try_from(limit).unwrap_or(usize::MAX);
+        let skip = slots.len().saturating_sub(limit);
+        let mut out = Vec::new();
+        for slot in slots.iter().skip(skip) {
+            // One message that cannot be read does not hide the others; a
+            // locked vault still fails the page.
+            let m = match self.get_message(slot) {
+                Ok(m) => m,
+                Err(e @ CoreError::Vault(_)) => return Err(e),
+                Err(_) => None,
+            };
+            if let Some(m) = m {
+                out.push(Message {
+                    msg_id: m.msg_id,
+                    peer: peer.to_string(),
+                    outgoing: m.outgoing,
+                    text: m.text,
+                    at: m.at,
+                    delivery: m.delivery.map(persist::delivery_of),
+                });
+            }
+        }
+        Ok(out)
+    }
+
+    // ── Directory ──────────────────────────────────────────────────────────
+
+    pub fn friends(&self) -> Vec<FriendView> {
+        let mut out: Vec<FriendView> = self
+            .peers
+            .values()
+            .map(|p| FriendView {
+                id: p.id.to_string(),
+                username: p.username.clone(),
+                online: p.online,
+                has_session: self
+                    .session_slot(&p.id)
+                    .is_ok_and(|s| self.store.get(s).is_some()),
+                unread: p.unread.saturating_add(p.pending),
+                blocked_at: p.blocked_at,
+                vanished_at: p.vanished_at,
+                has_key: p.pinned.is_some(),
+                verified: p.verified,
+            })
+            .collect();
+        out.sort_by(|a, b| {
+            (a.username.as_deref().unwrap_or("~"), &a.id)
+                .cmp(&(b.username.as_deref().unwrap_or("~"), &b.id))
+        });
+        out
+    }
+}

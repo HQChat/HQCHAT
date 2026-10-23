@@ -1,0 +1,66 @@
+# The HQChat core: the protocol and the client every app and the server link.
+# See docs/architecture/multiplatform.md and docs/architecture/core-wiring.md.
+[workspace]
+resolver = "3"
+members = ["hqc-sys", "hqc", "hqchat-protocol", "hqchat-engine", "hqchat-node", "hqchat-ffi", "hqchat-verdict"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "AGPL-3.0-only"
+repository = "https://github.com/HQChat/HQCHAT"
+publish = false
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+unsafe_op_in_unsafe_fn = "deny"
+missing_docs = "warn"
+unused_must_use = "deny"
+unused_qualifications = "warn"
+
+# Speed never buys a panic, a silent truncation or a silent overflow: code that
+# reads untrusted bytes uses checked slicing, `try_from` and checked or
+# explicitly wrapping/saturating arithmetic. Tests are exempt where clippy.toml
+# says so; CI turns every warning into an error.
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+todo = "warn"
+unimplemented = "warn"
+unreachable = "warn"
+indexing_slicing = "warn"
+string_slice = "warn"
+get_unwrap = "warn"
+arithmetic_side_effects = "warn"
+as_conversions = "warn"
+cast_possible_truncation = "warn"
+cast_possible_wrap = "warn"
+cast_sign_loss = "warn"
+cast_lossless = "warn"
+mem_forget = "warn"
+undocumented_unsafe_blocks = "warn"
+multiple_unsafe_ops_per_block = "warn"
+dbg_macro = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+exit = "warn"
+
+[profile.release]
+# Integer overflow panics (and becomes an error at the bindings) instead of
+# wrapping, in release as in debug.
+overflow-checks = true
+# Unwind, so that a panic can be caught: Engine::run turns one into an error,
+# and every Node export catches it (napi catch_unwind); an abort would kill
+# the app or the server with no report.
+panic = "unwind"
+lto = "thin"
+codegen-units = 1
+
+[profile.release.build-override]
+# Build scripts and proc-macros run on the build machine and never ship.
+# Stripping them breaks the build on macOS: the Nix shell's `strip` corrupts
+# proc-macro dylibs, and rustc then cannot load zeroize_derive.
+strip = "none"

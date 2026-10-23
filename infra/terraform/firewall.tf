@@ -2,7 +2,9 @@
 # the inner one and says the same. Rules name droplets by tag, so they hold for
 # whatever droplets the environment has.
 #
-#   app   80/443 from Cloudflare only; 22 from anywhere (rate-limited and key-only on the host)
+#   app   80/443 from Cloudflare only; 22 from the environment's adminSshSources,
+#         or from anywhere when it names none (rate-limited per source and
+#         key-only on the host)
 #   mqtt  443 (hqn/1) from anywhere; 22 from the app host only
 #   both  WireGuard from each other
 
@@ -11,6 +13,7 @@ data "cloudflare_ip_ranges" "edge" {}
 locals {
   cloudflare_ranges = concat(data.cloudflare_ip_ranges.edge.ipv4_cidr_blocks, data.cloudflare_ip_ranges.edge.ipv6_cidr_blocks)
   anywhere          = ["0.0.0.0/0", "::/0"]
+  ssh_sources       = try(local.env.adminSshSources, local.anywhere)
 }
 
 resource "digitalocean_firewall" "app" {
@@ -28,7 +31,7 @@ resource "digitalocean_firewall" "app" {
   inbound_rule {
     protocol         = "tcp"
     port_range       = "22"
-    source_addresses = local.anywhere
+    source_addresses = local.ssh_sources
   }
   inbound_rule {
     protocol    = "udp"
@@ -40,13 +43,40 @@ resource "digitalocean_firewall" "app" {
     source_addresses = local.anywhere
   }
 
+  # Outbound as the host's nftables allows it: HTTPS (APNs, Stripe, Sentry,
+  # the caches), DNS, NTP, and inside the VPC the broker and the database.
+  outbound_rule {
+    protocol              = "tcp"
+    port_range            = "443"
+    destination_addresses = local.anywhere
+  }
   dynamic "outbound_rule" {
     for_each = ["tcp", "udp"]
     content {
       protocol              = outbound_rule.value
-      port_range            = "1-65535"
+      port_range            = "53"
       destination_addresses = local.anywhere
     }
+  }
+  outbound_rule {
+    protocol              = "udp"
+    port_range            = "123"
+    destination_addresses = local.anywhere
+  }
+  outbound_rule {
+    protocol         = "udp"
+    port_range       = "51820"
+    destination_tags = [digitalocean_tag.this["mqtt"].name]
+  }
+  outbound_rule {
+    protocol         = "tcp"
+    port_range       = "22"
+    destination_tags = [digitalocean_tag.this["mqtt"].name]
+  }
+  outbound_rule {
+    protocol              = "tcp"
+    port_range            = "25060-25061"
+    destination_addresses = [local.env.vpcRange]
   }
   outbound_rule {
     protocol              = "icmp"

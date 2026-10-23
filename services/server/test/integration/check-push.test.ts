@@ -15,10 +15,10 @@ import assert from "node:assert/strict";
 import * as crypto from "node:crypto";
 import { test } from "node:test";
 import { setLogLevel } from "../../src/common/logger";
-import { peerId } from "../../src/protocol/identity";
 import { DB } from "../../src/server/db/api";
 import { q } from "../../src/server/db/pg";
 import { closePg, requirePg } from "../pg-helper";
+import { peerId } from "../reference/protocol/identity";
 
 test.before(requirePg);
 

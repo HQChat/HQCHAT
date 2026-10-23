@@ -33,8 +33,9 @@ class DataResetService {
         let keychainCleared = clearAllKeychainItems(profileIds: profileIds)
         let defaultsCleared = clearAllUserDefaults()
         let databaseCleared = clearSwiftDataDatabase(modelContext: modelContext)
+        let coreCleared = clearCoreStores()
 
-        success = success && keychainCleared && defaultsCleared && databaseCleared
+        success = success && keychainCleared && defaultsCleared && databaseCleared && coreCleared
         return success
     }
     
@@ -118,7 +119,21 @@ class DataResetService {
         return success
     }
 
-    /// True when the items were deleted or there were none.
+    /// Deletes every profile's core store (sealed files under Application
+    /// Support/core); true when it is gone or was never there.
+    private static func clearCoreStores() -> Bool {
+        guard let core = try? ChatStore.coreRoot() else { return true }
+        guard FileManager.default.fileExists(atPath: core.path) else { return true }
+        do {
+            try FileManager.default.removeItem(at: core)
+            return true
+        } catch {
+            Log.storage.warning("⚠️ Failed to delete the core stores: \(String(describing: error))")
+            return false
+        }
+    }
+
+        /// True when the items were deleted or there were none.
     private static func delete(_ query: [String: Any]) -> Bool {
         let status = SecItemDelete(query as CFDictionary)
         return status == errSecSuccess || status == errSecItemNotFound
@@ -135,7 +150,8 @@ class DataResetService {
         // Re-prompting would be theatre, and Guideline 1.2 asks for agreement,
         // not for a fresh signature per install. It re-prompts by itself when
         // `EulaPrefs.currentVersion` changes, which is the case that should.
-        let keys = ["app.hqchat.currentUsername"]
+        // Both written by builds before the core; removed as residue.
+        let keys = ["app.hqchat.currentUsername", "unsecureKeyHoldEnabled"]
         
         for key in keys {
             UserDefaults.standard.removeObject(forKey: key)
@@ -155,11 +171,8 @@ class DataResetService {
                 modelContext.delete(profile)
             }
             
-            // Also delete any orphaned friends or messages (shouldn't happen with cascade, but just in case)
-            let friendDescriptor = FetchDescriptor<Friend>()
-            let friends = try modelContext.fetch(friendDescriptor)
-            for friend in friends {
-                friend.clearAESKeys() // purge Keychain key material
+            // 3.1.1 rows left over (their Keychain items are deleted with the services above).
+            for friend in try modelContext.fetch(FetchDescriptor<Friend>()) {
                 modelContext.delete(friend)
             }
             
@@ -175,6 +188,8 @@ class DataResetService {
             }
             
             try modelContext.save()
+            // Deleted rows stay readable in SQLite's free pages until compacted.
+            PersistenceController.storeNeedsCompacting()
             return true
         } catch {
             Log.storage.error("❌ Failed to clear SwiftData database: \(String(describing: error))")

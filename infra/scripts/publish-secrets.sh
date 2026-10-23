@@ -1,8 +1,20 @@
 #!/usr/bin/env bash
 # shellcheck source-path=SCRIPTDIR
-# Builds each host's secret bundle, encrypts it with age to the host's SSH key
-# and uploads it to <cache bucket>/secrets/<environment>/<role>.age, where the
-# host's hqcat-secrets-sync (infra/nixos/modules/secrets.nix) fetches it.
+# Builds each host's secret bundle, seals it with age to the host's
+# post-quantum recipient (ML-KEM-768 + X25519, derived from AGE_IDENTITY_APP or
+# AGE_IDENTITY_MQTT, an `age-keygen -pq` identity), and uploads it to
+# <cache bucket>/secrets/<environment>/<role>.age with, beside it in
+# <role>.age.sig, the statement
+#
+#   hqcat-secrets/1 <environment> <role> <release> <sha256 of the .age>
+#
+# and its signature by the cache key (lib.sh `sign`; needs
+# NIX_CACHE_SIGNING_KEY). The host's hqcat-secrets-sync
+# (infra/nixos/modules/secrets.nix) installs only a bundle that matches a
+# signed statement no older than the last it installed. The bucket is public:
+# without the signature anyone able to write to it could hand a host their own
+# database URL, and a classical X25519 seal could be opened later by whoever
+# records it now and has a quantum computer then.
 #
 #   infra/scripts/publish-secrets.sh <environment>
 #
@@ -15,7 +27,7 @@ set -euo pipefail
 ENVIRONMENT="${1:?usage: publish-secrets.sh <environment>}"
 # shellcheck source=lib.sh
 source "$(dirname "$0")/lib.sh"
-outputs="${TF_OUTPUTS:-/tmp/tf-outputs.json}"
+outputs="${TF_OUTPUTS:?TF_OUTPUTS names the outputs terraform.sh wrote}"
 bucket="$(env_get "$ENVIRONMENT" .cache.bucket)"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -26,7 +38,8 @@ extra() {
   for name in "$@"; do
     var="${name^^}"
     [[ -n "${!var:-}" ]] || continue
-    json="$(jq -c --arg k "$name" --arg v "${!var}" '. + {($k): $v}' <<<"$json")"
+    # The value through a file descriptor, never on jq's command line.
+    json="$(jq -c --arg k "$name" --rawfile v <(printf '%s' "${!var}") '. + {($k): $v}' <<<"$json")"
   done
   printf '%s' "$json"
 }
@@ -37,9 +50,23 @@ for role in app mqtt; do
     mqtt) added="$(extra noise_keys)" ;;
   esac
   jq -c --arg r "$role" --argjson add "$added" '.bundle.value[$r] + $add' "$outputs" >"$tmp/$role.json"
-  recipient="$(jq -r --arg r "$role" '.hosts.value[$r].host_key' "$outputs")"
+  identity_var="AGE_IDENTITY_${role^^}"
+  [[ "${!identity_var:-}" == AGE-SECRET-KEY-PQ-1* ]] || {
+    echo "$identity_var is not set to an age post-quantum identity (age-keygen -pq): see docs/runbooks/deploy.md" >&2
+    exit 1
+  }
+  recipient="$(age-keygen -y <<<"${!identity_var}")"
+  [[ "$recipient" == age1pq1* ]] || {
+    echo "$role: $identity_var does not give a post-quantum recipient" >&2
+    exit 1
+  }
   age -r "$recipient" -o "$tmp/$role.age" "$tmp/$role.json"
-  r2 cp "$tmp/$role.age" "s3://$bucket/secrets/$ENVIRONMENT/$role.age" \
-    --content-type application/octet-stream --cache-control "no-cache, max-age=0"
+  statement="hqcat-secrets/1 $ENVIRONMENT $role $(date -u +%s) $(sha256sum "$tmp/$role.age" | cut -d' ' -f1)"
+  signature="$(sign "$statement")"
+  printf '%s\n%s\n' "$statement" "$signature" >"$tmp/$role.age.sig"
+  for f in "$role.age" "$role.age.sig"; do
+    r2 cp "$tmp/$f" "s3://$bucket/secrets/$ENVIRONMENT/$f" \
+      --content-type application/octet-stream --cache-control "no-cache, max-age=0"
+  done
   echo "$role: $(jq -r 'keys | join(", ")' "$tmp/$role.json")"
 done

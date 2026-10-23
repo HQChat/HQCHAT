@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import * as crypto from "node:crypto";
 import * as net from "node:net";
 import { after, test } from "node:test";
+import { core, type GatewayKeyPair, type HqnSecret } from "../../src/common/core";
 import { createGateway, type GatewayEvent, type GatewayLimits } from "../../src/gateway/gateway";
 import { parseKeySeeds } from "../../src/gateway/keys";
 import { connectClientId } from "../../src/gateway/mqtt-connect";
@@ -23,11 +24,9 @@ import {
   HqnInitiator,
   type Kem,
   msg1Length,
-  type ServerStatic,
   sealFrames,
   type Transport,
-  x25519KeyPair,
-} from "../../src/protocol/noise";
+} from "../reference/protocol/noise";
 
 // --- fixtures ----------------------------------------------------------------
 
@@ -39,12 +38,10 @@ const fakeKem: Kem = {
   decapsulate: (_sk, ct) => crypto.createHash("sha256").update(ct).digest(),
 };
 
-const KEY: ServerStatic = {
-  keyId: 3,
-  x25519: x25519KeyPair(),
-  hqc: { pk: crypto.randomBytes(HQC_PUBLIC_KEY_BYTES), sk: crypto.randomBytes(7333) },
-};
-const KEY_PUB = { keyId: KEY.keyId, x25519: KEY.x25519.pub, hqc: KEY.hqc.pk };
+// The gateway's key is the core's; the client below is the TypeScript
+// initiator with a fake KEM, so the two sides are independent implementations.
+const KEY = new core.GatewayKeyPair({ keyId: 3, x25519: crypto.randomBytes(32), hqcSeed: crypto.randomBytes(32) });
+const KEY_PUB = { keyId: KEY.keyId, x25519: KEY.publicKey().x25519, hqc: KEY.publicKey().hqc };
 
 const CLIENT_ID = "ab".repeat(32);
 
@@ -80,7 +77,7 @@ async function fakeBroker() {
 async function gateway(opts: {
   limits?: Partial<GatewayLimits>;
   upstreamPort: number;
-  decapsulate?: (k: number, ct: Buffer) => Promise<Buffer>;
+  decapsulate?: (k: number, ct: Buffer) => Promise<HqnSecret>;
 }) {
   const events: GatewayEvent[] = [];
   let decaps = 0;
@@ -90,7 +87,7 @@ async function gateway(opts: {
       opts.decapsulate ??
       (async (_k, ct) => {
         decaps++;
-        return fakeKem.decapsulate(Buffer.alloc(0), ct);
+        return core.HqnSecret.fromBytes(fakeKem.decapsulate(Buffer.alloc(0), ct));
       }),
     upstream: { host: "127.0.0.1", port: opts.upstreamPort },
     ...(opts.limits ? { limits: opts.limits } : {}),
@@ -121,9 +118,9 @@ const closed = (s: net.Socket) =>
   });
 
 /** A full client: header, msg1 carrying a CONNECT, msg2, then a transport. */
-async function handshake(port: number, connect = connectPacket()) {
+async function handshake(port: number, connect = connectPacket(), kem: Kem = fakeKem) {
   const s = await dial(port);
-  const init = new HqnInitiator(KEY_PUB, { kem: fakeKem });
+  const init = new HqnInitiator(KEY_PUB, { kem });
   const msg1 = init.writeMessage1(connect);
   s.write(Buffer.concat([Buffer.from([HQN_VERSION, KEY.keyId]), frame(msg1)]));
   const reader = new FrameReader();
@@ -413,38 +410,33 @@ test("the key file is validated strictly", () => {
 
 // --- the real decapsulation pool ------------------------------------------------
 
-test("the worker pool decapsulates with the real HQC library, off the main thread", async (t) => {
-  let HqcWrapper: typeof import("../../src/protocol/hqc").HqcWrapper;
-  try {
-    ({ HqcWrapper } = await import("../../src/protocol/hqc"));
-  } catch (e) {
-    return t.skip(`native HQC unavailable: ${(e as Error).message}`);
-  }
+test("the pool decapsulates with the core's HQC, and the handshake completes on the handle", async () => {
   const { DecapPool } = await import("../../src/gateway/decap-pool");
-  const kp = HqcWrapper.keypairFromSeed(crypto.randomBytes(32));
-  const pool = new DecapPool([{ keyId: 5, sk: kp.sk }], 2, 8);
+  const pool = new DecapPool(new Map([[KEY.keyId, KEY]]), 2, 8);
+  const broker = await fakeBroker();
+  toClose.push(broker.server);
+  const gw = await gateway({ upstreamPort: broker.port, decapsulate: (k, ct) => pool.decapsulate(k, ct) });
+  toClose.push(gw.server);
   try {
-    const jobs = Array.from({ length: 4 }, () => HqcWrapper.encapsulate(kp.pk));
-    const secrets = await Promise.all(jobs.map((j) => pool.decapsulate(5, j.ct)));
-    for (const [i, ss] of secrets.entries()) assert.ok(ss.equals(jobs[i]!.ss), `job ${i}`);
+    // The real KEM on the client side: only the core's decapsulation opens it.
+    const realKem: Kem = { encapsulate: (pk) => core.hqcEncapsulate(pk), decapsulate: () => Buffer.alloc(0) };
+    const c = await handshake(gw.port, connectPacket(), realKem);
+    assert.ok((await c.nextFrame()).equals(CONNACK));
+    c.s.destroy();
     await assert.rejects(
-      pool.decapsulate(9, jobs[0]!.ct),
+      pool.decapsulate(9, Buffer.alloc(HQC_CIPHERTEXT_BYTES)),
       /unknown key id/,
       "an unknown key id is an error, not a crash",
     );
+    await assert.rejects(pool.decapsulate(KEY.keyId, Buffer.alloc(3)), "a ciphertext of the wrong size");
   } finally {
     await pool.close();
   }
 });
 
-test("a full pool queue refuses at once rather than growing", async (t) => {
-  try {
-    await import("../../src/protocol/hqc");
-  } catch (e) {
-    return t.skip(`native HQC unavailable: ${(e as Error).message}`);
-  }
+test("a full pool queue refuses at once rather than growing", async () => {
   const { DecapPool } = await import("../../src/gateway/decap-pool");
-  const pool = new DecapPool([], 1, 0);
+  const pool = new DecapPool(new Map(), 1, 0);
   try {
     await assert.rejects(pool.decapsulate(1, Buffer.alloc(HQC_CIPHERTEXT_BYTES)), /queue full/);
   } finally {
@@ -452,12 +444,7 @@ test("a full pool queue refuses at once rather than growing", async (t) => {
   }
 });
 
-test("noise-gw-keys fills an empty seed file, and appends rather than overwrites", async (t) => {
-  try {
-    await import("../../src/protocol/hqc");
-  } catch (e) {
-    return t.skip(`native HQC unavailable: ${(e as Error).message}`);
-  }
+test("noise-gw-keys fills an empty seed file, and appends rather than overwrites", async () => {
   const fs = await import("node:fs");
   const os = await import("node:os");
   const path = await import("node:path");
@@ -485,4 +472,68 @@ test("noise-gw-keys fills an empty seed file, and appends rather than overwrites
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// --- what a few hundred silent sockets can do ------------------------------------
+
+test("a socket that never sends its header gives its slot back at the header deadline", async () => {
+  const broker = await fakeBroker();
+  toClose.push(broker.server);
+  const gw = await gateway({ upstreamPort: broker.port, limits: { headerTimeoutMs: 100, handshakeTimeoutMs: 5000 } });
+  toClose.push(gw.server);
+  const s = await dial(gw.port);
+  const t0 = Date.now();
+  await closed(s);
+  assert.ok(Date.now() - t0 < 1000, "a silent socket held its slot for the whole handshake deadline");
+  assert.equal(gw.stats().refused.timeout, 1);
+});
+
+test("half-open handshakes are capped per network, not only per address", async () => {
+  const { Admission } = await import("../../src/gateway/admission");
+  const { DEFAULT_LIMITS } = await import("../../src/gateway/gateway");
+  const a = new Admission({ ...DEFAULT_LIMITS, perIpHandshakes: 8, perPrefixHandshakes: 3 }, Date.now);
+  for (const ip of ["198.51.100.1", "198.51.100.2", "::ffff:198.51.100.3"]) {
+    assert.equal(a.refusalFor(ip), null, ip);
+    a.startHandshake(ip);
+  }
+  assert.equal(a.refusalFor("198.51.100.200"), "prefix-handshakes", "a fourth address in the /24 was admitted");
+  assert.equal(a.refusalFor("198.51.101.1"), null, "the next /24 is a different network");
+
+  const v6 = new Admission({ ...DEFAULT_LIMITS, perPrefixHandshakes: 1 }, Date.now);
+  const leave = v6.startHandshake("2001:db8:aa:bb01::1");
+  assert.equal(v6.refusalFor("2001:db8:aa:bbff:ffff::9"), "prefix-handshakes", "same /56");
+  assert.equal(v6.refusalFor("2001:db8:aa:cc00::1"), null, "another /56");
+  leave();
+  assert.equal(v6.refusalFor("2001:db8:aa:bbff:ffff::9"), null, "a finished handshake frees its network's slot");
+});
+
+test("addressPrefix names the /24 or /56 an address is in", async () => {
+  const { addressPrefix } = await import("../../src/gateway/admission");
+  assert.equal(addressPrefix("203.0.113.77"), "203.0.113.0/24");
+  assert.equal(addressPrefix("::ffff:203.0.113.77"), "203.0.113.0/24");
+  assert.equal(addressPrefix("2001:db8::1"), "20010db8000000/56");
+  assert.equal(addressPrefix("2001:0db8:0000:00ff:1::"), "20010db8000000/56");
+  assert.equal(addressPrefix("fe80::1%en0"), "fe800000000000/56");
+  assert.equal(addressPrefix("?"), "?");
+  assert.equal(addressPrefix("1:2:3"), "1:2:3");
+});
+
+test("no more than `size` decapsulations run at once; the rest wait in order", async () => {
+  const { DecapPool } = await import("../../src/gateway/decap-pool");
+  let running = 0;
+  let peak = 0;
+  const slow = {
+    keyId: 1,
+    decapsulate: async () => {
+      running++;
+      peak = Math.max(peak, running);
+      await new Promise((r) => setTimeout(r, 20));
+      running--;
+      return core.HqnSecret.fromBytes(Buffer.alloc(32));
+    },
+  } as unknown as GatewayKeyPair;
+  const pool = new DecapPool(new Map([[1, slow]]), 2, 8);
+  await Promise.all(Array.from({ length: 6 }, () => pool.decapsulate(1, Buffer.alloc(1))));
+  assert.equal(peak, 2);
+  await pool.close();
 });

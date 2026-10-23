@@ -52,7 +52,7 @@
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { decodeFrame, encodeFrame, frameHeader, looksLikeFrame } from "../../src/protocol/envelope";
+import { decodeFrame, encodeFrame, frameHeader, looksLikeFrame } from "../reference/protocol/envelope";
 import { makeRng, type Rng } from "./rng";
 
 const VECTORS = path.join(__dirname, "..", "helpers", "envelope-v3-vectors.json");

@@ -1,18 +1,13 @@
 import SwiftUI
-import SwiftData
 
 /// One conversation: notices, the header, the transcript and the composer.
 struct ChatView: View {
-    let friend: Friend
-    let session: ChatSession
+    /// The friend's id; the contact and the messages are read live from the store.
+    let peer: String
     let profileManager: ProfileManager?
 
-    @Environment(\.modelContext) private var modelContext
+    @EnvironmentObject private var chat: ChatStore
     @Environment(\.dismiss) private var dismiss
-    /// See `MessageKeyGate`: bodies are sealed at rest, and the single unlock
-    /// that opens them is asked for when this screen appears, not per row.
-    @ObservedObject private var messageKeys = MessageKeyGate.shared
-    @Query private var messages: [Message]
 
     @State private var messageText = ""
     @State private var isSending = false
@@ -25,18 +20,13 @@ struct ChatView: View {
     @State private var reportDraft: ReportDraft?
     @FocusState private var composerFocused: Bool
 
-    init(friend: Friend, session: ChatSession, profileManager: ProfileManager? = nil) {
-        self.friend = friend
-        self.session = session
-        self.profileManager = profileManager
-
-        // This friend's messages in this profile only.
-        let friendUsername = friend.username
-        let profileID = friend.profile?.id ?? profileManager?.currentProfile?.id
-        _messages = Query(filter: #Predicate<Message> { message in
-            message.friend?.username == friendUsername && message.profileID == profileID
-        }, sort: \Message.timestamp)
+    /// The contact, or a placeholder for a moment after they are removed.
+    private var friend: Contact {
+        chat.contacts.first { $0.peerID == peer }
+            ?? Contact(peerID: peer, username: String(peer.prefix(8)), inviteStatus: .accepted)
     }
+
+    private var messages: [ChatMessage] { chat.messages(with: peer) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -60,9 +50,9 @@ struct ChatView: View {
         .sheet(isPresented: $showingVerification) { verification }
         // `item:` hands the draft to the sheet, so it can never present empty.
         .sheet(item: $reportDraft) { draft in
-            ReportSheet(friend: friend, draft: draft, session: session) {
+            ReportSheet(friend: friend, draft: draft) { blocked in
                 // A block leaves nothing to do here, so close the conversation behind the sheet.
-                if friend.isBlocked { dismiss() }
+                if blocked { dismiss() }
             }
         }
         .hqError($appError)
@@ -75,11 +65,16 @@ struct ChatView: View {
         .hqSwipeNavigation(onBack: { dismiss() })
         #endif
         // One unlock for every sealed row in the thread.
-        .task { await messageKeys.unlock() }
+        .task {
+            await chat.unlock()
+            chat.loadConversation(peer)
+            chat.markRead(peer)
+        }
         .onAppear {
             // Opening the thread clears its unread badges and suppresses its banners.
             NotificationService.shared.visibleConversation = friend.username
-            NotificationService.shared.markRead(friend: friend, modelContext: modelContext)
+            chat.loadConversation(peer)
+            chat.markRead(peer)
         }
         .onDisappear {
             if NotificationService.shared.visibleConversation == friend.username {
@@ -87,7 +82,7 @@ struct ChatView: View {
             }
         }
         .onChange(of: messages.count) { _, _ in
-            NotificationService.shared.markRead(friend: friend, modelContext: modelContext)
+            chat.markRead(peer)
         }
         .onChange(of: isSearching) { _, searching in
             if !searching { searchText = "" }
@@ -97,7 +92,7 @@ struct ChatView: View {
     // MARK: Transcript
 
     /// Messages shown in the list, filtered by the in-chat search query.
-    private var displayedMessages: [Message] {
+    private var displayedMessages: [ChatMessage] {
         guard !searchText.isEmpty else { return messages }
         return messages.filter { $0.content.localizedCaseInsensitiveContains(searchText) }
     }
@@ -121,10 +116,10 @@ struct ChatView: View {
                             }
                             MessageBubble(
                                 message: message,
-                                onRetry: { retrySend(message) },
+                                onRetry: { chat.retry(message) },
                                 // Incoming only; the text is copied now, while the finger is on the bubble.
                                 onReport: message.isOutgoing ? nil : {
-                                    reportDraft = ReportDraft(excerpt: message.content, messageId: message.messageId)
+                                    reportDraft = ReportDraft(excerpt: message.content, messageId: message.id)
                                 })
                                 .id(message.id)
                         }
@@ -154,7 +149,7 @@ struct ChatView: View {
 
     /// The day label above `message`, or nil when the previous shown message
     /// was on the same day (so search results stay grouped).
-    private func daySeparator(before message: Message) -> String? {
+    private func daySeparator(before message: ChatMessage) -> String? {
         let list = displayedMessages
         guard let i = list.firstIndex(where: { $0.id == message.id }) else { return nil }
         if i > 0, Calendar.current.isDate(list[i - 1].timestamp, inSameDayAs: message.timestamp) { return nil }
@@ -177,20 +172,10 @@ struct ChatView: View {
     private var verification: some View {
         KeyVerificationView(
             friend: friend,
-            myPublicKey: profileManager?.currentProfile?.publicKey,
-            onMarkVerified: {
-                friend.keyVerified = true
-                try? modelContext.save()
-            },
-            onClearVerification: {
-                friend.keyVerified = false
-                try? modelContext.save()
-            },
-            onRotateKeys: {
-                let svc = FriendService(session: session, modelContext: modelContext)
-                svc.setModelContext(modelContext)
-                Task { await svc.forceRatchetStep(friend: friend) }
-            }
+            safetyNumber: chat.safetyNumber(with: peer),
+            onMarkVerified: { run { try await chat.setVerified(peer, true) } },
+            onClearVerification: { run { try await chat.setVerified(peer, false) } },
+            onRotateKeys: { run { try await chat.rotateKeys(peer) } }
         )
     }
 
@@ -199,50 +184,27 @@ struct ChatView: View {
     private func sendMessage() {
         // Only text is required: the first send opens the session.
         guard !messageText.isEmpty else { return }
-        // Insert the row before sending, so a failed send stays visible and retryable.
-        let message = Message(content: messageText, isOutgoing: true, friend: friend,
-                              messageId: UUID().uuidString, deliveryStatus: .sending)
-        modelContext.insert(message)
-        save()
+        let text = messageText
         messageText = ""
         isSending = true
-        deliver(message) { isSending = false }
-    }
-
-    /// Re-sends a failed message under its id, so a delivery receipt still correlates.
-    private func retrySend(_ message: Message) {
-        guard message.deliveryStatus == .failed else { return }
-        message.deliveryStatus = .sending
-        save()
-        deliver(message)
-    }
-
-    /// Seals and publishes one stored message (opening the session if needed)
-    /// and records the outcome on its row.
-    private func deliver(_ message: Message, then finish: @escaping () -> Void = {}) {
-        let text = message.content
-        let messageId = message.messageId ?? UUID().uuidString
         Task {
             do {
-                let envelope = try await session.sealMessage(text, to: friend, msgId: messageId)
-                session.publish(envelope, to: friend)
-                // Advance, not assign: the delivery receipt may already have arrived.
-                message.advanceDelivery(to: friend.isOnline ? .sent : .queued)
+                // The core stores the message before anything leaves, so a
+                // failed send stays visible and retryable.
+                try await chat.send(text, to: peer)
             } catch {
-                message.advanceDelivery(to: .failed)
+                // Refused before it was stored (locked, not a friend): keep the text.
                 appError = .from(error)
+                messageText = text
             }
-            save()
-            finish()
+            isSending = false
         }
     }
 
-    /// Saves, surfacing failures.
-    private func save() {
-        do {
-            try modelContext.save()
-        } catch {
-            appError = .unknown("Couldn't save to this device: \(error.localizedDescription)")
+    /// Runs an action, surfacing its error.
+    private func run(_ action: @escaping () async throws -> Void) {
+        Task {
+            do { try await action() } catch { appError = .from(error) }
         }
     }
 }

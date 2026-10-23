@@ -6,9 +6,9 @@ import * as crypto from "node:crypto";
 import { test } from "node:test";
 
 test("HQC KEM wrapper", async (t) => {
-  let hqc: typeof import("../../src/protocol/hqc");
+  let hqc: typeof import("../reference/protocol/hqc");
   try {
-    hqc = await import("../../src/protocol/hqc");
+    hqc = await import("../reference/protocol/hqc");
   } catch {
     return t.skip("HQC native lib unavailable on this platform");
   }
@@ -150,9 +150,9 @@ const KAT = {
 };
 
 test("the native library matches the committed known-answer test", async (t) => {
-  let hqc: typeof import("../../src/protocol/hqc");
+  let hqc: typeof import("../reference/protocol/hqc");
   try {
-    hqc = await import("../../src/protocol/hqc");
+    hqc = await import("../reference/protocol/hqc");
   } catch {
     return t.skip("HQC native lib unavailable on this platform");
   }
@@ -168,7 +168,7 @@ test("the native library matches the committed known-answer test", async (t) => 
     "\nThis library is not byte-compatible with the one these digests came from. " +
     "HQC's sampling changes between upstream revisions, so a server built from one " +
     "and a client from another cannot hold a conversation. Rebuild every target from " +
-    "one ref (native/hqc/package.nix, native/hqc/build-apple.sh) rather than updating this digest.";
+    "one ref (native/hqc/package.nix, core/hqc-sys) rather than updating this digest.";
 
   assert.equal(sha(pk), KAT.pk, `public key drift${drift}`);
   assert.equal(sha(sk), KAT.sk, `secret key drift${drift}`);
@@ -184,9 +184,9 @@ test("the native library matches the committed known-answer test", async (t) => 
 // host with no native library should skip rather than take the file down. But a
 // skip is silent, and that is how eleven KEM assertions — the post-quantum
 // primitive this whole product rests on — stopped running on the platform they
-// are developed on, for as long as `src/protocol/hqc.ts` named one library outright.
+// are developed on, for as long as `test/reference/protocol/hqc.ts` named one library outright.
 //
-// Verified, not assumed: reverting the platform selection in `src/protocol/hqc.ts` gives
+// Verified, not assumed: reverting the platform selection in `test/reference/protocol/hqc.ts` gives
 // "5 skipped, 0 failed" across this file and bot-crypto.test.ts. A green run.
 //
 // So on a platform this repo SHIPS a library for, failing to load one is a
@@ -200,7 +200,7 @@ test("the native library loads on a platform that ships one", async (t) => {
     return t.skip(`no HQC library is built for ${process.platform} — see native/hqc/package.nix`);
   }
   try {
-    const { loadedLibrary } = await import("../../src/protocol/hqc");
+    const { loadedLibrary } = await import("../reference/protocol/hqc");
     t.diagnostic(`HQC library: ${loadedLibrary()}`);
     assert.ok(loadedLibrary().length > 0, "a library loaded but did not report which");
   } catch (e) {

@@ -1,6 +1,6 @@
 /**
  * Differential fuzzing of the v3 ENCODERS: `encodeFrame` (TypeScript) against
- * `ConversationEnvelopeV3.encoded()` (Swift), from identical structs.
+ * the Rust core's frame encoder, from identical structs.
  *
  * WHY A THIRD HARNESS. The decode driver proved the two PARSERS agree on the
  * same bytes. It said nothing about the encoders, and the encoders did not
@@ -27,8 +27,8 @@
  * structural (a wrong-width id, a counter past u32, a present-but-empty blob)
  * rather than byte-level.
  *
- * Run:
- *   cd apps/apple/fuzz && ./run.sh envelope-v3-encode-verdict
+ * Run against the Rust core (the default; scripts/check.sh core does this):
+ *   cd core && cargo build --release -p hqchat-verdict
  *   cd services/server && npx tsx test/fuzz/envelope-v3-encode-differential.ts --iterations 20000
  */
 
@@ -37,11 +37,12 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { encodeFrame, type Frame } from "../../src/protocol/envelope";
-import { peerId } from "../../src/protocol/identity";
+import { encodeFrame, type Frame } from "../reference/protocol/envelope";
+import { peerId } from "../reference/protocol/identity";
+import { type Oracle, oracle } from "./oracle";
 import { makeRng, type Rng } from "./rng";
 
-const SWIFT = path.join(__dirname, "../../../../apps/apple/fuzz/build/envelope-v3-encode-verdict");
+let ORACLE: Oracle;
 const FINDINGS = path.join(__dirname, "findings");
 
 /** How a struct crosses the process boundary: JSON, binary fields as hex. */
@@ -180,9 +181,9 @@ function tsVerdict(w: Wire): string {
   return frame === null ? "R" : `A ${frame.toString("hex")}`;
 }
 
-function swiftVerdicts(batch: Wire[], batchFile: string): string[] {
+function oracleVerdicts(batch: Wire[], batchFile: string): string[] {
   fs.writeFileSync(batchFile, batch.map((w) => JSON.stringify(w)).join("\n"));
-  const out = execFileSync(SWIFT, [batchFile], { maxBuffer: 1 << 28 }).toString("utf8");
+  const out = execFileSync(ORACLE.command, [...ORACLE.args, batchFile], { maxBuffer: 1 << 28 }).toString("utf8");
   const lines = out.split("\n");
   if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
   return lines;
@@ -198,10 +199,7 @@ function main() {
   const seed = num("--seed", 1);
   const batchSize = num("--batch", 2000);
 
-  if (!fs.existsSync(SWIFT)) {
-    console.error(`✗ missing ${SWIFT}\n  build it: cd apps/apple/fuzz && ./run.sh envelope-v3-encode-verdict`);
-    process.exit(2);
-  }
+  ORACLE = oracle("envelope-v3-encode");
 
   const rng = makeRng(seed);
   const bases = [goodMsg, goodStep, goodInit, goodReceipt];
@@ -222,13 +220,13 @@ function main() {
     }
 
     const ts = batch.map(tsVerdict);
-    const swift = swiftVerdicts(batch, batchFile);
-    if (swift.length !== batch.length) {
-      console.error(`✗ the Swift half returned ${swift.length} verdicts for ${batch.length} structs`);
+    const theirs = oracleVerdicts(batch, batchFile);
+    if (theirs.length !== batch.length) {
+      console.error(`✗ the ${ORACLE.name} half returned ${theirs.length} verdicts for ${batch.length} structs`);
       process.exit(1);
     }
     for (let i = 0; i < batch.length; i++) {
-      if (ts[i] === swift[i] && ts[i]![0] !== "T") continue;
+      if (ts[i] === theirs[i] && ts[i]![0] !== "T") continue;
       mismatches++;
       fs.mkdirSync(FINDINGS, { recursive: true });
       const file = path.join(FINDINGS, `v3-encode-mismatch-${seed}-${done + i}.json`);
@@ -236,7 +234,7 @@ function main() {
       if (mismatches <= 10) {
         console.log(`\n✗ MISMATCH at iteration ${done + i}`);
         console.log(`  ts:    ${ts[i]!.slice(0, 120)}`);
-        console.log(`  swift: ${swift[i]!.slice(0, 120)}`);
+        console.log(`  ${ORACLE.name.padEnd(5)}: ${theirs[i]!.slice(0, 120)}`);
         console.log(`  input: ${file}`);
       }
     }

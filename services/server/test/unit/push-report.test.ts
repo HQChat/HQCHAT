@@ -186,17 +186,20 @@ test("rejected and error are different reasons for the same device", async () =>
   await withPush(CONFIGURED, async ({ push, warns }) => {
     const only = id();
     let outcome: SendOutcome = "rejected";
+    let clock = 0;
     const bridge = push.createPushBridge(
       {
         getTopicMembers: async () => [only],
         send: async () => outcome,
       },
       new Set(),
+      { now: () => clock },
     );
     warns.length = 0;
 
     await bridge.handleMessage(`cv/${hash()}`, Buffer.from("x"));
     outcome = "error";
+    clock += 60_000; // the next wake interval
     await bridge.handleMessage(`cv/${hash()}`, Buffer.from("x"));
     assert.equal(warns.filter((l) => /could not wake/.test(l)).length, 2, warns.join("\n"));
   });
@@ -314,11 +317,12 @@ test("presence is unshared and conversations are shared", async () => {
     );
     assert.equal(convo.qos, 1, "a dropped conversation message is a wake that never happens");
 
-    assert.equal(subs.length, 2, "an extra subscription is extra fan-out per replica");
+    // Presence, conversations, and inboxes (where a first message arrives).
+    assert.equal(subs.length, 3, "an extra subscription is extra fan-out per replica");
   });
 });
 
-test("the share group is configurable, and only the conversation topic uses it", async () => {
+test("the share group is configurable, and only the conversation and inbox topics use it", async () => {
   // Two deployments sharing one broker must not share a group, or they split
   // each other's messages and each wakes half its own users.
   await withPush(CONFIGURED, async ({ push }) => {
@@ -330,6 +334,10 @@ test("the share group is configurable, and only the conversation topic uses it",
     assert.ok(
       subs.every((s) => s.topic === "u/+/presence" || s.topic.includes("staging-bridge")),
       JSON.stringify(subs),
+    );
+    assert.ok(
+      subs.some((s) => s.topic === "$share/staging-bridge/u/+/inbox" && s.qos === 1),
+      "inboxes are shared like conversations, so each init wakes its owner once",
     );
   });
 });

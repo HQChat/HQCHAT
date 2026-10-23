@@ -1,12 +1,12 @@
 import * as fs from "node:fs";
-import { type ServerStatic, x25519KeyPair } from "../protocol/noise";
+import { core, type GatewayKeyPair } from "../common/core";
 
 /**
  * The gateway's static keys.
  *
  * The secret file holds SEEDS, not keys: a 32-byte X25519 private key and a
- * 32-byte HQC-256 seed per key id. The HQC key pair is derived from the seed
- * (`HqcWrapper.keypairFromSeed`), so the secret is 64 bytes a key rather than
+ * 32-byte HQC-256 seed per key id. The HQC key pair is derived from the seed,
+ * once at startup in the core, so the secret is 64 bytes a key rather than
  * 7 kB, and the public half the app pins is reproducible from it.
  *
  *   { "keys": [ { "keyId": 1, "x25519": "<64 hex>", "hqcSeed": "<64 hex>" } ] }
@@ -39,19 +39,8 @@ export function parseKeySeeds(json: string): KeySeed[] {
   return out;
 }
 
-export function loadServerKeys(seeds: KeySeed[]): Map<number, ServerStatic> {
-  // Lazy: the native library is only needed once keys are actually loaded.
-  const { HqcWrapper } = require("../protocol/hqc") as typeof import("../protocol/hqc");
-  return new Map(
-    seeds.map((s) => [
-      s.keyId,
-      {
-        keyId: s.keyId,
-        x25519: x25519KeyPair(s.x25519),
-        hqc: HqcWrapper.keypairFromSeed(s.hqcSeed),
-      },
-    ]),
-  );
+export function loadServerKeys(seeds: KeySeed[]): Map<number, GatewayKeyPair> {
+  return new Map(seeds.map((s) => [s.keyId, new core.GatewayKeyPair(s)]));
 }
 
 export function readKeySeeds(file: string): KeySeed[] {
@@ -59,10 +48,9 @@ export function readKeySeeds(file: string): KeySeed[] {
 }
 
 /** What the app pins, and what /auth/transport will publish. */
-export function publicKeys(keys: Map<number, ServerStatic>) {
-  return [...keys.values()].map((k) => ({
-    keyId: k.keyId,
-    x25519: k.x25519.pub.toString("base64"),
-    hqc: k.hqc.pk.toString("base64"),
-  }));
+export function publicKeys(keys: Map<number, GatewayKeyPair>) {
+  return [...keys.values()].map((k) => {
+    const p = k.publicKey();
+    return { keyId: p.keyId, x25519: p.x25519.toString("base64"), hqc: p.hqc.toString("base64") };
+  });
 }

@@ -1,36 +1,24 @@
 #if os(macOS)
 import SwiftUI
-import SwiftData
 
 /// The macOS shell: friends (or user search results) in a sidebar, the open conversation beside it.
 struct FriendListView: View {
-    @Environment(\.modelContext) private var modelContext
     @EnvironmentObject var appState: AppState
-    @Query(sort: \Friend.username) private var allFriends: [Friend]
+    @EnvironmentObject var chat: ChatStore
 
-    @StateObject private var friendService: FriendService
-    @StateObject private var userService: UserService
     @State private var newFriendUsername = ""
     @State private var showingAddFriend = false
-    @State private var selectedFriend: Friend?
+    @State private var selectedPeer: String?
     @State private var errorMessage: String?
     @State private var searchText = ""
-    @State private var friendToRemove: Friend?
+    @State private var searchResults: [UserListItem] = []
+    @State private var friendToRemove: Contact?
 
-    let session: ChatSession
     let profileManager: ProfileManager?
 
-    init(session: ChatSession, userService: UserService, profileManager: ProfileManager? = nil) {
-        self.session = session
-        self.profileManager = profileManager
-        _friendService = StateObject(wrappedValue: FriendService(session: session, profileManager: profileManager))
-        _userService = StateObject(wrappedValue: userService)
-    }
-
     /// The current profile's contacts.
-    private var friends: [Friend] {
-        guard let current = profileManager?.currentProfile else { return [] }
-        return allFriends.filter { $0.profile?.id == current.id }
+    private var friends: [Contact] {
+        chat.contacts.sorted { $0.username < $1.username }
     }
 
     var body: some View {
@@ -54,8 +42,8 @@ struct FriendListView: View {
                 .toolbar { toolbar }
             }
         } detail: {
-            if let friend = selectedFriend {
-                ChatView(friend: friend, session: session, profileManager: profileManager)
+            if let peer = selectedPeer, !peer.isEmpty {
+                ChatView(peer: peer, profileManager: profileManager)
             } else {
                 VStack(spacing: 14) {
                     HQLogoMark(size: 64)
@@ -68,13 +56,13 @@ struct FriendListView: View {
             }
         }
         .sheet(isPresented: $appState.showingSettings) {
-            SettingsView(userService: userService, profileManager: profileManager)
+            SettingsView(profileManager: profileManager)
                 .environmentObject(appState)
         }
         .sheet(isPresented: $showingAddFriend) {
             AddFriendSheet(username: $newFriendUsername) { username in
                 run {
-                    try await friendService.sendFriendRequest(username: username)
+                    try await chat.invite(username)
                     newFriendUsername = ""
                     showingAddFriend = false
                 }
@@ -94,19 +82,23 @@ struct FriendListView: View {
             Text("Are you sure you want to remove \(friendToRemove?.username ?? "") from your friends list?")
         }
         .onAppear {
-            friendService.setModelContext(modelContext)
-            if let profileManager { friendService.setProfileManager(profileManager) }
-            Task { try? await friendService.requestFriendsList() }
+            chat.refresh()
             openDemoConversation()
         }
         // Lookup is by exact username, so it runs as the user types.
         .onChange(of: searchText) { _, query in
-            Task { try? await userService.searchUsers(query: query) }
+            let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            Task {
+                let found = q.isEmpty ? nil : await chat.lookup(username: q)
+                if searchText.trimmingCharacters(in: .whitespacesAndNewlines) == q {
+                    searchResults = found.map { [$0] } ?? []
+                }
+            }
         }
     }
 
     private var matchingUsers: [UserListItem] {
-        userService.userDirectory.filter {
+        searchResults.filter {
             $0.username.localizedCaseInsensitiveContains(searchText) || $0.id.localizedCaseInsensitiveContains(searchText)
         }
     }
@@ -119,10 +111,10 @@ struct FriendListView: View {
                          actionTitle: "add friend",
                          action: { showingAddFriend = true })
         } else {
-            List(friends, selection: $selectedFriend) { friend in
-                NavigationLink(value: friend) {
+            List(friends, selection: $selectedPeer) { friend in
+                NavigationLink(value: friend.peerID) {
                     FriendRow(friend: friend) {
-                        run { try await friendService.acceptInvite(username: friend.username) }
+                        run { try await chat.accept(friend) }
                     }
                 }
                 .listRowBackground(Color.clear)
@@ -162,7 +154,7 @@ struct FriendListView: View {
                 }
                 Divider()
                 Button {
-                    Task { try? await friendService.requestFriendsList() }
+                    chat.refresh()
                 } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
@@ -173,10 +165,10 @@ struct FriendListView: View {
     }
 
     /// By row, not by handle: after an identity change two rows share a handle.
-    private func remove(_ friend: Friend) {
+    private func remove(_ friend: Contact) {
         run {
-            try await friendService.remove(friend: friend)
-            if selectedFriend == friend { selectedFriend = nil }
+            try await chat.remove(friend)
+            if selectedPeer == friend.peerID { selectedPeer = nil }
         }
         friendToRemove = nil
     }
@@ -194,15 +186,15 @@ struct FriendListView: View {
         let env = ProcessInfo.processInfo.environment
         if env["DEMO_SETTINGS"] == "1" {
             appState.showingSettings = true
-        } else if selectedFriend == nil, env["DEMO_NO_CHAT"] != "1" {
-            selectedFriend = friends.first { !($0.messages?.isEmpty ?? true) } ?? friends.first
+        } else if selectedPeer == nil, env["DEMO_NO_CHAT"] != "1" {
+            selectedPeer = (friends.first { $0.lastMessage != nil } ?? friends.first)?.peerID
         }
     }
 }
 
 /// One contact: presence, invite or identity state, and accept for a received invite.
 private struct FriendRow: View {
-    let friend: Friend
+    let friend: Contact
     let onAccept: () -> Void
 
     var body: some View {
@@ -314,6 +306,7 @@ private struct AddFriendSheet: View {
             Form {
                 Section {
                     TextField("Username", text: $username)
+                        .hqPrivateTextEntry(ascii: true)
                 } header: {
                     Text("Friend's username")
                 } footer: {

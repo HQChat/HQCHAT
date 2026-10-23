@@ -3,12 +3,12 @@
 import assert from "node:assert/strict";
 import * as crypto from "node:crypto";
 import { test } from "node:test";
-import { formatProofPassword, proofMessage } from "../../src/protocol/mqtt-proof";
 import { createAuthHandler } from "../../src/server/auth";
 import { DB } from "../../src/server/db/api";
 import { q } from "../../src/server/db/pg";
 import { call as request } from "../helpers/http";
 import { closePg, requirePg } from "../pg-helper";
+import { formatProofPassword, proofMessage } from "../reference/protocol/mqtt-proof";
 
 test.before(requirePg);
 
@@ -71,7 +71,7 @@ test("/mqtt/authn does not grant superuser without the internal secret", async (
 
 // --- /mqtt/authn: the v1 signed CONNECT proof --------------------------------
 //
-// src/protocol/mqtt-proof.ts. The client registers the public half of a per-session
+// test/reference/protocol/mqtt-proof.ts. The client registers the public half of a per-session
 // Ed25519 key at sign-in or refresh, then signs every CONNECT. These drive the
 // whole path: registration over /auth/refresh, then the hook.
 
@@ -135,6 +135,9 @@ test("/auth/refresh refuses a malformed signing key with a 400", async () => {
     crypto.randomBytes(31).toString("base64"),
     crypto.randomBytes(33).toString("base64"),
     42,
+    // 32 bytes but small order: the identity point, and an order-4 point.
+    Buffer.concat([Buffer.from([1]), Buffer.alloc(31)]).toString("base64"),
+    Buffer.alloc(32).toString("base64"),
   ]) {
     const r = await call("POST", "/auth/refresh", { mqttSigningKey }, { authorization: `Bearer ${session}` });
     assert.equal(r.status, 400, JSON.stringify(mqttSigningKey));
@@ -271,4 +274,39 @@ test("a malformed body is a 400, not a 500", async () => {
 
 test.after(async () => {
   await closePg();
+});
+
+// --- /auth/logout --------------------------------------------------------------
+
+test("/auth/logout ends the session that asks, and only that one", async () => {
+  const id = someId();
+  const [mine, other] = [await DB.mintSessionToken(id), await DB.mintSessionToken(id)];
+  const r = await call("POST", "/auth/logout", {}, { authorization: `Bearer ${mine}` });
+  assert.equal(r.status, 200, r.text);
+  assert.equal(await DB.resolveSessionToken(mine), null, "the token outlived its logout");
+  assert.equal((await DB.resolveSessionToken(other))?.id, id, "another device was logged out too");
+  const again = await call("POST", "/auth/logout", {}, { authorization: `Bearer ${mine}` });
+  assert.equal(again.status, 401);
+});
+
+test("/auth/logout everywhere ends every session and signing key", async () => {
+  const { id, session, keyId } = await v1Client();
+  const other = await DB.mintSessionToken(id);
+  const r = await call("POST", "/auth/logout", { everywhere: true }, { authorization: `Bearer ${session}` });
+  assert.equal(r.status, 200, r.text);
+  assert.equal(await DB.resolveSessionToken(other), null);
+  assert.equal(await DB.getMqttSessionKey(id, keyId), null, "a signing key outlived logout everywhere");
+});
+
+test("token-bearing responses are never cached", async () => {
+  const { session, refresh } = await v1Client();
+  assert.ok(refresh.mqttKeyId);
+  const r = await call(
+    "POST",
+    "/auth/refresh",
+    { mqttSigningKey: signingKey().raw.toString("base64") },
+    { authorization: `Bearer ${session}` },
+  );
+  assert.equal(r.headers["cache-control"], "no-store");
+  assert.equal((await call("POST", "/auth/verify", {})).headers["cache-control"], "no-store");
 });

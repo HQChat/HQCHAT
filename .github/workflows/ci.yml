@@ -1,7 +1,8 @@
 name: CI
 
-# Kept to the minimum of Actions minutes. The repo is private and every job is
-# billed rounded up to the minute, so jobs are merged to pay setup only once.
+# Kept short, so a PR hears back quickly: jobs are merged to pay setup only
+# once. Secret and advisory scans run on every PR in scan.yml, CodeQL in
+# codeql.yml.
 #   - PR: one `test` job, unit + integration (under 15 min). Draft PRs, and PRs
 #     that touch only docs or the Apple app, run nothing.
 #   - Heavy (lint, infra, scenarios in one job, plus the two-VM stack): on push
@@ -54,6 +55,8 @@ jobs:
       DATABASE_URL: postgresql://hqcat:hqcat@localhost:5432/hqcat
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -79,6 +82,34 @@ jobs:
       - name: Integration tests
         run: scripts/check.sh integration
 
+  core:
+    if: github.event.pull_request.draft != true && (github.event.action != 'labeled' || github.event.label.name == 'functional')
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: services/server/package-lock.json
+      - run: npm ci --prefix services/server
+      - uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = false
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          primary-key: nix-devshell-${{ runner.os }}-${{ hashFiles('flake.lock', 'flake.nix') }}
+          restore-prefixes-first-match: nix-devshell-${{ runner.os }}-
+          gc-max-store-size-linux: 4G
+          save: false
+      - name: Rust core
+        run: nix develop --command scripts/check.sh core
+
   heavy:
     if: (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'functional')) && github.event.pull_request.draft != true && (github.event.action != 'labeled' || github.event.label.name == 'functional')
     runs-on: ubuntu-latest
@@ -86,6 +117,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           fetch-depth: 0
       - uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
         with:
@@ -123,19 +155,6 @@ jobs:
             echo "$unpinned"
             exit 1
           fi
-      - name: Known vulnerabilities
-        run: |
-          npm audit --prefix services/server --audit-level=high
-          npm audit --prefix apps/site --audit-level=high
-      - name: Secrets
-        env:
-          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: |
-          if [ -n "$BASE" ]; then
-            nix develop --command gitleaks detect --source . --config .gitleaks.toml --redact --no-banner --log-opts="$BASE..HEAD"
-          else
-            nix develop --command gitleaks detect --source . --config .gitleaks.toml --redact --no-banner --no-git
-          fi
       - name: Terraform policy tests and NixOS evaluation
         run: nix develop --command scripts/check.sh infra
       - name: Functional scenarios on a local stack
@@ -149,6 +168,8 @@ jobs:
       hosts: ${{ steps.filter.outputs.hosts }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
         id: filter
         with:
@@ -167,6 +188,8 @@ jobs:
     timeout-minutes: ${{ github.event_name == 'pull_request' && 15 || 60 }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
