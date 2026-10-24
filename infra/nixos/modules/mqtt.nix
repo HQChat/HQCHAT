@@ -131,6 +131,11 @@ lib.mkIf (cfg.role == "mqtt") {
         printf 'EMQX_DASHBOARD__DEFAULT_PASSWORD=%s\n' "$(cat /var/lib/hqcat-emqx/dashboard_password)"
       } > /run/hqcat-emqx/emqx.env
 
+      # The last run left this file read-only and the directory EMQX's, and
+      # without CAP_DAC_OVERRIDE not even root may write either: take the
+      # directory back and replace the file instead of rewriting it.
+      chown 0 /run/hqcat-emqx
+      rm -f /run/hqcat-emqx/api_bootstrap
       if [ -s ${secrets}/emqx_api_secret ]; then
         printf 'hqcat-svc:%s\n' "$(cat ${secrets}/emqx_api_secret)" > /run/hqcat-emqx/api_bootstrap
       else
