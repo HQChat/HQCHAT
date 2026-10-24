@@ -38,14 +38,14 @@ Connect); the two targets must not disagree.
 | Purpose | Algorithm | Parameters | Implementation |
 |---|---|---|---|
 | End-to-end key agreement (session start, every ratchet step, sign-in challenge, sender proof) | **HQC-256** KEM | pk 7,237 B, sk 7,333 B, ct 14,421 B, ss 32 B; upstream commit pinned in `native/hqc/HQC_UPSTREAM.txt` | compiled C inside the Rust core, in the apps (`HQChatCoreFFI.xcframework`) and on the server (the Node addon) |
-| End-to-end message encryption | **AES-256-GCM** | 256-bit key, 12-byte IV, 16-byte tag, header as AAD | Apple CryptoKit; Node.js (OpenSSL) for the server-side bot |
-| Key derivation | **HKDF-SHA-256** | 32-byte outputs, one label per use | CryptoKit; Node.js |
+| End-to-end message encryption | **AES-256-GCM** | 256-bit key, 12-byte IV, 16-byte tag, header as AAD | the Rust core (RustCrypto `aes-gcm`), in the apps and the server-side bot |
+| Key derivation | **HKDF-SHA-256** | 32-byte outputs, one label per use | the Rust core (RustCrypto `hkdf`) |
 | Message-key schedule | KEM double ratchet over HQC-256 | a step after 32 messages or 15 minutes of a used chain; one key per message | `docs/architecture/e2ee-protocol.md` |
-| Transport channel, optional (hqn/1) | **Noise** `pqNK`: **X25519** + HQC-256, **ChaCha20-Poly1305**, SHA-256 | a hybrid handshake to the server's gateway | CryptoKit; Node.js |
-| Sign-in to the messaging broker | **Ed25519** signatures | a per-session key signs each connection proof | CryptoKit; Node.js |
-| Stored messages on the device | **ECIES with P-256** (Secure Enclave) wrapping **AES-256-GCM** keys | `eciesEncryptionCofactorX963SHA256AESGCM` | Apple Security framework |
+| Transport channel, optional (hqn/1) | **Noise** `pqNK`: **X25519** + HQC-256, **ChaCha20-Poly1305**, SHA-256 | a hybrid handshake to the server's gateway | the Rust core (`x25519-dalek`, `chacha20poly1305`), on both ends |
+| Sign-in to the messaging broker | **Ed25519** signatures | a per-session key signs each connection proof | the Rust core (`ed25519-dalek`) |
+| Stored data on the device | **P-256 ECDH** (Secure Enclave key) joined with a 256-bit state secret, HKDF-SHA-256, **AES-256-GCM**; HMAC-SHA-256 slot names | the core seals; the Secure Enclave performs the ECDH | the Rust core (`p256`, `aes-gcm`, `hmac`); Apple Security framework for the Enclave |
 | Transport security | **TLS** (HTTPS, WSS) | OS and nginx / Cloudflare | platform |
-| Fingerprints and ids | **SHA-256** | | CryptoKit; Node.js |
+| Fingerprints and ids | **SHA-256** | | the Rust core (`sha2`) |
 
 **Purpose:** confidentiality of person-to-person messages (end-to-end encrypted
 instant messaging) and authentication of the user to the server. Encryption is

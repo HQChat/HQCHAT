@@ -18,16 +18,23 @@ owner can do.
 - ✅ **Privacy, terms, EULA and support pages** served by the site Worker.
 - ✅ **Permission strings:** Face ID only. The app asks for no camera,
   microphone, photos, contacts or location.
-- ✅ **Version 3.0.0 (22)** on both app targets. Bumps are manual: change
-  `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` in
-  `apps/apple/HQChat.xcodeproj/project.pbxproj` for the macOS and iOS targets,
-  Debug and Release, in the same commit; build numbers must keep increasing.
+- ✅ **Versions are set at upload.** The Apple release workflow
+  (`apple-release.yml`, `apps/apple/release.sh`) gives every upload a version
+  and build number strictly above everything already in App Store Connect
+  (`apps/apple/asc-next.mjs`): a push to `main` raises the patch version, a
+  manual run may name a higher version. The project file's
+  `MARKETING_VERSION` is only the floor.
+- ✅ **The core is built from source for each release**, from the commit
+  shipped; no binary is committed, and the release stops if the generated
+  Swift bindings differ from the committed ones.
+- ✅ **Privacy manifests** (`PrivacyInfo.xcprivacy`) in both apps.
 - ⚠️ **Export-compliance flag:** `ITSAppUsesNonExemptEncryption` is `YES` on
   macOS and **`NO` on iOS**, which is false for the target that ships. Set it to
   `YES` before submitting (see §3, export compliance).
 - ⚠️ **Crash reporting is always on.** The Sentry DSN is compiled into the app,
   so every build sends crash and hang reports: no performance tracing, no
-  network data, no session replay, no user id (Helpers/Observability.swift).
+  network data, no session replay, no user or install id
+  (Helpers/Observability.swift).
   The privacy answers in §5 must declare it, and the App Store Connect label
   must match PrivacyInfo.xcprivacy.
 

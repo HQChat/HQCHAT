@@ -93,9 +93,11 @@ jamais le contenu.
    (<https://gitlab.com/pqc-hqc/hqc>), compilée sans modification
    algorithmique ; le commit exact est figé dans le dépôt
    (`native/hqc/HQC_UPSTREAM.txt`, actuellement `3a0f86f`). AES-GCM,
-   ChaCha20-Poly1305, X25519, Ed25519, P-256, HKDF et SHA-256 proviennent des
-   bibliothèques du système (CryptoKit, Security) ou d'OpenSSL selon la
-   plateforme. **Aucun algorithme n'a été conçu par nos soins** ; seul leur
+   ChaCha20-Poly1305, X25519, Ed25519, P-256, HKDF, HMAC et SHA-256 proviennent
+   des bibliothèques Rust publiées RustCrypto et dalek, liées dans le cœur Rust
+   commun aux applications et au serveur ; l'ECDH P-256 de la clé matérielle
+   est faite par la Secure Enclave (framework Security), et TLS reste celui de
+   la plateforme. **Aucun algorithme n'a été conçu par nos soins** ; seul leur
    assemblage protocolaire est propre au projet.
 
 4. **Statut de normalisation de HQC.** HQC a été retenu par le NIST comme
