@@ -181,11 +181,14 @@ and kept out of backups. Opening rows the 3.1.1 app sealed is the importer's job
 
 ## The switch (phase 3)
 
-There is no flag. 3.1.1 is the last build on the Swift implementation; the
+There is no flag. 3.1.1 (approved for iOS on 2026-10-24) is the last build
+on the Swift implementation; the
 next release, 3.2.0, runs entirely on the core, and the Swift protocol,
 MQTT and session code goes in that same release. The only code that knows
 about the old implementation lives under `apps/apple/HQChat/Migration/`, and
-it is deleted a few weeks after 3.2.0 ships.
+it is deleted a few weeks after 3.2.0 ships. The server on `main` refuses
+3.1.1's sign-in (no origin, the v1 proof), so 3.2.0 and that server ship
+together ([multiplatform.md](multiplatform.md#risks)).
 
 ### In 3.2.0
 

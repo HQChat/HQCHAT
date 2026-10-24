@@ -3,7 +3,8 @@
 **Status: the core (phases 1 and 1b) is built in `core/`; the server, the
 hqn/1 gateway and the helper bot run on it (phase 2, built and merged to
 `main`), and so do the Apple apps (phase 3, built and merged to `main`; it
-ships as the release after 3.1.1, built from source by the Apple release
+ships as the release after 3.1.1, the last Swift build, which Apple approved
+for iOS on 2026-10-24; it is built from source by the Apple release
 workflow). Phases 4 to 7 (Android, Linux, Windows) have not started.** How HQChat goes from two Apple targets to
 iOS, macOS, Android, Linux and Windows without a second or third copy of the
 protocol. Moving an account between devices is a separate plan, built on top
@@ -296,6 +297,7 @@ Windows gets runner jobs for the vault and the MSIX; Apple stays on
 | Ratchet state copied off the device by backup | 5, 6 | `allowBackup=false`; Store excluded from OneDrive / Windows backup paths; everything sealed regardless |
 | HQC on arm64 Android: build flags, 16 KB pages, constant time | 1, 5 | known-answer digests on device in CI; timing test on a real arm64 device |
 | HQC's large stack buffers on small thread stacks (512 KB on iOS secondary threads) | 1, 3, 5 | measured: about 210 KiB at peak (`crypto_kem_dec` → `hqc_pke_encrypt` → `vect_mul`), then the 256 KiB stack scrub after each call; under 512 KB, to confirm on device in phases 3 and 5 |
+| 3.1.1 cannot sign in to a server built from `main`: it sends `/auth/init { pk }` and the v1 proof, which that server refuses (it needs the origin and the v2 proof) | 2, 3 | production keeps the server 3.1.1 speaks until the core release is approved; then that release and the server go out together through the App Store workflow (deploy on the `app-store/<version>` tag, the app released only after verify). Installs still on 3.1.1 cannot sign in until they update |
 | The importer loses or corrupts an existing Apple install | 3 | importer keeps the old items until the new ones open, and retries at each launch; tested against a store captured from 3.1.1; App Store phased release |
 | A user who skips the transition window loses their identity and history | 3 | the window is weeks, not days; the app then sets the profile up as new, and friends see the old identity as vanished |
 | A marshalling bug the Rust tests cannot see | 1b, 3, 5 | the binding conformance suite runs the vectors through Swift, Kotlin and Node |
