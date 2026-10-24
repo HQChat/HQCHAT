@@ -11,7 +11,7 @@ client id, which the CONNECT proof forces to equal the username.
 
 | Action | Topics | Who |
 |---|---|---|
-| publish | `u/${clientid}/presence` | the owner (retained, and as the Last-Will) |
+| publish | `u/${clientid}/presence` | the owner (retained, at most 1 KB, and as the Last-Will) |
 | subscribe | `u/+/presence` | any client |
 | subscribe | `u/${clientid}/inbox`, `u/${clientid}/graph` | the owner |
 | publish, never retained | `u/+/inbox`, `cv/+`, `hs/+` | any client |
@@ -39,8 +39,10 @@ keeps nothing but an id that no new member will ever be given.
 
 - **Presence:** any signed-in client can subscribe to any `u/{id}/presence`.
 - **Inboxes:** any signed-in client can publish into any inbox, because a first
-  contact has nowhere else to go. Clients drop frames from non-contacts, and
-  each connection is limited to 50 messages per second.
+  contact has nowhere else to go. Clients drop frames from non-contacts and
+  bound what forged first contacts can make them hold, and each connection is
+  limited to 50 messages per second; the push bridge wakes an inbox's owner
+  at most once per interval.
 - **Graph nudges** carry no information: the client's answer is an
   authenticated `GET /friends`.
 
