@@ -39,7 +39,13 @@ engine. `test/reference/` holds the TS protocol and client the server used to
 run on, kept as an independent implementation for the differential fuzzers
 and the scenarios.
 Configuration is environment variables, with `FOO_FILE` naming a file to read
-`FOO` from; there are no defaults pointing at anyone's deployment.
+`FOO` from; there are no defaults pointing at anyone's deployment. Three
+decide what the server believes: `AUTH_ORIGINS` (the origins a sign-in proof
+may be bound to; unset, only the request's own), `TRUSTED_PROXY` (which
+header carries the client address: `none`, `x-real-ip`, `cf-connecting-ip` or
+`x-forwarded-for`; unset, none is believed) and `PGSSLROOTCERT` (the
+database's CA; in production a remote database without it is a refusal to
+start).
 
 ## How it fits together
 
@@ -51,6 +57,7 @@ Configuration is environment variables, with `FOO_FILE` naming a file to read
 
 Operator tools: `npm run reports` (the moderation queue) and `npm run check-push`
 (why a device would or would not be woken); on a host they run as `hqcat-ops`.
+`scripts/noise-gw-keys.ts` generates the gateway's `NOISE_KEYS`.
 
 ## Where this code lives
 

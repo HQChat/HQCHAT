@@ -6,7 +6,7 @@ published to be read and checked, not to be reused.
 | Path | Licence | In short |
 |---|---|---|
 | `apps/apple/` | [PolyForm Strict 1.0.0](apps/apple/LICENSE.md) | Read it, build it and run it for any noncommercial purpose. No changes, no redistribution, no apps built from it. |
-| everything else: `services/server/`, `native/hqc/`, `infra/`, `apps/site/`, `docs/`, `scripts/` | [AGPL-3.0](LICENSE) | Free for everyone to use, modify and run, including as a service, as long as your changes stay AGPL. |
+| everything else: `core/`, `services/server/`, `native/hqc/`, `infra/`, `apps/site/`, `docs/`, `scripts/` | [AGPL-3.0](LICENSE) | Free for everyone to use, modify and run, including as a service, as long as your changes stay AGPL. |
 | third-party components | their own terms | [apps/apple/third-party.md](apps/apple/third-party.md) |
 
 The name, the icon and the domain are covered by neither licence; see
@@ -30,9 +30,11 @@ service, not this file. What stops them using its name is [TRADEMARK.md](TRADEMA
 
 ## Contributions
 
-A contribution under `apps/apple/` is accepted only if its author agrees that
-the maintainer may distribute it under any terms, including in the official app
-and under a different licence. A contribution anywhere else is under AGPL-3.0,
-like the code it changes.
+A contribution under `apps/apple/` or `core/` is accepted only if its author
+agrees that the maintainer may distribute it under any terms, including in the
+official app and under a different licence. For `core/` this is what lets the
+PolyForm Strict apps link an AGPL core: the core stays AGPL for everyone else,
+and the official apps link it because the maintainer holds the copyright. A
+contribution anywhere else is under AGPL-3.0, like the code it changes.
 
 This file is a summary. The licence texts are what apply.

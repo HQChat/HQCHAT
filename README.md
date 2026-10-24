@@ -5,8 +5,10 @@ every key exchange, a KEM double ratchet with prekeys for forward secrecy, and
 a server that moves ciphertext it cannot read.
 
 macOS and iOS clients, one TypeScript server, EMQX for messaging, Postgres for
-state, Cloudflare in front. **Version 3.0.0.** Text messages, presence, the
-friend graph, reporting and blocking; no calls, attachments or voice notes.
+state, Cloudflare in front. One Rust core holds the protocol and the client
+logic: the apps link it through uniffi, the server, the gateway and the bot
+through napi. Text messages, presence, the friend graph, reporting and
+blocking; no calls, attachments or voice notes.
 
 Free for every account: no paid tier, no subscription, no in-app purchase.
 Donations are taken on the website, grant nothing and are bound to no account.
@@ -40,14 +42,14 @@ server sees the graph, topic names, sizes and timing, never plaintext.
 | `apps/apple/` | Xcode project: macOS and iOS targets over shared Swift sources, test slices, `verify.sh` |
 | `apps/site/` | Cloudflare Worker: the website, the crypto write-up, legal pages, the donate page |
 | `services/server/` | the server, the hqn/1 gateway, the reference TypeScript client and the helper bot built on it |
-| `core/` | the Rust core: HQC, the protocol, the client engine, and its bindings for Node, Swift and Kotlin (not wired into the apps or the server yet; see [multiplatform](docs/architecture/multiplatform.md)) |
+| `core/` | the Rust core: HQC, the protocol, the client engine, and its bindings for Node (the server, gateway and bot) and Swift (the apps); Kotlin bindings for the coming Android and desktop apps ([multiplatform](docs/architecture/multiplatform.md), [core wiring](docs/architecture/core-wiring.md)) |
 | `native/hqc/` | the HQC-256 wrapper (C), built from a pinned upstream commit into the Rust core (every platform) and the standalone Nix package |
 | `infra/environments/` | one JSON file per environment: domain, region, sizes, non-secret configuration |
 | `infra/terraform/` | one environment from nothing: network, droplets, database, firewalls, DNS, the Worker |
 | `infra/nixos/` | the hosts: NixOS modules per role, the disk image, the host agent, the two-VM stack test |
 | `infra/emqx/` | the broker's configuration and ACL |
 | `infra/scripts/` | the deploy steps |
-| `.github/workflows/` | `ci.yml` on every pull request, `deploy.yml` (the one-click Deploy) |
+| `.github/workflows/` | `ci.yml` and `scan.yml` (secrets, advisories) on every pull request, `codeql.yml`, `deploy.yml` (the one-click Deploy), `apple-release.yml` and `app-store.yml` (App Store uploads and releases), `hqc-upstream.yml` |
 | `docs/` | architecture, runbooks, product |
 
 ## Getting started
@@ -67,8 +69,9 @@ bash apps/apple/verify.sh                  # the full Apple gate: the core packa
 **Server** (Node 22):
 
 ```bash
+core/hqchat-node/build.sh                                    # the core's Node addon the server loads
 cd services/server && npm ci && npm run test:unit
-scripts/check.sh lint|unit|integration|scenarios|infra       # each CI layer, from the repo root
+scripts/check.sh lint|unit|integration|scenarios|infra|core  # each CI layer, from the repo root
 bash services/server/test/scenarios/run-local.sh             # the full stack locally (needs Docker)
 ```
 
@@ -83,7 +86,8 @@ setting, no rebuild. No secret is committed.
 | If you are… | Start with |
 |---|---|
 | a **backend** engineer | [message flow](docs/architecture/message-flow.md) · [protocol](docs/architecture/e2ee-protocol.md) · [`services/server/README.md`](services/server/README.md) |
-| an **Apple** engineer | [user journey](docs/product/user-journey.md) · `apps/apple/HQChat/Services/ChatStore.swift` |
+| an **Apple** engineer | [user journey](docs/product/user-journey.md) · [core wiring](docs/architecture/core-wiring.md) · `apps/apple/HQChat/Services/ChatStore.swift` |
+| a **Rust** engineer | [`core/README.md`](core/README.md) · [core wiring](docs/architecture/core-wiring.md) · [multiplatform](docs/architecture/multiplatform.md) |
 | a **designer** | [design system](docs/product/design-system.md) · [user journey](docs/product/user-journey.md) |
 | **operations** | [deploy](docs/runbooks/deploy.md) · [debugging](docs/runbooks/debugging.md) · [moderation](docs/runbooks/moderation.md) |
 | **security** | [security policy](SECURITY.md) · [pentest scope](docs/pentest-scope.md) · [protocol](docs/architecture/e2ee-protocol.md) |
@@ -97,7 +101,7 @@ a public issue.
 
 ## Licence
 
-The server, the infrastructure and everything outside `apps/apple/` are
-[AGPL-3.0](LICENSE). The Apple apps are [PolyForm Strict 1.0.0](apps/apple/LICENSE.md):
+The server, the Rust core, the infrastructure and everything outside
+`apps/apple/` are [AGPL-3.0](LICENSE). The Apple apps are [PolyForm Strict 1.0.0](apps/apple/LICENSE.md):
 readable, buildable for noncommercial use, not modifiable or redistributable.
 See [LICENSING.md](LICENSING.md) and [TRADEMARK.md](TRADEMARK.md).

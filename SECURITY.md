@@ -12,10 +12,11 @@ programme, and no legal threat: research reported in good faith is welcome.
 
 ## Scope
 
-In scope: the server, gateway and bot in `services/server/`, the Apple apps in
-`apps/apple/`, the protocol shared by both, the broker configuration in
+In scope: the Rust core in `core/` (the protocol, the client engine and its
+bindings) and the HQC wrapper in `native/hqc/`, the server, gateway and bot in
+`services/server/`, the Apple apps in `apps/apple/`, the broker configuration in
 `infra/emqx/`, the hosts and host agent in `infra/nixos/`, the Terraform in
-`infra/terraform/`, and the Deploy workflow.
+`infra/terraform/`, and the Deploy, Apple release and App Store workflows.
 
 Out of scope: attacks that need a compromised device OS or an unlocked device
 in the attacker's hands; and volumetric denial of service.

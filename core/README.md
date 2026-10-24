@@ -14,7 +14,8 @@ the flow of one message through it in
 | `hqchat-protocol` | the wire protocol: ids, topics, payload encryption, frames, ratchet, handshake, proofs, hqn/1, MQTT |
 | `hqchat-engine` | the client as a sans-IO `Engine`: commands in, `Effect`s out, `KeyVault` and `Store` callbacks; sign-in, friends, prekeys, the broker session over hqn/1 or WSS, conversations, state sealed at rest |
 | `hqchat-node` | the server's binding (napi): the protocol functions, the hqn/1 gateway, the `Engine` for the bot |
-| `hqchat-ffi` | the apps' binding (uniffi, Swift and Kotlin) |
+| `hqchat-ffi` | the apps' binding (uniffi, Swift and Kotlin); the Swift package it generates is `core/swift/HQChatCore` |
+| `hqchat-verdict` | a test tool: the Rust side of the differential fuzzers in `services/server/test/fuzz` |
 
 ## Safety rules
 
@@ -38,6 +39,13 @@ rules, and CI fails on any warning:
 - **Errors are not dropped.** A store write that fails reaches the app as
   `Effect::StorageFailed`, and a failed OS random generator fails the
   operation.
+- **A panic never crosses a binding.** Every `Engine` call runs under
+  `catch_unwind` and the FFI crates build with `panic = "unwind"`, so a bug
+  becomes an error in Swift or Node, never undefined behaviour.
+- **What rests on disk does not rest on P-256 alone.** `state` (the
+  identity, prekey secrets, the directory, the data key) is sealed under the
+  hardware key's ECDH joined with a 256-bit state secret the vault keeps;
+  slot names hold no friend id or message id (`hqchat-engine/src/persist.rs`).
 - **The C is hardened.** HQC compiles with stack protector, fortified libc,
   stack-clash probes (Linux), zero-initialized locals, zeroed call-used
   registers, and CET or BTI/PAC landing pads (`/GS` and `/guard:cf` on
@@ -58,10 +66,15 @@ cd core && cargo test
 ```
 
 The full gate (format, both lint passes, `cargo deny`, every test, the Node
-addon) is:
+addon), which CI runs on every pull request, is:
 
 ```bash
 scripts/check.sh core
 ```
+
+The Swift package for the apps is built on a Mac (`nix develop .#apple
+--command core/hqchat-ffi/build-apple.sh`, which `apps/apple/verify.sh` runs);
+its generated bindings are committed and must match what the core generates.
+See [the HQC library runbook](../docs/runbooks/hqc-native-library.md).
 
 AGPL-3.0, like the server ([LICENSING.md](../LICENSING.md)).
