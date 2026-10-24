@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use hqchat_protocol::kdf::hkdf_sha256;
 use p256::SecretKey;
-use p256::elliptic_curve::sec1::ToEncodedPoint;
+use p256::elliptic_curve::sec1::ToSec1Point;
 use zeroize::Zeroizing;
 
 use crate::ports::{KeyVault, Store, StoreError, Tier, VaultError};
@@ -96,7 +96,7 @@ impl KeyVault for SoftwareVault {
         Ok(self
             .secret()?
             .public_key()
-            .to_encoded_point(false)
+            .to_sec1_point(false)
             .as_bytes()
             .to_vec())
     }
