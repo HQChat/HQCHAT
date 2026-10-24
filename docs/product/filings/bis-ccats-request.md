@@ -93,8 +93,10 @@ separate HQC challenge before accepting a session.
 from <https://gitlab.com/pqc-hqc/hqc>, compiled without algorithmic
 modification; the exact upstream commit is pinned in the repository
 (`native/hqc/HQC_UPSTREAM.txt`, currently `3a0f86f`). AES-GCM, ChaCha20-Poly1305,
-X25519, Ed25519, P-256, HKDF and SHA-256 come from platform libraries (Apple
-CryptoKit and Security framework; OpenSSL via Node.js on the server). **No cryptographic algorithm was designed by the submitter** —
+X25519, Ed25519, P-256, HKDF, HMAC and SHA-256 come from published Rust
+libraries (RustCrypto and dalek), linked into the one Rust core the apps and
+the server share; the hardware key's P-256 ECDH is done by the Secure Enclave
+(Apple Security framework), and TLS is the platform's. **No cryptographic algorithm was designed by the submitter** —
 only the protocol composition is original.
 
 ## 4. Why a classification is being requested rather than self-classification

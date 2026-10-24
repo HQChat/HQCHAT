@@ -10,6 +10,7 @@
 - [ ] `nix develop --command scripts/check.sh lint`
 - [ ] `scripts/check.sh unit` / `integration` / `scenarios` (if `services/server/` or `infra/emqx/` changed)
 - [ ] `scripts/check.sh infra` (if `infra/` or `flake.*` changed)
+- [ ] `scripts/check.sh core` (if `core/` or `native/hqc/` changed)
 - [ ] `bash apps/apple/verify.sh` (if `apps/apple/` changed): CI does not build
       the Apple apps, so this is the only gate on them
 - [ ] the docs describing this are still true

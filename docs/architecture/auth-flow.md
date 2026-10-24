@@ -8,9 +8,11 @@ public key.
 ## Identity
 
 - **Key pair:** HQC-256 (public key 7,237 bytes), generated on the device from a
-  32-byte random seed that is never stored. The secret key goes into the
-  Keychain behind the profile's protection tier. So do the ratchet sessions
-  and the prekey secrets: inbound frames wait, as ciphertext, for the unlock.
+  32-byte random seed that is never stored. The secret key, the ratchet
+  sessions and the prekey secrets are sealed by the core under the profile's
+  hardware key and state secret ([at rest](e2ee-protocol.md#at-rest-on-the-device)),
+  so opening them needs the profile's protection tier: inbound frames wait, as
+  ciphertext, for the unlock.
 - **Client id:** `id = sha256(lowercase hex of the public key)`, 64 hex
   characters. Every topic, route and graph row names a client by its id. An id
   commits to its key (anyone can check a key against it) and proves nothing on
@@ -26,23 +28,37 @@ sequenceDiagram
     participant C as Client
     participant S as hqcat-server
     participant DB as Postgres
-    C->>S: POST /auth/init { pk }
-    S->>S: rate limits (20/min per IP, 6/min per key)
-    S->>S: (ct, ss) = HQC.Encaps(pk)
-    S->>DB: challenge[id] = HKDF(ss, "auth"), 60 s
-    S-->>C: { ct }
+    C->>S: POST /auth/init { pk, origin }
+    S->>S: origin allowed? rate limits (20/min per IP, 6/min per key and IP)
+    S->>S: (ct, ss) = HQC.Encaps(pk); proof = signInProof(ss, origin, pk, ct)
+    S->>DB: keep proof (never ss), 60 s, 4 open per key and source
+    S-->>C: { ct, challenge }
     C->>C: ss = HQC.Decaps(sk, ct)  (needs the key's tier)
     C->>C: new Ed25519 key pair for MQTT
-    C->>S: POST /auth/verify { pk, solution: HKDF(ss, "auth"), mqttSigningKey }
-    S->>DB: take challenge[id] (single use), compare in constant time
+    C->>S: POST /auth/verify { pk, solution: signInProof(ss, origin, pk, ct), mqttSigningKey, challenge }
+    S->>DB: match the challenge in constant time, spend only it
     S->>DB: ensure user, befriend the bot, mint bearer, register signing key
     S-->>C: { id, pk, username, sessionToken, serverTime, mqttKeyId, mqttKeyExpiresAt }
 ```
 
-- The server keeps only the expected proof, never `ss`, so `/auth/init` is not a
-  decryption oracle.
-- Five failed proofs against one key within 15 minutes raise an alert; there is
-  no lockout, which would let anyone lock anyone out.
+- The proof (v2, `core/hqchat-protocol/src/auth_proof.rs`) is
+  `HKDF-SHA256(ss, salt "hqchat/v2/sign-in", info "hqchat/v2/sign-in" ‖
+  len‖origin ‖ SHA-256(pk) ‖ SHA-256(ct))`. Binding the origin the client
+  signed in at means a server that relays a client's sign-in to another
+  cannot use the answer there; the server accepts only origins in
+  `AUTH_ORIGINS` (or, unset, its own).
+- The server keeps only the expected proof, never `ss` (the core drops it
+  before the call returns), so `/auth/init` is not a decryption oracle.
+- Challenges are kept per key and source address, and a wrong proof spends
+  nothing: a stranger who knows a public key cannot keep its owner from
+  signing in.
+- Five failed proofs against one key within 15 minutes, or 60 inits for one
+  key in a minute from all addresses together, raise an alert; there is no
+  lockout, which would let anyone lock anyone out.
+- A banned key is refused here (`403 BANNED`).
+- Client addresses for these limits come from the header `TRUSTED_PROXY`
+  names (`cf-connecting-ip` behind Cloudflare); no header is believed
+  otherwise.
 - The first successful sign-in creates the account and befriends it to the
   deployment's bot.
 
@@ -55,7 +71,10 @@ sequenceDiagram
 
 `POST /auth/refresh` (bearer) registers a new signing key without a new KEM
 challenge, so it costs no biometric prompt. The client refreshes when less than
-two minutes remain. A 401 on the bearer means a full sign-in.
+two minutes remain. A 401 on the bearer means a full sign-in. `POST
+/auth/logout` (bearer) ends that session, or with `everywhere: true` every
+session and signing key of the account, and disconnects it. No response that
+carries a token is cached (`cache-control: no-store`).
 
 ## MQTT CONNECT
 
@@ -88,7 +107,9 @@ back to MQTT over WSS (`wss://<domain>/mqtt`). See [transport.md](transport.md).
 
 Account deletion (`POST /account/delete`) removes the user, its graph rows,
 prekeys, push token, sessions and signing keys, revokes the presented bearer
-and disconnects the MQTT client; reports filed against the account are kept.
+and disconnects the MQTT client. Reports filed against the account, blocks
+other people placed on it and a ban are kept, so deleting and signing back in
+with the same key walks around none of them.
 On the device, deletion then removes that profile alone, with its keys and
 rows; other profiles are kept. Wiping every profile is a separate, local-only
 reset ([reset-local-data.md](../runbooks/reset-local-data.md)).

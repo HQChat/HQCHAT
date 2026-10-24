@@ -2,7 +2,8 @@
 
 **Audience:** a designer picking up the app without reading Swift.
 **Scope:** the iOS app; macOS shares the sources behind a sidebar-and-split
-shell (see the end). **Version:** 3.0.0.
+shell (see the end). The app runs on the Rust core; the screens are the same
+as in 3.0.0.
 
 What a person does, screen by screen, the states each screen can be in, and
 the constraints the product puts on the design. Gaps are listed in
@@ -58,7 +59,7 @@ three are answered:
 | Answer | Rules |
 |---|---|
 | **username** | 3–32 of `a–z A–Z 0–9 _`, reserved names refused (`admin`, `support`, `helper`…); the field filters as you type |
-| **protection** | **Secure** (Face ID every time the keys are used) or **Quick unlock** (Face ID or passcode, once per launch). Nothing is preselected; choosing Secure asks for Face ID at that moment. A device without biometrics is shown Quick unlock as information, not a choice. Fixed once created |
+| **protection** | **Secure** (Face ID every time the keys are used) or **Quick unlock** (Face ID or passcode, once per session, forgotten when the app goes to the background). Nothing is preselected; choosing Secure asks for Face ID at that moment. A device without biometrics is shown Quick unlock as information, not a choice. Fixed once created |
 | **agreement** | the terms checkbox; already checked on a second profile, since the acceptance belongs to the person |
 
 Optional: a home server (blank means the default). Below, a card: *a fresh
@@ -76,7 +77,14 @@ first sign-in, as a banner offering to choose another).
 
 Selecting a profile raises **one** prompt (Face ID, or the passcode on Quick
 unlock), which covers sign-in and reading the stored messages. A dismissed
-prompt returns to profile selection; it never retries on its own.
+prompt returns to profile selection; it never retries on its own. A recent
+Touch ID or Face ID unlock of the device itself does not count.
+
+Going to the background drops the unlock, as do (on macOS) a sleeping screen
+and a user switch: coming back asks again. While the app is not in front, or
+the screen is being recorded or mirrored, the window is covered, so the app
+switcher and recordings show no messages. The keyboard learns nothing from
+what is typed in a conversation, and Writing Tools are off there.
 
 ### 3.4 Home — three tabs
 
@@ -159,8 +167,7 @@ A card with avatar, `@handle`, key fingerprint and `switch profile`. Then:
   (every profile; server accounts survive); delete my account (this profile,
   on the server and the device, irreversible; other profiles stay).
 - **security**: the active profile's protection tier and what is protected
-  where; "fast unlock", which holds the identity key in memory for the
-  foreground session, off by default and labelled less secure.
+  where.
 - **diagnostics**: the protocol log (key exchanges, greetings, dropped frames,
   with reasons, never content).
 - **terms**, **privacy**, **support**: the published pages.
@@ -233,7 +240,7 @@ lowercase; system surfaces keep sentence case.
 | welcome, new profile, switching | `Views/Profiles/` |
 | tab shell, swipe navigation | `Views/RootTabView.swift` |
 | conversation list | `Views/ChatListView.swift` |
-| contacts, invites, blocking | `Views/ContactsView.swift`, `Views/ContactRows.swift`, `Services/FriendService.swift` |
+| contacts, invites, blocking | `Views/ContactsView.swift`, `Views/ContactRows.swift`, `Services/ChatStore.swift` (the engine's friends and invites) |
 | add contact | `Views/AddContactView.swift` |
 | conversation, composer, bubbles, report | `Views/Chat/` |
 | key verification | `Views/KeyVerification.swift` |
@@ -242,4 +249,5 @@ lowercase; system surfaces keep sentence case.
 | tokens, components, gestures | `Helpers/Design/` |
 | banners, empty states | `Helpers/StatusPresentation.swift` |
 | username rules | `Helpers/UsernameRule.swift` |
+| the engine behind every screen | `Services/ChatStore.swift`, over `../CoreShell/` and the Rust core |
 | the helper bot | `services/server/src/bot/` |

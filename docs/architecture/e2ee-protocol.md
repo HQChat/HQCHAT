@@ -1,12 +1,12 @@
 # End-to-end encryption protocol
 
-What two clients speak to each other. The implementation clients and the
-server run is the Rust core (`core/hqchat-protocol`, used by the bot and,
-from phase 3, the apps); the Swift app's own is in
-`apps/apple/HQChat/Services/`, and the TypeScript reference in
-`services/server/test/reference/protocol/` (tests only). Each piece below is
-pinned byte for byte between them by a vector file in
-`services/server/test/helpers/`.
+What two clients speak to each other. Every client and the server run one
+implementation, the Rust core (`core/hqchat-protocol`, driven by
+`core/hqchat-engine`); the TypeScript reference in
+`services/server/test/reference/protocol/` is kept, for tests only, as an
+independent second implementation. Each piece below is pinned byte for byte
+between them by a vector file in `services/server/test/helpers/`, and the
+differential fuzzers compare the two on random input.
 
 ## Primitives
 
@@ -16,7 +16,7 @@ pinned byte for byte between them by a vector file in
 | Message encryption | AES-256-GCM, 12-byte IV, 16-byte tag, the frame header as AAD |
 | Key derivation | HKDF-SHA256, salt `"salt"`, a distinct `info` per use |
 | Fingerprints, ids | SHA-256 |
-| At rest on Apple devices | P-256 ECIES in the Secure Enclave wrapping a per-message AES-256-GCM key |
+| At rest on the device | AES-256-GCM under keys the core holds; the root of them sealed with P-256 ECDH to a hardware key (the Secure Enclave on Apple) joined with a 256-bit state secret ([below](#at-rest-on-the-device)) |
 
 HQC is built from a pinned upstream commit (`native/hqc/HQC_UPSTREAM.txt`) and
 checked against committed known-answer digests.
@@ -82,11 +82,13 @@ never sent: the responder computes it from the `init` it holds, the initiator
 from the `init` it sent (its `pendingInit`). The initiator answers only while it
 has a handshake pending, and only with a proof for its own `init`.
 
-The responder keeps one challenge per distinct transcript (at most 4 per
-contact, oldest evicted), holds every frame of that `init` (a burst shares one
-transcript), and opens them only when the proof for that transcript matches.
-A proven transcript is remembered for the app run; every other `init`,
-including a new one from the same contact, is challenged again.
+The responder keeps one challenge per distinct transcript, for 60 seconds,
+holds the frames of that `init` (a burst shares one transcript), and opens
+them only when the proof for that transcript matches. The bounds make forged
+inits cheap to absorb: at most 4 open challenges per claimed sender, 8 held
+frames per transcript and 2 MiB of held frames in all. A proven transcript is
+remembered while the engine runs; every other `init`, including a new one
+from the same contact, is challenged again.
 
 Version 1 bound only the nonce and the two ids. A forged `init` naming a
 contact (anyone who can publish to the inbox and claim the prekeys: a friend,
@@ -128,7 +130,7 @@ chain id:         cid = first 16 bytes of SHA-256(rkPub), as hex
   sending chain steps once it has been used and has carried 32 messages or
   lived 15 minutes; these bounds are the post-compromise window, and a one-way
   run steps once per turn. "Rotate keys" lifts the bounds, never the turn.
-  Sessions imported from 3.1.1 kept no turn: the lower id has it.
+  Sessions imported from the Swift app kept no turn: the lower id has it.
 - **Out of order:** keys skipped on the way to a later message are cached by
   chain and index, at most 2,000 across all chains, oldest evicted, and
   dropped once their chain is 8 steps from the peer behind: a message that
@@ -197,12 +199,26 @@ read-only, never silently re-keyed.
 
 ## At rest on the device
 
-Each stored body is sealed with a fresh AES-256-GCM key, which is wrapped with
-ECIES (`eciesEncryptionCofactorX963SHA256AESGCM`) to the profile's Secure
-Enclave public key. Sealing needs no user, so messages received in the
-background are stored sealed; opening needs the Enclave private key, gated by
-the profile's protection tier. Deleting a profile deletes its key pair, which
-makes its rows permanently unreadable.
+The core seals everything it stores (`core/hqchat-engine/src/persist.rs`); the
+app sees opaque blobs under opaque names.
+
+| Slot | Sealed with | Holds |
+|---|---|---|
+| `state` | P-256 ECDH with the device key, joined with the vault's 256-bit state secret, through HKDF-SHA256, then AES-256-GCM | the identity, prekey secrets, the friend directory, the outbox, the data key |
+| `session/{peer tag}` | AES-256-GCM under the data key | one ratchet session |
+| `msg/{peer tag}/{time}/{id tag}` | AES-256-GCM under the data key | one message |
+| `pending/{seq}` | ECIES to the device key | a frame that arrived while locked (ratchet ciphertext already) |
+
+The device key is a P-256 key that never leaves the hardware (the Secure
+Enclave on Apple, gated by the profile's protection tier); the state secret
+sits in the Keychain beside it, so a future break of P-256 alone does not open
+`state`. Sealing a pending frame needs only the public key, so frames received
+in the background are stored sealed; opening anything needs the hardware
+ECDH. Every blob is bound to its slot name as AAD. A tag is an HMAC under a
+key derived from the data key, so a copy of the store does not list who the
+user talks to or the message ids the server saw; the time stays in clear to
+order the history. Deleting a profile deletes its key pair and state secret,
+which makes its blobs permanently unreadable.
 
 ## Properties to know
 

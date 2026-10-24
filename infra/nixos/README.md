@@ -19,11 +19,13 @@ a system is an environment (`infra/environments/<name>.json`) and a role.
 | `host-agent.nix`, `../hqcat-host-agent.sh` | pull, switch and health-gated rollback from the signed, numbered `channels/<env>/<role>.signed` (`../hqcat-verify-signed.sh` checks the signature) |
 | `secrets.nix` | the host's age-encrypted secret bundle, installed under `/etc/hqcat/secrets` |
 | `wireguard.nix` | the app ↔ broker link, configured from the bundle |
-| `firewall.nix` | nftables per role; metadata service for root only |
+| `firewall.nix` | nftables per role, inbound and outbound (hosts reach out only on the ports they use); metadata service for root only |
+| `cloudflare-ips.nix` | the refresh of Cloudflare's ranges, which hands nftables only validated CIDRs |
+| `roles.nix` | everything a host is, independent of the machine (what the stack test imports); `default.nix` adds the DigitalOcean platform |
 | `app.nix`, `nginx.nix` | the app role |
 | `mqtt.nix` | the broker role |
 | `health.nix` | `hqcat-health-check`, which gates every switch |
-| `hardening.nix` | SSH, sysctls, and the systemd sandbox every service runs in |
+| `hardening.nix` | SSH (keys only, hybrid post-quantum key exchange, per-source rate limit), sysctls (no ICMP redirects), no core dumps, audit rules on key paths, and the systemd sandbox every service runs in |
 | `hardware.nix`, `image.nix` | the droplet's boot disk and the image built from it |
 
 ```bash

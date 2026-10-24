@@ -1,9 +1,10 @@
 # Multiplatform: one core, four platforms
 
-**Status: the core (phases 1 and 1b) is built in `core/`, and the server,
-the hqn/1 gateway and the helper bot run on it (phase 2, built; deployment to
-staging and production pending), and so do the Apple apps (phase 3, built;
-it ships as the release after 3.1.1).** How HQChat goes from two Apple targets to
+**Status: the core (phases 1 and 1b) is built in `core/`; the server, the
+hqn/1 gateway and the helper bot run on it (phase 2, built and merged to
+`main`), and so do the Apple apps (phase 3, built and merged to `main`; iOS
+3.1.1, the first release on the core, built from source at 7788ea2 by the
+Apple release workflow, was approved on 2026-10-24). Phases 4 to 7 (Android, Linux, Windows) have not started.** How HQChat goes from two Apple targets to
 iOS, macOS, Android, Linux and Windows without a second or third copy of the
 protocol. Moving an account between devices is a separate plan, built on top
 of this one. The flow of one message through the core, function by function,
@@ -80,17 +81,20 @@ state or root key ever crosses the boundary.**
 ```
 Engine::new(config, vault: KeyVault, store: Store) -> Engine
 
-commands (each returns Vec<Effect>)        effects (the shell carries them out)
-  create_identity · start · unlock · lock    Http { req, method, path, authorization, body }
-  tick(now)                                  Open { conn, endpoint } · Write · Close
-  send_text · retry                          Timer { at } · NeedUnlock { reason }
-  invite · accept · remove · block · report  MessageAdded · MessageStatus
-  set_username · delete_account              FriendsChanged · InvitesChanged
-  register_push                              PresenceChanged · Connection · TierChanged
-  on_http · on_opened · on_bytes · on_closed Notify { peer }   (never content)
-  on_network_changed                         ActionFailed · AccountDeleted · Dropped
+commands (each returns Vec<Effect>)          effects (the shell carries them out)
+  create_identity · import · start             Http { req, method, path, authorization, body }
+  unlock · lock · tick(now) · set_presence     Open { conn, endpoint } · Write · Close
+  send_text · retry · mark_read                Timer { at } · NeedUnlock { reason }
+  invite · cancel · accept · remove            MessageAdded · MessageStatus
+  block · unblock · forget · report            FriendsChanged · InvitesChanged · ActionDone
+  set_verified · rotate_keys                   PresenceChanged · Connection · TierChanged
+  set_username · delete_account                Notify { peer? }   (never content)
+  register_push                                ActionFailed · AccountDeleted · Dropped
+  on_http · on_opened · on_bytes · on_closed   StorageFailed
+  on_network_changed
 
-reads: history(peer, before, limit) · friends() · invites() · fingerprint(peer)
+reads: history(peer, before, limit) · friends() · invites() · sent_invites()
+       fingerprint(peer) · my_id()
 ```
 
 Every function, and what it replaces in the Apple app and the server, is in
@@ -107,8 +111,10 @@ Every function, and what it replaces in the Apple app and the server, is in
   TS mqtt.js dependency are replaced by one fuzzed Rust codec.
 - **Two synchronous callbacks**, both local and fast:
   - `KeyVault`: create the device key, give its public key, one hardware
-    ECDH, report the tier. The core does ECIES itself: sealing needs only the
-    public key (works while locked), opening needs the hardware ECDH.
+    ECDH, give the 256-bit state secret, report the tier. The core does ECIES
+    itself: sealing needs only the public key (works while locked), opening
+    needs the hardware ECDH; `state` also needs the state secret, so it does
+    not rest on P-256 alone.
   - `Store`: get, put, delete, list opaque blobs by key.
   Biometric unlock is UI: the shell prompts, then calls `unlock()`, and the
   vault calls that follow run under the already-authenticated context.
@@ -126,11 +132,12 @@ the exports):
 
 | Export | Used by |
 |---|---|
-| `hqcKeypairFromSeed`, `hqcEncapsulate`, `hqcDecapsulate`, `authProof`, `HQC_PUBLIC_KEY_BYTES` | `/auth/init`, the gateway's decapsulation workers |
+| `authChallenge`, `originOf`, `authProofMatches`, `HQC_PUBLIC_KEY_BYTES` | `/auth/init` and `/auth/verify`: the challenge and its expected proof come back together, and the shared secret never reaches JavaScript |
 | `parseConnectProof`, `isFreshTimestamp`, `verifyConnectProof`, `isSigningKey`, `MQTT_PROOF_NONCE_TTL_SECONDS` | `/mqtt/authn`, `/auth/verify` and `/auth/refresh` (a registered key must be a canonical, non-small-order Ed25519 point) |
-| `peerId`, `isPeerId`, `conversationTopic`, `handshakeTopic`, `PEER_ID_LENGTH` | routes, the users table, EMQX revocation |
-| `GatewayKeyPair` (derived once at startup), `HqnGatewayHandshake`, `HqnTransport`, `hqnMsg1Length`, `hqnFrame`, `HQN_VERSION` | `hqcat-noise-gw` |
-| `Engine`, with `importLegacy` | `hqcat-bot` (through `src/common/core-client.ts`), the core scenario |
+| `peerId`, `isPeerId`, `keyMatchesId`, `conversationTopic`, `handshakeTopic`, `PEER_ID_LENGTH` | routes, the users table, EMQX revocation |
+| `GatewayKeyPair` (built once at startup from the key seeds; its `decapsulate` runs on the libuv pool and returns an opaque `HqnSecret`), `HqnGatewayHandshake`, `HqnTransport`, `hqnMsg1Length`, `hqnFrame`, `HQN_VERSION` | `hqcat-noise-gw`: the HQC secret key and the shared secrets stay in the core |
+| `hqcKeypairFromSeed`, `deviceKeyFromSeed`, `Engine` with `importLegacy` | `hqcat-bot` (through `src/common/core-client.ts`): its identity and device key derive from its seed, and nothing secret is stored; the core scenario |
+| `hqcEncapsulate`, `hqcDecapsulate` | tests only |
 
 TypeScript keeps HTTP, Postgres, EMQX hooks and the push bridge. The bot runs
 the apps' own `Engine`, so every scenario that talks to it exercises real
@@ -146,10 +153,10 @@ the core (`hqchat-verdict`), as they compare it with the Swift app.
 |---|---|
 | Data | uniffi records and enums; bytes as `Vec<u8>` (a 14 KB copy per handshake is noise) |
 | Errors | one `CoreError` enum with stable codes, never a string the UI parses |
-| Panics | `panic = "unwind"` for the FFI crates so uniffi and napi turn a panic into an error; an abort would kill the app with no report |
+| Panics | `panic = "unwind"`, and every `Engine` call under `catch_unwind`, so uniffi and napi turn a panic into an error; an abort would kill the app with no report |
 | Secrets | `zeroize`d; never uniffi records, only fields of opaque objects |
 | Threads | `Engine` is `Send + Sync` with internal locking; no call blocks on I/O. Swift wraps it in an actor, Kotlin in a single-thread dispatcher |
-| Persisted state | `state` (identity, prekeys, directory, outbox, a data key) sealed to the device key: ECIES on P-256, sealing needs only the public key, opening is one `KeyVault::agree`. Sessions (`session/{peer}`) and messages (`msg/{peer}/{time}/{id}`) under the data key; frames that arrive locked (`pending/…`) sealed to the device key. Versioned postcard; every blob bound to its key as AAD |
+| Persisted state | `state` (identity, prekeys, directory, outbox, a data key) sealed under P-256 ECDH with the device key joined with the vault's state secret, written only while unlocked. Sessions (`session/{peer tag}`) and messages (`msg/{peer tag}/{time}/{id tag}`) under the data key, where a tag is an HMAC under a key derived from the data key, so slot names list no friend and no message id; frames that arrive locked (`pending/…`) sealed to the device key alone (they are ratchet ciphertext already). Versioned postcard; every blob bound to its key as AAD |
 | Existing installs | a one-time importer reads today's Swift-encoded identity, sessions and message rows and rewrites them in the core format |
 | Drift | bindings generated at build time, never edited; `core_api_version()` checked at startup |
 
@@ -165,8 +172,10 @@ the core (`hqchat-verdict`), as they compare it with the Swift app.
 | Server | `x86_64-unknown-linux-gnu` (droplets), `aarch64-apple-darwin` (dev) | `.node` addon from Nix; no npm prebuild |
 
 Kotlin loads the native library through JNA, as uniffi does, on Android and on
-desktop. Each artifact has one entry point (`nix build .#core-aar`,
-`.#core-jar`, `.#core-node`); the xcframework builds on a Mac from `verify.sh`.
+desktop. Each artifact has one entry point (`.#hqchat-node` today; `.#core-aar`
+and `.#core-jar` with their phases); the xcframework builds on a Mac
+(`core/hqchat-ffi/build-apple.sh`, from `verify.sh` and from the Apple release
+workflow) and is never committed.
 
 ### Proving it on every architecture
 
@@ -255,7 +264,7 @@ main                       releases only
 |---|---|
 | `lib` | **Done, in `lib/main`:** `lib/hqc-sys` → `lib/api-surface` → `lib/protocol-identity-topics` → `lib/protocol-aead-envelope` → `lib/protocol-handshake` → `lib/protocol-ratchet` → `lib/protocol-mqtt-proof` → `lib/protocol-noise` → `lib/protocol-mqtt-codec` → `lib/engine-at-rest` → `lib/engine-auth` → `lib/engine-prekeys-friends` → `lib/engine-mqtt-session` → `lib/engine-conversations` → `lib/node-binding` → `lib/ffi-binding` → `lib/hostile-input` → `lib/ci-core`. **Later:** `lib/vault-desktop` (phase 6), `lib/fuzz-differential` (cargo-fuzz needs a nightly toolchain the dev shell does not pin) |
 | `server` | **Done, in `server/main`:** `server/core-node-package` → `server/differential-rust-ts` → `server/napi-protocol` → `server/napi-gateway` → `server/engine-client` (bot, scenarios) → `server/remove-ts-protocol` → `server/push-inbox-wake` → `server/docs-phase2`. **Later:** `server/push-fcm-unifiedpush` (phase 4) |
-| `apple` | `apple/core-xcframework` → `apple/effect-loop` → `apple/enclave-vault` → `apple/importer` → `apple/views-on-engine` → `apple/remove-swift-protocol` |
+| `apple` | **Done, merged:** `apple/core-xcframework` → `apple/effect-loop` → `apple/enclave-vault` → `apple/importer` → `apple/views-on-engine` → `apple/remove-swift-protocol` |
 | `android` | `android/scaffold` → `android/effect-loop` → `android/keystore-vault` → `android/push` → `android/ui` → `android/release` |
 | `desktop` | `desktop/scaffold` → `desktop/effect-loop` → `desktop/linux-packaging` → `desktop/windows-msix` |
 
@@ -267,8 +276,8 @@ Each phase ships on its own and leaves every existing client working.
 |---|---|---|---|
 | 1 | **Protocol (built).** `hqc-sys`, `hqc`, the API surface, `hqchat-protocol` with the MQTT codec; the shared vectors read in place; hostile input to every decoder | `lib/hqc-sys` … `lib/protocol-mqtt-codec`, `lib/hostile-input` | every vector passes: on macOS arm64 and in CI (Linux x86_64); the other targets with their phases |
 | 1b | **Engine and bindings (built).** `hqchat-engine`, `hqchat-node`, `hqchat-ffi`; `scripts/check.sh core` in CI | `lib/engine-*`, `lib/*-binding`, `lib/ci-core` | two engines converse through a fake server and broker; Node and Swift run the bindings; the bot on staging comes with phase 2 |
-| 2 | **Server on the core (built; deployment pending).** The napi binding replaces `src/protocol` and koffi in the server, gateway and bot; the bot imports its TS state into the core on its first start, keeping its seed-derived id and its sessions | `server/*` (done list above) | unit, integration and scenario layers green (done, locally and with the Swift live check); deployed to staging, then production |
-| 3 | **Apple on the core (built; release pending).** No flag: 3.1.1 is the last Swift build and 3.2.0 runs on the core, with the Swift protocol, MQTT and session files deleted. On first launch the importer moves identity, prekeys, sessions, history (with read state) and blocked or vanished friends; it lives in `Migration/` and goes a few weeks later ([core-wiring.md](core-wiring.md#the-switch-phase-3)) | `apple/*` | an App Store update with no visible change |
+| 2 | **Server on the core (built, on `main`).** The napi binding replaces `src/protocol` and koffi in the server, gateway and bot; the bot imports its TS state into the core on its first start, keeping its seed-derived id and its sessions | `server/*` (done list above) | unit, integration and scenario layers green (done, locally and with the Swift live check); deployed to staging, then production |
+| 3 | **Apple on the core (built, on `main`; iOS 3.1.1 approved, release pending).** No flag: every earlier version is a Swift build and 3.1.1 runs on the core, with the Swift protocol, MQTT and session files deleted. On first launch the importer moves identity, prekeys, sessions, history (with read state) and blocked or vanished friends; it lives in `Migration/` and goes a few weeks later ([core-wiring.md](core-wiring.md#the-switch-phase-3)) | `apple/*` | an App Store update with no visible change |
 | 4 | **Server for new platforms.** Push bridge gains FCM and UnifiedPush; push tokens carry a platform | `server/push-fcm-unifiedpush` | scenarios cover each provider with a fake |
 | 5 | **Android.** Kotlin shell, Android target; Keystore vault; FCM + UnifiedPush + foreground-service fallback; `allowBackup=false`, `FLAG_SECURE` | `android/*` | Play internal testing; interop with iOS and the bot |
 | 6 | **Linux and Windows.** Desktop target of the same shell; `hqchat-vault-desktop` with TPM and fallback tiers | `lib/vault-desktop`, `desktop/*` | Flathub + Nix + AppImage; signed MSIX + winget |
@@ -287,7 +296,8 @@ Windows gets runner jobs for the vault and the MSIX; Apple stays on
 | Ratchet state copied off the device by backup | 5, 6 | `allowBackup=false`; Store excluded from OneDrive / Windows backup paths; everything sealed regardless |
 | HQC on arm64 Android: build flags, 16 KB pages, constant time | 1, 5 | known-answer digests on device in CI; timing test on a real arm64 device |
 | HQC's large stack buffers on small thread stacks (512 KB on iOS secondary threads) | 1, 3, 5 | measured: about 210 KiB at peak (`crypto_kem_dec` → `hqc_pke_encrypt` → `vect_mul`), then the 256 KiB stack scrub after each call; under 512 KB, to confirm on device in phases 3 and 5 |
-| The importer loses or corrupts an existing Apple install | 3 | importer keeps the old items until the new ones open, and retries at each launch; tested against a store captured from 3.1.1; App Store phased release |
+| The Swift builds and 3.1.1 need different servers: the Swift builds send `/auth/init { pk }` and the v1 proof, which a server built from `main` refuses; 3.1.1 sends the origin and the v2 proof, which an older server refuses | 2, 3 | 3.1.1 and the server from the same commit go live together through the App Store workflow: Deploy on the `app-store/3.1.1` tag with `app_store_version` set, the app released only after verify. Installs still on a Swift build cannot sign in until they update |
+| The importer loses or corrupts an existing Apple install | 3 | importer keeps the old items until the new ones open, and retries at each launch; tested against a store captured from a Swift build; App Store phased release |
 | A user who skips the transition window loses their identity and history | 3 | the window is weeks, not days; the app then sets the profile up as new, and friends see the old identity as vanished |
 | A marshalling bug the Rust tests cannot see | 1b, 3, 5 | the binding conformance suite runs the vectors through Swift, Kotlin and Node |
 | TPM access denied on Linux (`tss` group, Flatpak sandbox) | 6 | detect and say so; fallback tier; document the one command that fixes it |
@@ -303,13 +313,14 @@ Windows gets runner jobs for the vault and the MSIX; Apple stays on
 - Settled: an offline user gets a content-free wake for any message,
   including a first one on their inbox (`src/server/push.ts`); reading it
   still needs the unlock. Handshake traffic wakes nobody.
-- HQC's PRNG is one global SHAKE-256 state (`symmetric.c`), and after an
-  encapsulation it still holds the sponge that produced the message and the
-  salt; Keccak is invertible, so that memory gives the shared secret away.
-  `core/hqc-sys` wipes it after each encapsulation, and zeroes the stack HQC
-  used after every call. The shipped `hqc_kem_enc_wrap` does not; the server
-  stops calling it when phase 2 deploys, the apps in phase 3, with no
-  separate patch. The C reference itself stays untouched: it is the standard.
+- Settled: HQC's PRNG is one global SHAKE-256 state (`symmetric.c`), and
+  after an encapsulation it still holds the sponge that produced the message
+  and the salt; Keccak is invertible, so that memory gives the shared secret
+  away. `core/hqc-sys` wipes it after each encapsulation, and zeroes the stack
+  HQC used after every call. Nothing calls the old `hqc_kem_enc_wrap` any
+  more: the server and the apps reach HQC only through the core, and the
+  standalone Apple HQC build is deleted. The C reference itself stays
+  untouched: it is the standard.
 - The Kotlin bindings generate but are first compiled in phase 5; the Swift
   ones are compiled and run by `core/hqchat-ffi/swift/run.sh`.
 - The at-rest format is the core's own: opening what the Apple app sealed

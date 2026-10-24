@@ -12,10 +12,10 @@ No secret is committed. `infra/environments/<name>.json` is where a server
 deployment is described; `apps/apple/HQChat/Deployment.swift` holds the
 official app's defaults.
 
-The server and everything outside `apps/apple/` are AGPL-3.0; the app is
-PolyForm Strict. Read [LICENSING.md](LICENSING.md) before contributing to
-`apps/apple/`: a contribution there is accepted only with the grant it
-describes.
+The server, the Rust core and everything outside `apps/apple/` are AGPL-3.0;
+the app is PolyForm Strict. Read [LICENSING.md](LICENSING.md) before
+contributing to `apps/apple/` or `core/`: a contribution there is accepted
+only with the grant it describes.
 
 ## Before you open a PR
 
@@ -24,6 +24,7 @@ Pull requests target the branch they were cut from.
 | Change touches | Run |
 |---|---|
 | anything | `nix develop --command scripts/check.sh lint` |
+| `core/` or `native/hqc/` | `nix develop --command scripts/check.sh core`; on a Mac, `apps/apple/verify.sh` too, since the apps link the core |
 | `services/server/` | `scripts/check.sh unit`, `scripts/check.sh integration` (needs `DATABASE_URL`) |
 | the server, the broker config or the hosts | `scripts/check.sh scenarios` (Docker) |
 | `infra/` | `nix develop --command scripts/check.sh infra` |
@@ -32,11 +33,14 @@ Pull requests target the branch they were cut from.
 
 CI (`.github/workflows/ci.yml`) runs every one of those layers except the Apple
 gate, plus the two-VM stack test when the hosts or the server change.
+`scan.yml` (gitleaks, `npm audit`, `cargo deny` advisories) and `codeql.yml`
+run on every pull request and weekly.
 
 ### Make the Apple gate hard to forget
 
-`verify.sh` is the only thing that runs the Swift suites, both app builds, the UI
-tests, the differential fuzzers and the file-bus simulation. Nothing in CI does.
+`verify.sh` is the only thing that builds the core's Swift package and runs
+`CoreShell`'s tests, the Swift suites, both app builds, the UI tests and the
+scrubber's differential fuzzer. Nothing in CI does.
 It records what it verified in `apps/apple/.build/verify-stamp`, and there is an
 opt-in hook that refuses to push Apple changes that stamp does not cover:
 
