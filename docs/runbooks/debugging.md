@@ -83,8 +83,8 @@ per account per reason.
 
 For (3): the app publishes a retained `offline` when it goes to the background
 and holds an iOS background assertion until the frame reaches the socket. If
-the device's protocol log shows `could NOT announce offline`, only the
-Last-Will corrects it, up to 45 seconds later.
+the announcement did not go out, only the Last-Will corrects it, once the
+broker gives up on the keepalive (about 90 seconds).
 
 ## 5. Is it queued rather than lost?
 
@@ -100,8 +100,10 @@ never content:
 
 - **`subscribeRefused`** → the client asked for a topic the server never gave
   it; a directory sync re-asks with the current ones.
-- **`dropped`** → the frame arrived and was refused; the stage and reason say
-  where (topic binding, decode, decrypt).
+- **`dropped`** → the frame arrived and was refused; the reason, worded by
+  the core (`Effect::Dropped`), says where (topic binding, decode, decrypt,
+  an unproven first contact, a cap reached). Reasons name no conversation or
+  handshake id, and ids in them are shortened.
 - **Nothing received** → the app is not subscribed. Check that sign-in ran a
   directory sync and that the conversation topic is in its subscription set.
 
