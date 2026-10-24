@@ -83,6 +83,36 @@ export async function getAll(jwt, path) {
   return out;
 }
 
+/**
+ * Why an app record is missing, from what the key can see: every app record
+ * with its bundle id and platforms, and whether the bundle id is registered
+ * (an identifier without an app record cannot take uploads).
+ */
+async function notFound(jwt, bundleId) {
+  const lines = [`no app record with bundle id ${bundleId} in App Store Connect.`];
+  const apps = await getAll(jwt, "/v1/apps?fields[apps]=name,bundleId&limit=200");
+  lines.push(apps.length ? "App records this key can see:" : "This key sees no app records.");
+  for (const a of apps) {
+    const versions = await getAll(jwt, `/v1/apps/${a.id}/appStoreVersions?fields[appStoreVersions]=platform&limit=200`);
+    const platforms = [...new Set(versions.map((v) => v.attributes.platform))].join(", ") || "no App Store version yet";
+    lines.push(`  ${a.attributes.bundleId}  "${a.attributes.name}"  (${platforms})`);
+  }
+  const prefix = bundleId.slice(0, bundleId.lastIndexOf("."));
+  const ids = await getAll(
+    jwt,
+    `/v1/bundleIds?filter[identifier]=${encodeURIComponent(prefix)}&fields[bundleIds]=identifier,platform&limit=200`,
+  );
+  const registered = ids.find((i) => i.attributes.identifier === bundleId);
+  lines.push(
+    registered
+      ? `${bundleId} is registered (${registered.attributes.platform}) but has no app record: create one in App Store Connect → Apps → New App.`
+      : `${bundleId} is not registered as an identifier either.`,
+  );
+  const others = ids.filter((i) => i !== registered).map((i) => `  ${i.attributes.identifier} (${i.attributes.platform})`);
+  if (others.length) lines.push(`Identifiers under ${prefix}:`, ...others);
+  return lines.join("\n");
+}
+
 async function main([bundleId, platform, projectVersion, projectBuild, requested]) {
   const { ASC_KEY_ID: keyId, ASC_ISSUER_ID: issuerId, ASC_KEY_P8: p8 } = process.env;
   if (!keyId || !issuerId || !p8 || !bundleId || !["IOS", "MAC_OS"].includes(platform)) {
@@ -91,7 +121,7 @@ async function main([bundleId, platform, projectVersion, projectBuild, requested
   const jwt = token({ keyId, issuerId, p8 });
   const apps = await getAll(jwt, `/v1/apps?filter[bundleId]=${encodeURIComponent(bundleId)}&fields[apps]=bundleId`);
   const app = apps.find((a) => a.attributes.bundleId === bundleId);
-  if (!app) throw new Error(`no app with bundle id ${bundleId} in App Store Connect`);
+  if (!app) throw new Error(await notFound(jwt, bundleId));
 
   const [trains, storeVersions, builds] = await Promise.all([
     getAll(jwt, `/v1/preReleaseVersions?filter[app]=${app.id}&filter[platform]=${platform}&fields[preReleaseVersions]=version&limit=200`),
