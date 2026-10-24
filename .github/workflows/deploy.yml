@@ -344,7 +344,9 @@ jobs:
       - name: Functional scenarios against the environment
         working-directory: services/server
         env:
-          TEST_BASE_URL: https://${{ needs.infra.outputs.domain }}
+          # The apps sign in at the API host, the only origin AUTH_ORIGINS gives
+          # them; the apex would be refused with BAD_ORIGIN.
+          TEST_BASE_URL: https://${{ needs.infra.outputs.api_host }}
           TEST_MQTT_URL: wss://${{ needs.infra.outputs.domain }}/mqtt
           TEST_EXPECT_VERSION: ${{ github.sha }}
           SCENARIOS_REQUIRED: "1"
