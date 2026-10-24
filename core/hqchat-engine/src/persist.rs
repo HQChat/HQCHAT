@@ -31,7 +31,7 @@ use hqchat_protocol::kdf::hkdf_sha256;
 use hqchat_protocol::ratchet::{Chain, InitHeader, SessionState, SkippedKey, SymmetricKey};
 use hqchat_protocol::wire::Reader;
 use hqchat_protocol::{OsEntropy, PeerId, aead};
-use p256::elliptic_curve::sec1::ToEncodedPoint;
+use p256::elliptic_curve::sec1::ToSec1Point;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
@@ -138,7 +138,7 @@ pub(crate) fn seal_device(
     };
     let ephemeral_public = ephemeral
         .public_key()
-        .to_encoded_point(false)
+        .to_sec1_point(false)
         .as_bytes()
         .to_vec();
     let shared = p256::ecdh::diffie_hellman(ephemeral.to_nonzero_scalar(), device.as_affine());
@@ -190,7 +190,7 @@ pub(crate) fn seal_state(vault: &dyn KeyVault, plaintext: &[u8]) -> Result<Vec<u
     };
     let ephemeral_public = ephemeral
         .public_key()
-        .to_encoded_point(false)
+        .to_sec1_point(false)
         .as_bytes()
         .to_vec();
     let shared = p256::ecdh::diffie_hellman(ephemeral.to_nonzero_scalar(), device.as_affine());
