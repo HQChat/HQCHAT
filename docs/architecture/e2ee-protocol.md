@@ -130,7 +130,7 @@ chain id:         cid = first 16 bytes of SHA-256(rkPub), as hex
   sending chain steps once it has been used and has carried 32 messages or
   lived 15 minutes; these bounds are the post-compromise window, and a one-way
   run steps once per turn. "Rotate keys" lifts the bounds, never the turn.
-  Sessions imported from 3.1.1 kept no turn: the lower id has it.
+  Sessions imported from the Swift app kept no turn: the lower id has it.
 - **Out of order:** keys skipped on the way to a later message are cached by
   chain and index, at most 2,000 across all chains, oldest evicted, and
   dropped once their chain is 8 steps from the peer behind: a message that

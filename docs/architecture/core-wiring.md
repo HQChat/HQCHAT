@@ -1,8 +1,9 @@
 # Core wiring: from the UI to the server and back
 
 **Status: the core is built (`core/`); the server, the gateway, the bot and
-the Apple apps run on it (phases 2 and 3, on `main`; the apps ship as the
-release after 3.1.1).** The "Before" column is what the server did before
+the Apple apps run on it (phases 2 and 3, on `main`; iOS 3.1.1, the first
+release on the core, built from `main` at 7788ea2, was approved on
+2026-10-24).** The "Before" column is what the server did before
 phase 2 and the Apple app before phase 3, kept as the map from the old code to
 the new. This document follows one message from the sender's UI, through the
 server, to the recipient's UI and back as a delivery receipt. Each step names
@@ -176,40 +177,40 @@ from the data key, so a copy of the store lists neither who the user talks to
 nor the message ids the server saw. On Apple the store is `FileStore`, one
 file per slot under Application Support, protected until the first unlock
 after boot (so frames that arrive in the background can still be written)
-and kept out of backups. Opening rows the 3.1.1 app sealed is the importer's job
+and kept out of backups. Opening rows the Swift app sealed is the importer's job
 (phase 3).
 
 ## The switch (phase 3)
 
-There is no flag. 3.1.1 (approved for iOS on 2026-10-24) is the last build
-on the Swift implementation; the
-next release, 3.2.0, runs entirely on the core, and the Swift protocol,
-MQTT and session code goes in that same release. The only code that knows
-about the old implementation lives under `apps/apple/HQChat/Migration/`, and
-it is deleted a few weeks after 3.2.0 ships. The server on `main` refuses
-3.1.1's sign-in (no origin, the v1 proof), so 3.2.0 and that server ship
-together ([multiplatform.md](multiplatform.md#risks)).
+There is no flag. Every version before 3.1.1 runs the Swift implementation;
+3.1.1 runs entirely on the core, and the Swift protocol, MQTT and session code
+went in that same release. The only code that knows about the old
+implementation lives under `apps/apple/HQChat/Migration/`, and it is deleted a
+few weeks after 3.1.1 ships. 3.1.1 signs in with the origin-bound v2 proof,
+which only a server built from the same `main` accepts, and that server
+refuses the Swift builds' sign-in; so 3.1.1 and that server go live together
+([multiplatform.md](multiplatform.md#risks)).
 
-### In 3.2.0
+### In 3.1.1
 
 | Step | What |
 |---|---|
 | A session per profile | `CoreSession`: the `Engine` (with `SecureEnclaveVault` and a `FileStore` in the profile's directory) and its `CoreShell`, created after the normal unlock. It turns effects into an observable model the views read: friends, invites, the open conversation, connection, tier |
 | The views on the model | Chat (`history`, `send_text`, `retry`, statuses, `mark_read` when shown), contacts (`invite`, `accept`, `remove`, `block`, `unblock`, `forget`; blocked and vanished banners), key verification (`fingerprint`), report, username, account deletion. `Notify` posts the content-free notification; the badge is unread plus invites |
-| The move | On the first unlock after the update, when the profile has no core state but has 3.1.1 data: `LegacySnapshot.read` → `CoreImport.importData` → `Engine.importState`, under a short "updating your data" screen. Only once the core has opened the profile are the old Keychain items, SwiftData rows and pending frames deleted. If it fails, nothing is deleted: the screen says so and the next launch tries again |
-| What `Migration/` holds | the importer, plus what reading 3.1.1 data needs and nothing else uses: the old SwiftData models (`Message`, `Friend`, `PendingFrame`), `RatchetSessionState`, `PrekeyStore`, and the read paths of `AESKeyStore` and `MessageKeyStore` |
+| The move | On the first unlock after the update, when the profile has no core state but has data from a Swift build: `LegacySnapshot.read` → `CoreImport.importData` → `Engine.importState`, under a short "updating your data" screen. Only once the core has opened the profile are the old Keychain items, SwiftData rows and pending frames deleted. If it fails, nothing is deleted: the screen says so and the next launch tries again |
+| What `Migration/` holds | the importer, plus what reading the Swift builds' data needs and nothing else uses: the old SwiftData models (`Message`, `Friend`, `PendingFrame`), `RatchetSessionState`, `PrekeyStore`, and the read paths of `AESKeyStore` and `MessageKeyStore` |
 | Deleted | everything listed under "What goes" below |
-| Gate | `verify.sh` with the UI tests on the core; the Swift app live over hqn/1 in the scenarios; the importer run on a store captured from a 3.1.1 build; then the device checks (Secure Enclave, the move on a real 3.1.1 install), which come after the code |
+| Gate | `verify.sh` with the UI tests on the core; the Swift app live over hqn/1 in the scenarios; the importer run on a store captured from a Swift build; then the device checks (Secure Enclave, the move on a real install of a Swift build), which come after the code |
 
 ### A few weeks later
 
-`Migration/` goes, and with it everything that only reads 3.1.1 data: the
+`Migration/` goes, and with it everything that only reads the Swift builds' data: the
 old models leave the SwiftData schema (`Persistence.swift`, and
 `Profile.friends`), `MessageKeyStore.unwrap` and its ECIES algorithm go,
 `Profile.publicKeyHex` stops being read, and `DataResetService` stops naming
-the 3.1.1 Keychain services. The same release deletes what is left of that
+the Swift builds' Keychain services. The same release deletes what is left of that
 data on a device: the old store's rows and those Keychain items. A profile
-still holding only 3.1.1 data then has no core state and is set up as new:
+still holding only Swift-build data then has no core state and is set up as new:
 a new identity, which its friends see as vanished. That is the price of
 keeping the transition short, so the window has to be long enough for
 active users to open the app once.
@@ -270,5 +271,5 @@ active users to open the app once.
 | Differential | `hqchat-verdict` answers the fuzzers in `services/server/test/fuzz` (envelope decode and encode, handshake, hqn/1): Rust and the TS reference agree on every verdict, AAD and field |
 | Server | the unit and integration layers on the addon; the gateway driven by the TS initiator over real sockets |
 | Scenarios | the local stack (`run-local.sh`): the reference client against the server, the bot on the core, an engine user talking to a reference user, and the Apple app's `ChatStore` live (`apps/apple/e2e/hqn-live`: two users over hqn/1, a third falling back to WSS) |
-| Apple | `verify.sh`: the core package's and `CoreShell`'s tests, the move from 3.1.1 on a session the shipped ratchet wrote, the store and reset, both builds, the UI tests |
+| Apple | `verify.sh`: the core package's and `CoreShell`'s tests, the move from the Swift app on a session the shipped ratchet wrote, the store and reset, both builds, the UI tests |
 | CI | `scripts/check.sh core` on every pull request; the Apple release workflow builds the core from the commit it ships and refuses bindings that differ from the committed ones |

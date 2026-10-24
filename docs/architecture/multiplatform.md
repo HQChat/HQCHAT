@@ -2,10 +2,9 @@
 
 **Status: the core (phases 1 and 1b) is built in `core/`; the server, the
 hqn/1 gateway and the helper bot run on it (phase 2, built and merged to
-`main`), and so do the Apple apps (phase 3, built and merged to `main`; it
-ships as the release after 3.1.1, the last Swift build, which Apple approved
-for iOS on 2026-10-24; it is built from source by the Apple release
-workflow). Phases 4 to 7 (Android, Linux, Windows) have not started.** How HQChat goes from two Apple targets to
+`main`), and so do the Apple apps (phase 3, built and merged to `main`; iOS
+3.1.1, the first release on the core, built from source at 7788ea2 by the
+Apple release workflow, was approved on 2026-10-24). Phases 4 to 7 (Android, Linux, Windows) have not started.** How HQChat goes from two Apple targets to
 iOS, macOS, Android, Linux and Windows without a second or third copy of the
 protocol. Moving an account between devices is a separate plan, built on top
 of this one. The flow of one message through the core, function by function,
@@ -278,7 +277,7 @@ Each phase ships on its own and leaves every existing client working.
 | 1 | **Protocol (built).** `hqc-sys`, `hqc`, the API surface, `hqchat-protocol` with the MQTT codec; the shared vectors read in place; hostile input to every decoder | `lib/hqc-sys` … `lib/protocol-mqtt-codec`, `lib/hostile-input` | every vector passes: on macOS arm64 and in CI (Linux x86_64); the other targets with their phases |
 | 1b | **Engine and bindings (built).** `hqchat-engine`, `hqchat-node`, `hqchat-ffi`; `scripts/check.sh core` in CI | `lib/engine-*`, `lib/*-binding`, `lib/ci-core` | two engines converse through a fake server and broker; Node and Swift run the bindings; the bot on staging comes with phase 2 |
 | 2 | **Server on the core (built, on `main`).** The napi binding replaces `src/protocol` and koffi in the server, gateway and bot; the bot imports its TS state into the core on its first start, keeping its seed-derived id and its sessions | `server/*` (done list above) | unit, integration and scenario layers green (done, locally and with the Swift live check); deployed to staging, then production |
-| 3 | **Apple on the core (built, on `main`; App Store release pending).** No flag: 3.1.1 is the last Swift build and 3.2.0 runs on the core, with the Swift protocol, MQTT and session files deleted. On first launch the importer moves identity, prekeys, sessions, history (with read state) and blocked or vanished friends; it lives in `Migration/` and goes a few weeks later ([core-wiring.md](core-wiring.md#the-switch-phase-3)) | `apple/*` | an App Store update with no visible change |
+| 3 | **Apple on the core (built, on `main`; iOS 3.1.1 approved, release pending).** No flag: every earlier version is a Swift build and 3.1.1 runs on the core, with the Swift protocol, MQTT and session files deleted. On first launch the importer moves identity, prekeys, sessions, history (with read state) and blocked or vanished friends; it lives in `Migration/` and goes a few weeks later ([core-wiring.md](core-wiring.md#the-switch-phase-3)) | `apple/*` | an App Store update with no visible change |
 | 4 | **Server for new platforms.** Push bridge gains FCM and UnifiedPush; push tokens carry a platform | `server/push-fcm-unifiedpush` | scenarios cover each provider with a fake |
 | 5 | **Android.** Kotlin shell, Android target; Keystore vault; FCM + UnifiedPush + foreground-service fallback; `allowBackup=false`, `FLAG_SECURE` | `android/*` | Play internal testing; interop with iOS and the bot |
 | 6 | **Linux and Windows.** Desktop target of the same shell; `hqchat-vault-desktop` with TPM and fallback tiers | `lib/vault-desktop`, `desktop/*` | Flathub + Nix + AppImage; signed MSIX + winget |
@@ -297,8 +296,8 @@ Windows gets runner jobs for the vault and the MSIX; Apple stays on
 | Ratchet state copied off the device by backup | 5, 6 | `allowBackup=false`; Store excluded from OneDrive / Windows backup paths; everything sealed regardless |
 | HQC on arm64 Android: build flags, 16 KB pages, constant time | 1, 5 | known-answer digests on device in CI; timing test on a real arm64 device |
 | HQC's large stack buffers on small thread stacks (512 KB on iOS secondary threads) | 1, 3, 5 | measured: about 210 KiB at peak (`crypto_kem_dec` → `hqc_pke_encrypt` → `vect_mul`), then the 256 KiB stack scrub after each call; under 512 KB, to confirm on device in phases 3 and 5 |
-| 3.1.1 cannot sign in to a server built from `main`: it sends `/auth/init { pk }` and the v1 proof, which that server refuses (it needs the origin and the v2 proof) | 2, 3 | production keeps the server 3.1.1 speaks until the core release is approved; then that release and the server go out together through the App Store workflow (deploy on the `app-store/<version>` tag, the app released only after verify). Installs still on 3.1.1 cannot sign in until they update |
-| The importer loses or corrupts an existing Apple install | 3 | importer keeps the old items until the new ones open, and retries at each launch; tested against a store captured from 3.1.1; App Store phased release |
+| The Swift builds and 3.1.1 need different servers: the Swift builds send `/auth/init { pk }` and the v1 proof, which a server built from `main` refuses; 3.1.1 sends the origin and the v2 proof, which an older server refuses | 2, 3 | 3.1.1 and the server from the same commit go live together through the App Store workflow: Deploy on the `app-store/3.1.1` tag with `app_store_version` set, the app released only after verify. Installs still on a Swift build cannot sign in until they update |
+| The importer loses or corrupts an existing Apple install | 3 | importer keeps the old items until the new ones open, and retries at each launch; tested against a store captured from a Swift build; App Store phased release |
 | A user who skips the transition window loses their identity and history | 3 | the window is weeks, not days; the app then sets the profile up as new, and friends see the old identity as vanished |
 | A marshalling bug the Rust tests cannot see | 1b, 3, 5 | the binding conformance suite runs the vectors through Swift, Kotlin and Node |
 | TPM access denied on Linux (`tss` group, Flatpak sandbox) | 6 | detect and say so; fallback tier; document the one command that fixes it |

@@ -11,7 +11,7 @@ every step even when one fails and reports whether all of them succeeded.
 | Profiles (name, home server, tier) | the SwiftData store |
 | Device keys and the core's state secrets | Secure Enclave and Keychain, service `app.hqchat.messagekeys` (both keychains on macOS) |
 | Protection-tier markers | Keychain, service `app.hqchat.keyprotection` |
-| What a 3.1.1 install left, until `Migration/` is removed | Keychain services `app.hqchat.profile.{profileId}` (and any such item of a profile the store no longer knows), `app.hqchat.aeskeys` and `app.hqchat.aeskeys.v2`; UserDefaults `app.hqchat.currentUsername` and `unsecureKeyHoldEnabled` |
+| What a Swift build left, until `Migration/` is removed | Keychain services `app.hqchat.profile.{profileId}` (and any such item of a profile the store no longer knows), `app.hqchat.aeskeys` and `app.hqchat.aeskeys.v2`; UserDefaults `app.hqchat.currentUsername` and `unsecureKeyHoldEnabled` |
 
 It keeps the accepted terms version (`eula.acceptedVersion`): it belongs to
 the person, not to an identity.
