@@ -9,8 +9,15 @@ APP="../../HQChat"
 BUILD="$(mktemp -d)"
 trap 'rm -rf "$BUILD"' EXIT
 
-CORE_PKG="$(cd ../../../../core/swift/HQChatCore && pwd)"
+ROOT="$(cd ../../../.. && pwd)"
+CORE_PKG="$ROOT/core/swift/HQChatCore"
 CORE_FFI="$CORE_PKG/HQChatCoreFFI.xcframework/macos-arm64"
+# The core package from this tree's core, as verify.sh builds it: the
+# xcframework is never committed, so one left from an older core (or none,
+# after a clone) would not match the committed bindings, and without its
+# module the bindings' `canImport(hqchat_ffiFFI)` drops the import and every
+# uniffi type (RustBuffer, ForeignBytes …) goes missing.
+nix develop "$ROOT#apple" --command bash "$ROOT/core/hqchat-ffi/build-apple.sh"
 xcrun swiftc -O -target arm64-apple-macos15.5 -swift-version 5 -parse-as-library \
   -module-name HQChatCore -emit-module -emit-module-path "$BUILD/HQChatCore.swiftmodule" \
   -emit-library -static -o "$BUILD/libHQChatCore.a" \

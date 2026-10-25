@@ -6,7 +6,7 @@
 #   bash services/server/test/scenarios/run-local.sh        # LOAD=1 adds the load test
 #
 # Needs Docker and the core's Node addon (built with Nix when HQCHAT_NODE is
-# unset).
+# unset); the Swift client builds the core's Apple package with Nix and Xcode.
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
