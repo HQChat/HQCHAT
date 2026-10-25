@@ -58,7 +58,9 @@ enum Deployment {
     /// app rather than told by the server, so a server can neither put the
     /// label on a person nor take it off the bot. Public values: `npm run bot
     /// -- --print-id` in services/bot prints one for a seed (Deploy's BOT_ID).
-    static let helperIDs: [String] = []
+    static let helperIDs: [String] = [
+        "95899681fc0a87bd33f23b2ecd813d1dbd8a7e63bbb48045440abe95c6638b6d", // production
+    ]
 
     /// Whether `peerID` is one of `helperIDs`. Peer ids are hex, so case does
     /// not distinguish them.

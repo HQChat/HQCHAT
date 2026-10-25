@@ -210,5 +210,7 @@ check(!Deployment.isHelper(helperID + "0", among: [helperID]), "nor a longer id"
 check(!Deployment.isHelper(helperID, among: []), "an empty list marks nobody")
 check(Deployment.helperIDs.allSatisfy { $0.count == 64 && $0.allSatisfy(\.isHexDigit) },
       "the compiled-in ids are well formed")
+check(Deployment.isHelper("95899681fc0a87bd33f23b2ecd813d1dbd8a7e63bbb48045440abe95c6638b6d"),
+      "the production helper is pinned")
 
 finish()
