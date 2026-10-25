@@ -85,6 +85,7 @@ const int = (r: Rng, n: number) => Math.floor(r() * n);
 const SECRETS = [
   "eyJQTEFDRUhPTERFUn0.eyJQTEFDRUhPTERFUn0.PLACEHOLDERsignature",
   "sk_test_PLACEHOLDER01",
+  "sk-ant-api03-PLACEHOLDER_0000-placeholder",
   "whsec_PLACEHOLDER0001",
   "pk_test_PLACEHOLDER03",
   "t=1614556800,v1=5257a869e7ecebeda32affa62cdca3fa",
@@ -114,6 +115,7 @@ const NEAR_MISSES = [
   "12:34:56", // not IPv6
   "order 12345 failed", // not a key
   "deadbeef", // 8 hex, under the 32 floor
+  "sk-ant-short", // under the Anthropic key floor
   "a".repeat(31), // one under the hex rule
   "256.1.1.1", // not a valid IPv4
   "@a", // one under the handle floor

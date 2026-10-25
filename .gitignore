@@ -18,6 +18,7 @@ apps/apple/tests/.coverage/
 # Helper bot identity and per-friend keys (local runs)
 .bot-seed
 .bot-state.json
+.bot/
 
 # Key material is never a repository artefact
 *.key

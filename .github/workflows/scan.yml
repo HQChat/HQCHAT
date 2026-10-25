@@ -46,6 +46,8 @@ jobs:
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
+          # The default rules (Anthropic, AWS, GitHub… keys) stay on; the allowlist only narrows them.
+          grep -qxF 'useDefault = true' .gitleaks.toml || { echo ".gitleaks.toml must extend the default rules" >&2; exit 1; }
           gitleaks=(nix shell --inputs-from . nixpkgs#gitleaks --command gitleaks)
           if [ -n "$BASE" ] && git cat-file -e "$BASE^{commit}" 2>/dev/null; then
             "${gitleaks[@]}" detect --source . --config .gitleaks.toml --redact --no-banner --log-opts="$BASE..HEAD"
