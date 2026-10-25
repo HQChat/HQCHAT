@@ -46,3 +46,4 @@ core/swift/HQChatCore/.built-from
 
 # The Node addon, built by core/hqchat-node/build.sh
 core/hqchat-node/hqchat_node.node
+dashboards.sh
