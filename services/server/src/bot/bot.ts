@@ -39,6 +39,8 @@ const MQTT_URL = process.env.MQTT_URL || "ws://127.0.0.1:8083/mqtt";
 const USERNAME = process.env.BOT_USERNAME || "helper";
 const STATE_DIR = process.env.BOT_STATE_DIR || path.join(process.cwd(), ".bot");
 const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL || "support@example.com";
+/** How often a welcome that failed is sent again. */
+const GREET_RETRY_MS = 15_000;
 
 const WELCOME = (name: string) =>
   [
@@ -132,13 +134,17 @@ export class Greeted {
 export class Bot {
   /** Welcomes in flight, by message id: a friend counts as greeted once the broker has it. */
   private readonly greeting = new Map<string, string>();
+  /** Welcomes the core marked failed, by message id, waiting to be sent again. */
+  private readonly failed = new Set<string>();
   private claimed = false;
 
   constructor(
     private readonly client: CoreClient,
     private readonly greeted: Greeted,
     private readonly username = USERNAME,
+    retryMs = GREET_RETRY_MS,
   ) {
+    setInterval(() => this.retryGreetings(), retryMs).unref();
     client.onMessage((m) => this.answer(m.peer, m.text));
     client.onEffect((e) => {
       if (e.kind === "invitesChanged") this.acceptInvites();
@@ -180,13 +186,26 @@ export class Bot {
     }
   }
 
-  /** A welcome the broker took counts; a failed one is retried at the next friend change. */
+  /**
+   * The server befriends a new account before its app publishes prekeys, so
+   * the first welcome usually fails: the same message goes again until the
+   * broker takes it.
+   */
+  retryGreetings(): void {
+    for (const msgId of this.failed) {
+      this.failed.delete(msgId);
+      this.client.run(() => this.client.engine.retry(msgId, Date.now()));
+    }
+  }
+
+  /** A welcome the broker took counts; a failed one waits for retryGreetings. */
   private settleGreeting(msgId: string, state: string): void {
     const id = this.greeting.get(msgId);
     if (!id) return;
-    if (state === "failed") this.greeting.delete(msgId);
+    if (state === "failed") this.failed.add(msgId);
     else if (state === "sent" || state === "queued" || state === "delivered") {
       this.greeting.delete(msgId);
+      this.failed.delete(msgId);
       this.greeted.add(id);
     }
   }
