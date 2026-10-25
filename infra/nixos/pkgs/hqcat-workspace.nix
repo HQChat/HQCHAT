@@ -49,7 +49,7 @@ buildNpmPackage {
   inherit pname version src;
 
   nodejs = nodejs_22;
-  npmDepsHash = "sha256-DQVGNhkjSpVJ5xb/SrdVhsRj9Sap4hcGqLH7h+S7tdM=";
+  npmDepsHash = "sha256-epVCwmzmtALaUq4bjhP6Q6CgjpXyO45kH6wQEyCONDg=";
   npmInstallFlags = [ "--workspace=${workspace}" ];
 
   dontNpmBuild = true;
