@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { percentiles, type Percentiles as Stats } from "../../src/sim/stats";
 import type { Client } from "../reference/client";
 import { friends, stackUp } from "./stack";
 
@@ -13,20 +14,6 @@ import { friends, stackUp } from "./stack";
 
 const PAIRS = Number(process.env.LOAD_PAIRS || 10);
 const PER_PAIR = Number(process.env.LOAD_MESSAGES || 20);
-
-interface Stats {
-  p50: number;
-  p95: number;
-  p99: number;
-  max: number;
-  n: number;
-}
-
-function percentiles(samples: number[]): Stats {
-  const s = [...samples].sort((a, b) => a - b);
-  const at = (p: number) => s[Math.min(s.length - 1, Math.floor((p / 100) * s.length))] ?? 0;
-  return { p50: at(50), p95: at(95), p99: at(99), max: s[s.length - 1] ?? 0, n: s.length };
-}
 
 const ms = (n: number) => `${n.toFixed(1)}ms`;
 

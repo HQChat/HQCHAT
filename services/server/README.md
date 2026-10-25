@@ -18,6 +18,7 @@ Licensed **AGPL-3.0** ([LICENSE](./LICENSE)).
 | `src/gateway/` | noise-gw (`npm run gateway`), the hqn/1 raw-TCP gateway in front of EMQX |
 | `test/reference/client/` | the reference TypeScript client: sign-in, the typed REST API, conversations, MQTT over WSS or hqn/1 |
 | `src/bot/` | the helper bot (`npm run bot`), built on the client and nothing else |
+| `src/sim/` | the sim node (`npm run sim`): about ten synthetic users that befriend, talk and echo through the public endpoints, and write an hourly health report to `sim_reports` |
 | `src/common/` | configuration, logging, scrubbing, Sentry, the health monitor |
 
 EMQX (messaging, the static topic ACL, offline sessions) and Postgres run
