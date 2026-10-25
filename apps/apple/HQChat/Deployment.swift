@@ -53,6 +53,19 @@ enum Deployment {
     /// so list the next key here before the gateway rotates to it.
     static let hqnKeyPins: [String] = []
 
+    /// The helper bot's peer ids: the contact the app marks "AI", since its
+    /// replies come from Claude once the user sends it `/ai on`. Pinned in the
+    /// app rather than told by the server, so a server can neither put the
+    /// label on a person nor take it off the bot. Public values: `npm run bot
+    /// -- --print-id` in services/bot prints one for a seed (Deploy's BOT_ID).
+    static let helperIDs: [String] = []
+
+    /// Whether `peerID` is one of `helperIDs`. Peer ids are hex, so case does
+    /// not distinguish them.
+    static func isHelper(_ peerID: String, among ids: [String] = helperIDs) -> Bool {
+        ids.contains { $0.caseInsensitiveCompare(peerID) == .orderedSame }
+    }
+
     /// Sentry DSN for the app's project. Send-only, so it ships in the bundle
     /// ("" turns reporting off). Overridable per build with Info.plist
     /// `SENTRY_DSN`. The Deploy workflow warns when it is empty.

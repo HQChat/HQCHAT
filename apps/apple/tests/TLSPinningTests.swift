@@ -199,4 +199,16 @@ check({
         && ServerConfig.mqttURL.host == "pinned.example"
 }(), "the active host is what every URL names")
 
+// The helper's AI badge (Deployment.isHelper): an exact id, never a prefix,
+// and the compiled-in list can only name ids, not anything a server sends.
+print("Helper ids")
+let helperID = "4562cd8e1032bb4827edfc5193c3e921b672e22b091f74b056b1413e34823904"
+check(Deployment.isHelper(helperID, among: [helperID]), "the pinned id is the helper")
+check(Deployment.isHelper(helperID.uppercased(), among: [helperID]), "case does not tell ids apart")
+check(!Deployment.isHelper(String(helperID.dropLast()), among: [helperID]), "a prefix is not the helper")
+check(!Deployment.isHelper(helperID + "0", among: [helperID]), "nor a longer id")
+check(!Deployment.isHelper(helperID, among: []), "an empty list marks nobody")
+check(Deployment.helperIDs.allSatisfy { $0.count == 64 && $0.allSatisfy(\.isHexDigit) },
+      "the compiled-in ids are well formed")
+
 finish()
