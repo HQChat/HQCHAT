@@ -68,6 +68,8 @@ enum Redaction {
             // key/value secrets: token=…, secret: …, authorization …, password=…
             // Group 3 captures an opening quote so the matching close goes too.
             re("\(wb0)(authorization|auth|bearer|token|secret|password|passwd|pwd|api[_-]?key|apikey|access[_-]?key|private[_-]?key|dsn|cookie|session|stripe[_-]?signature|signature)\(wb1)([\(ws)]*[:=][\(ws)]*|[\(ws)]+)(\"?)[^\(ws),;\"'}]+\\3", "$1=[redacted]"),
+            // Anthropic API and admin keys (sk-ant-api03-…): hyphenated, so no other rule takes them whole.
+            re("\(wb0)sk-ant-[A-Za-z0-9_-]{20,}", "[anthropic-key]"),
             // Stripe secrets / publishable keys (bodies contain underscores).
             re("\(wb0)(?:sk|rk|whsec|pk)_[A-Za-z0-9_]{10,}\(wb1)", "[stripe-key]"),
             // Stripe webhook signature header (t=…,v1=…). Kept in sync with the

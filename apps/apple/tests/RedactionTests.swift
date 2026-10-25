@@ -43,6 +43,8 @@ check(r("Authorization: Bearer sk_test_PLACEHOLDER02").contains("[redacted]"),
 
 check(r("charge failed for sk_test_PLACEHOLDER01") == "charge failed for [stripe-key]",
       "a Stripe secret key is redacted")
+check(r("401 for sk-ant-api03-PLACEHOLDER_0000-placeholder-AAAA") == "401 for [anthropic-key]",
+      "an Anthropic API key is redacted whole")
 check(r("t=1614556800,v1=5257a869e7ecebeda32affa62cdca3fa") == "[stripe-sig]",
       "a Stripe webhook signature is redacted")
 

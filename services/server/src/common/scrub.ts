@@ -37,6 +37,8 @@ const REDACTORS: Array<{ re: RegExp; to: Replacement }> = [
     ),
     to: (_m: string, k: string) => `${k}=[redacted]`,
   },
+  // Anthropic API and admin keys (sk-ant-api03-…, sk-ant-admin01-…): hyphenated, so no other rule takes them whole.
+  { re: new RegExp(`${WB0}sk-ant-[A-Za-z0-9_-]{20,}`, "g"), to: "[anthropic-key]" },
   { re: new RegExp(`${WB0}(?:sk|rk|whsec|pk)_[A-Za-z0-9_]{10,}${WB1}`, "g"), to: "[stripe-key]" },
   { re: new RegExp(`${WB0}t=\\d{10},v1=[a-f0-9]{16,}${WB1}`, "g"), to: "[stripe-sig]" },
   { re: new RegExp(`${WB0}[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}${WB1}`, "g"), to: "[email]" },

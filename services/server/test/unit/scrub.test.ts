@@ -40,6 +40,14 @@ describe("redact()", () => {
     assert.match(redact("password: hunter2secret"), /password=\[redacted\]/i);
   });
 
+  it("redacts Anthropic API keys whole", () => {
+    assert.strictEqual(
+      redact("401 for sk-ant-api03-PLACEHOLDER_0000-placeholder-AAAA"),
+      "401 for [anthropic-key]",
+    );
+    assert.strictEqual(redact("sk-ant-short"), "sk-ant-short");
+  });
+
   // SYNC INVARIANT: the iOS scrubber (apple/.../Helpers/Observability.swift
   // `redactors`) must carry the same rule set. This case guards the standalone
   // Stripe webhook-signature rule that was previously missing on the iOS side.
