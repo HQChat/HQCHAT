@@ -78,7 +78,13 @@ test("a fresh database migrates, and every migration is recorded", async () => {
     const applied = await query<{ name: string }>(url, "SELECT name FROM schema_migrations ORDER BY name");
     assert.deepEqual(
       applied.map((r) => r.name),
-      ["001_baseline.sql", "002_auth_challenges.sql", "003_banned_ids.sql", "004_ended_friendships.sql"],
+      [
+        "001_baseline.sql",
+        "002_auth_challenges.sql",
+        "003_banned_ids.sql",
+        "004_ended_friendships.sql",
+        "005_sim_reports.sql",
+      ],
     );
   });
 });
