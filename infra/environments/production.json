@@ -1,9 +1,7 @@
 {
   "name": "production",
   "domain": "hqchat.app",
-  "siteDomains": [
-    "www.hqchat.app"
-  ],
+  "siteDomains": ["www.hqchat.app"],
   "apiHost": "api.hqchat.app",
   "hqnHost": "mqtt.hqchat.app",
   "region": "lon1",
@@ -41,5 +39,5 @@
     ],
     "oncePriceId": "price_1UA7SiKdAg16VdMqlxdkR2Ib"
   },
-  "botAi": null
+  "botAi": { "dailyLimit": 2000 }
 }
