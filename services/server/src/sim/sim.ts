@@ -424,6 +424,8 @@ export class Sim {
         this.onInvites();
         return;
       case "open":
+        // While away every dial fails on purpose (and may fall back to WSS): not the sim's transport.
+        if (this.away) return;
         this.transport = e.transport === "tcp" ? "hqn" : "wss";
         this.tally.count(`dials.${this.transport}`);
         return;

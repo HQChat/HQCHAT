@@ -306,3 +306,26 @@ test("a core drop reason becomes a counter key with no ids or values in it", () 
   t.effect({ kind: "dropped", reason: "own frame" });
   assert.equal(t.counts()["dropped.own_frame"], 1);
 });
+
+test("a window spent away has no uptime, and the dials it fails on purpose are not counted", () => {
+  const t = setup();
+  let clock = 1_000_000;
+  t.sim.start();
+  t.effect({ kind: "connection", state: "connected" });
+  for (let i = 0; i < 1000 && !t.calls.includes("reachable:false"); i++) {
+    t.timers.sort((a, b) => a.at - b.at);
+    const next = t.timers.shift()!;
+    t.advance(next.at - clock);
+    clock = next.at;
+    next.fn();
+  }
+  assert.ok(t.calls.includes("reachable:false"), "the sim went away");
+  t.sim.roll();
+  t.effect({ kind: "connection", state: "offline" });
+  t.advance(30_000);
+  t.effect({ kind: "open", transport: "wss" });
+  const [w] = rows([t.sim], new Date(0));
+  assert.equal(w!.metrics.uptimePct, null);
+  assert.equal(w!.metrics.counts["dials.wss"], undefined);
+  assert.equal(w!.metrics.counts.drops, undefined, "going away is not a drop");
+});

@@ -24,8 +24,8 @@ export interface Metrics {
   counts: Record<string, number>;
   /** Latencies by bucket (`rtt.hqn.online`, `delivered.echoReal`, `reconnect`, …). */
   ms: Record<string, Percentiles>;
-  /** Share of the window connected, leaving out the time the sim chose to be away. */
-  uptimePct: number;
+  /** Share of the window connected, leaving out the time the sim chose to be away; null when it was away throughout. */
+  uptimePct: number | null;
 }
 
 export class Tally {
@@ -76,6 +76,6 @@ export function summarise(
     windowMs,
     counts: Object.fromEntries(sorted(raw.counts)),
     ms: Object.fromEntries(sorted(raw.samples).map(([k, v]) => [k, percentiles(v)])),
-    uptimePct: presentMs > 0 ? Math.round((Math.min(connectedMs, presentMs) / presentMs) * 10_000) / 100 : 0,
+    uptimePct: presentMs > 0 ? Math.round((Math.min(connectedMs, presentMs) / presentMs) * 10_000) / 100 : null,
   };
 }
