@@ -11,6 +11,7 @@
   "sizes": {
     "app": "s-1vcpu-2gb",
     "mqtt": "s-2vcpu-2gb",
+    "sim": "s-1vcpu-1gb",
     "database": "db-s-1vcpu-1gb",
     "emqxVolumeGb": 10
   },

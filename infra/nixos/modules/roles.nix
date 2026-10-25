@@ -10,8 +10,10 @@
     ./host-agent.nix
     ./health.nix
     ./secrets.nix
+    ./units.nix
     ./mqtt.nix
     ./app.nix
+    ./sim.nix
     ./nginx.nix
   ];
 

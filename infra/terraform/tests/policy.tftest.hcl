@@ -60,6 +60,7 @@ run "production" {
     age_identities = {
       app  = "AGE-SECRET-KEY-PQ-1APPTEST"
       mqtt = "AGE-SECRET-KEY-PQ-1MQTTTEST"
+      sim  = "AGE-SECRET-KEY-PQ-1SIMTEST"
     }
   }
 
@@ -106,8 +107,35 @@ run "production" {
     error_message = "SSH and WireGuard reach the broker from the app host only."
   }
   assert {
-    condition     = [for r in digitalocean_database_firewall.pg.rule : "${r.type}:${r.value}"] == ["tag:hqchat-production-app"]
-    error_message = "Only the app host may reach the database."
+    condition     = toset([for r in digitalocean_database_firewall.pg.rule : "${r.type}:${r.value}"]) == toset(["tag:hqchat-production-app", "tag:hqchat-production-sim"])
+    error_message = "Only the app host and the sim node may reach the database."
+  }
+  assert {
+    condition     = contains(digitalocean_droplet.host["sim"].tags, "hqchat-production-sim") && jsondecode(digitalocean_droplet.host["sim"].user_data).role == "sim"
+    error_message = "An environment that sizes the sim node gets its droplet, tagged with its role."
+  }
+  assert {
+    condition = alltrue([
+      for r in digitalocean_firewall.sim[0].inbound_rule :
+      r.protocol == "icmp" || (r.port_range == "22" && toset(r.source_addresses) == toset(local.ssh_sources))
+    ])
+    error_message = "The sim node publishes no service port; SSH admits what the app host's does."
+  }
+  assert {
+    condition = alltrue([
+      for r in digitalocean_firewall.sim[0].outbound_rule :
+      contains(["443", "53", "123"], coalesce(r.port_range, "-")) || r.protocol == "icmp" ||
+      (r.port_range == "25061" && toset(r.destination_addresses) == toset([local.env.vpcRange]))
+    ])
+    error_message = "The sim node reaches the internet on HTTPS, DNS and NTP only, and the VPC on the database pool only."
+  }
+  assert {
+    condition     = keys(wireguard_asymmetric_key.host) == ["app", "mqtt"] && keys(output.bundle.sim) == ["database_url_sim", "pg_ca_cert"]
+    error_message = "The sim node is not on the WireGuard link; its bundle holds its database login and the cluster CA only."
+  }
+  assert {
+    condition     = digitalocean_database_connection_pool.sim[0].user == "hqcat_sim" && strcontains(output.bundle.sim.database_url_sim, "sslmode=verify-full")
+    error_message = "The sim node connects as hqcat_sim, through its own pool, with the server's certificate verified."
   }
   assert {
     condition     = alltrue([for r in cloudflare_record.origin : r.proxied])
@@ -173,5 +201,26 @@ run "rescue_leaves_the_zone_alone" {
   assert {
     condition     = keys(cloudflare_record.origin) == ["rescue.hqchat.app"]
     error_message = "The rescue origin publishes its own hostname only."
+  }
+}
+
+run "no_sim_without_its_size" {
+  command = plan
+
+  variables {
+    environment = "rescue"
+  }
+
+  assert {
+    condition     = !contains(keys(digitalocean_droplet.host), "sim") && !contains(keys(digitalocean_tag.this), "sim")
+    error_message = "An environment without sizes.sim has no sim droplet."
+  }
+  assert {
+    condition     = length(digitalocean_firewall.sim) == 0 && length(digitalocean_database_user.sim) == 0 && length(digitalocean_database_connection_pool.sim) == 0
+    error_message = "Without the sim node there is no sim firewall and no hqcat_sim login."
+  }
+  assert {
+    condition     = [for r in digitalocean_database_firewall.pg.rule : "${r.type}:${r.value}"] == ["tag:hqchat-rescue-app"]
+    error_message = "Without the sim node only the app host may reach the database."
   }
 }

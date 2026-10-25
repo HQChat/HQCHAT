@@ -3,12 +3,14 @@
 # Moves an environment's channels, which its hosts follow within two minutes
 # (infra/nixos/hqcat-host-agent.sh).
 #
-#   infra/scripts/release.sh <environment> promote <app closure> <mqtt closure>
-#   infra/scripts/release.sh <environment> rollback <app closure> <mqtt closure>
+#   infra/scripts/release.sh <environment> promote <app closure> <mqtt closure> [<sim closure>]
+#   infra/scripts/release.sh <environment> rollback <app closure> <mqtt closure> [<sim closure>]
 #
 # promote prints the closures it replaces (and, in a workflow, sets them as the
-# step outputs app_previous and mqtt_previous); rollback moves the channels to
-# the closures it is given, an empty one leaving that role where it is. Deploy
+# step outputs app_previous, mqtt_previous and sim_previous); rollback moves
+# the channels to the closures it is given, an empty one leaving that role
+# where it is. The sim closure is given only for an environment with a sim
+# node (.sizes.sim). Deploy
 # hands rollback what its own promote replaced, never something read back from
 # the bucket.
 #
@@ -24,7 +26,7 @@
 # predates the signed one, so that they update to it.
 set -euo pipefail
 
-usage="usage: release.sh <environment> promote|rollback <app closure> <mqtt closure>"
+usage="usage: release.sh <environment> promote|rollback <app closure> <mqtt closure> [<sim closure>]"
 ENVIRONMENT="${1:?$usage}"
 action="${2:?$usage}"
 # shellcheck source=lib.sh
@@ -62,10 +64,12 @@ write_pointer() {
   printf '%s' "$path" | put "$role"
 }
 
-declare -A target=([app]="${3-}" [mqtt]="${4-}")
+declare -A target=([app]="${3-}" [mqtt]="${4-}" [sim]="${5-}")
+roles=(app mqtt)
+[[ "$(env_get "$ENVIRONMENT" '.sizes.sim // ""')" == "" ]] || roles+=(sim)
 case "$action" in
   promote)
-    for role in app mqtt; do
+    for role in "${roles[@]}"; do
       [[ -n "${target[$role]}" ]] || {
         echo "$usage" >&2
         exit 2
@@ -81,7 +85,7 @@ case "$action" in
     done
     ;;
   rollback)
-    for role in app mqtt; do
+    for role in "${roles[@]}"; do
       if [[ -z "${target[$role]}" ]]; then
         echo "$role: no previous release to return to"
         continue

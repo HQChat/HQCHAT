@@ -6,7 +6,7 @@
 #
 # hqcat-db-migrate runs before the server, the server before the bot.
 # Configuration comes from the environment file; secrets from hqcat.secretsDir
-# reach each unit through LoadCredential as $CREDENTIALS_DIRECTORY/<name>.
+# reach each unit through LoadCredential (units.nix).
 {
   config,
   lib,
@@ -20,6 +20,35 @@ let
   server = pkgs.hqcat-server;
   secrets = cfg.secretsDir;
   inherit (env) donations;
+  sim = env.sizes ? sim;
+  simRole = "hqcat_sim";
+
+  # The connection goes to psql in PG* variables, never in its arguments,
+  # where any process on the host could read the admin password.
+  simGrant = pkgs.writeShellApplication {
+    name = "hqcat-sim-grant";
+    runtimeInputs = [ pkgs.postgresql ];
+    text = ''
+      re='^postgresql://([^:/@]+):([^@]+)@([^:/@]+):([0-9]+)/([^?/]+)\?sslmode=verify-full$'
+      [[ "$(cat "$CREDENTIALS_DIRECTORY/database_url_direct")" =~ $re ]] || {
+        echo "database_url_direct is not the URL Terraform writes; sim_reports grant skipped" >&2
+        exit 1
+      }
+      export PGUSER="''${BASH_REMATCH[1]}" PGPASSWORD="''${BASH_REMATCH[2]}" PGHOST="''${BASH_REMATCH[3]}"
+      export PGPORT="''${BASH_REMATCH[4]}" PGDATABASE="''${BASH_REMATCH[5]}" PGSSLMODE=verify-full
+      export PGSSLROOTCERT="$CREDENTIALS_DIRECTORY/pg_ca_cert"
+      psql -X -q -v ON_ERROR_STOP=1 <<'SQL'
+      DO $$
+      BEGIN
+        IF to_regclass('public.sim_reports') IS NOT NULL
+          AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${simRole}') THEN
+          GRANT SELECT, INSERT ON public.sim_reports TO ${simRole};
+        END IF;
+      END
+      $$;
+      SQL
+    '';
+  };
 
   bundleEntries = [
     "database_url"
@@ -33,21 +62,12 @@ let
     "bot_id"
   ];
 
-  cred = name: "${name}:${secrets}/${name}";
+  inherit (cfg.service) unit;
+  cred = cfg.service.credential;
+  common = cfg.service.environment;
 
   # Where the bot reaches the server, and so the origin its sign-in proves.
   botBaseUrl = "http://127.0.0.1:8090";
-
-  common = {
-    NODE_ENV = "production";
-    # nginx resolves CF-Connecting-IP (set_real_ip_from Cloudflare only) and
-    # passes the result as X-Real-IP: the one client address the server's
-    # per-address limits may believe.
-    TRUSTED_PROXY = "x-real-ip";
-    LOG_LEVEL = "info";
-    SENTRY_ENVIRONMENT = env.name;
-    SENTRY_DSN = env.sentryDsn;
-  };
 
   database = {
     DATABASE_URL_FILE = "%d/database_url";
@@ -65,43 +85,6 @@ let
         STRIPE_DONATION_PRICE_IDS = lib.concatStringsSep "," donations.monthlyPriceIds;
         STRIPE_DONATION_ONCE_PRICE_ID = donations.oncePriceId;
       };
-
-  unit =
-    {
-      description,
-      program,
-      env,
-      creds,
-      mem,
-      warn,
-      crit,
-      extra ? { },
-      afterUnits ? [ ],
-    }:
-    let
-      environment =
-        common
-        // {
-          HEALTH_RSS_WARN_MB = toString warn;
-          HEALTH_RSS_CRIT_MB = toString crit;
-        }
-        // env;
-    in
-    {
-      inherit description environment;
-      wantedBy = [ "multi-user.target" ];
-      after = [ "network-online.target" ] ++ afterUnits;
-      wants = [ "network-online.target" ];
-      requires = afterUnits;
-      serviceConfig =
-        cfg.hardenedService
-        // {
-          ExecStart = lib.getExe' server program;
-          LoadCredential = map cred creds;
-          MemoryMax = mem;
-        }
-        // extra;
-    };
 
   serverCreds = [
     "database_url"
@@ -212,12 +195,22 @@ lib.mkIf (cfg.role == "app") {
       // {
         DATABASE_URL_DIRECT_FILE = "%d/database_url_direct";
         APP_ROLE = "app";
+      }
+      // lib.optionalAttrs sim {
+        # The sim node's login (infra/terraform/database.tf), which
+        # 005_sim_reports.sql grants SELECT and INSERT on sim_reports.
+        SIM_ROLE = simRole;
       };
     serviceConfig = cfg.hardenedService // {
       Type = "oneshot";
       RemainAfterExit = true;
       Restart = "no";
       ExecStart = lib.getExe' server "hqcat-migrate";
+      # The same grant again, for a database whose 005 ran before the role
+      # existed (granting the connecting user then): idempotent, and a no-op
+      # until both the table and the role are there. A failure is logged and
+      # leaves the server to start: the sim node's report is not worth an outage.
+      ExecStartPost = lib.mkIf sim "-${lib.getExe simGrant}";
       LoadCredential = map cred [
         "database_url_direct"
         "pg_ca_cert"

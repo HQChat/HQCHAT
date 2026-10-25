@@ -8,7 +8,9 @@
 #   - generates and stores BOT_SEED, NOISE_KEYS, AGE_IDENTITY_APP and
 #     AGE_IDENTITY_MQTT (each host's age post-quantum identity, which its
 #     secret bundle is sealed to) and (if the repository has none)
-#     NIX_CACHE_SIGNING_KEY, never overwriting an existing secret;
+#     NIX_CACHE_SIGNING_KEY, never overwriting an existing secret; for an
+#     environment with a sim node (.sizes.sim), SIM_SEEDS (one 32-byte hex
+#     seed per sim account, docs/runbooks/sim.md) and AGE_IDENTITY_SIM too;
 #   - stores DIGITALOCEAN_TOKEN, CLOUDFLARE_API_TOKEN, R2_ACCESS_KEY_ID and
 #     R2_SECRET_ACCESS_KEY from the caller's environment.
 #
@@ -78,7 +80,13 @@ set_secret() {
 set_secret BOT_SEED "$(openssl rand -hex 32)"
 set_secret NOISE_KEYS "$(jq -cn --rawfile x <(openssl rand -hex 32 | tr -d '\n') --rawfile h <(openssl rand -hex 32 | tr -d '\n') \
   '{keys: [{keyId: 1, x25519: $x, hqcSeed: $h}]}')"
-for role in APP MQTT; do
+roles=(APP MQTT)
+if [[ "$(env_get "$ENVIRONMENT" '.sizes.sim // ""')" != "" ]]; then
+  roles+=(SIM)
+  # Ten accounts, echo_01…echo_10: the sim node's SIM_COUNT.
+  set_secret SIM_SEEDS "$(for _ in $(seq 10); do openssl rand -hex 32; done)"
+fi
+for role in "${roles[@]}"; do
   set_secret "AGE_IDENTITY_$role" "$(age-keygen -pq 2>/dev/null | grep '^AGE-SECRET-KEY-PQ-1')"
 done
 if ! grep -qx NIX_CACHE_SIGNING_KEY <<<"$existing"; then

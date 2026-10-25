@@ -19,6 +19,8 @@ let
         "podman-emqx"
         "hqcat-wireguard"
       ]
+    else if cfg.role == "sim" then
+      [ "hqcat-sim" ]
     else
       [
         "hqcat-wireguard"
