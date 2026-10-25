@@ -78,7 +78,7 @@ export AUTH_INIT_IP_LIMIT="${AUTH_INIT_IP_LIMIT:-2000}"
 export INVITES_PER_DAY=1000 REPORTS_PER_DAY=1000
 BOT_SEED="$(openssl rand -hex 32)"
 export BOT_SEED
-BOT_ID="$(npm run --silent bot -- --print-id)"
+BOT_ID="$(npm run --silent --prefix "$ROOT/services/bot" bot -- --print-id)"
 
 step "Server"
 setsid env PORT="$SERVER_PORT" BOT_ID="$BOT_ID" EMQX_INTERNAL_URL="mqtt://127.0.0.1:${MQTT_INTERNAL_PORT}" \
