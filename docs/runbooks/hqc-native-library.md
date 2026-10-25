@@ -33,8 +33,8 @@ core/hqchat-node/build.sh                 # server and tests, inside nix develop
 ```
 
 On a Mac, the Apple core package has to be built once before Xcode can build
-the app (and again after every core change; `apps/apple/verify.sh` does it
-each run):
+the app (and again after every core change; `apps/apple/verify.sh` and the
+scenarios' Apple step, `apps/apple/e2e/hqn-live/run.sh`, do it each run):
 
 ```bash
 nix develop .#apple --command core/hqchat-ffi/build-apple.sh
