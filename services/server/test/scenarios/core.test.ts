@@ -8,8 +8,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { after, test } from "node:test";
-import type { CoreEffect, CoreMessage } from "../../src/common/core";
-import { CoreClient } from "../../src/common/core-client";
+import type { CoreEffect, CoreMessage } from "@hqchat/common/core";
+import { CoreClient } from "@hqchat/common/core-client";
 import { BASE_URL, BOT_USERNAME, MQTT_URL, signedUp, stackUp, tag } from "./stack";
 
 const dirs: string[] = [];

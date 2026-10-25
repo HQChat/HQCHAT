@@ -1,9 +1,9 @@
 /**
- * Differential fuzzing: `redact` / `isSensitiveKey` (TypeScript, src/common/scrub.ts)
+ * Differential fuzzing: `redact` / `isSensitiveKey` (TypeScript, src/scrub.ts)
  * against `Redaction.redact` / `Redaction.isSensitive` (Swift), on identical
  * inputs.
  *
- * WHY THIS EXISTS. The two files are one rule set maintained twice. src/common/scrub.ts
+ * WHY THIS EXISTS. The two files are one rule set maintained twice. src/scrub.ts
  * says "SYNC INVARIANT: this rule set is mirrored in the iOS scrubber … keep both
  * in step" and Redaction.swift says the same thing back. Neither statement was
  * ever checked.
@@ -44,7 +44,7 @@
  *
  * Run:
  *   cd apps/apple/fuzz && ./run.sh scrub-verdict      # build the Swift half
- *   cd services/server && npx tsx test/fuzz/scrub-differential.ts --iterations 20000
+ *   cd services/common && npx tsx test/fuzz/scrub-differential.ts --iterations 20000
  *   …                                                --mode key
  *   …                                                --seed 7
  */
@@ -53,7 +53,7 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { isSensitiveKey, redact } from "../../src/common/scrub";
+import { isSensitiveKey, redact } from "../../src/scrub";
 
 const SWIFT = path.join(__dirname, "../../../../apps/apple/fuzz/build/scrub-verdict");
 const FINDINGS = path.join(__dirname, "findings");

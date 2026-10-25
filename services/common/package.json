@@ -1,0 +1,29 @@
+{
+  "name": "@hqchat/common",
+  "version": "3.0.0",
+  "private": true,
+  "description": "What the server and the helper bot share: the core addon and its client, logging, scrubbing, Sentry, the health monitor, credential files.",
+  "license": "AGPL-3.0-only",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "typesVersions": {
+    "*": {
+      "*": [
+        "src/*"
+      ]
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test:unit": "node --import tsx --test test/unit/*.test.ts"
+  },
+  "dependencies": {
+    "@sentry/node": "^10.75.3",
+    "tsx": "^4.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.3",
+    "typescript": "^5.9.3"
+  }
+}

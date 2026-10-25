@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import * as crypto from "node:crypto";
 import { test } from "node:test";
-import { setLogLevel } from "../../src/common/logger";
+import { setLogLevel } from "@hqchat/common/logger";
 import { createAuthHandler } from "../../src/server/auth";
 import { DB } from "../../src/server/db/api";
 import { q } from "../../src/server/db/pg";

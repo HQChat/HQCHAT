@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { logger } from "../common/logger";
+import { logger } from "@hqchat/common/logger";
 import { DB } from "./db/api";
 import { type DonationChoice, monthlyTiersAvailable, oneTimeAvailable, StripeService, tierCount } from "./stripe";
 

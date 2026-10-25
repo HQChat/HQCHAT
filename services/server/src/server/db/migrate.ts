@@ -9,8 +9,8 @@
 import "../../common/config";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { logger } from "@hqchat/common/logger";
 import { Client } from "pg";
-import { logger } from "../../common/logger";
 import { tls, withoutSslMode } from "./ssl";
 
 const DIR = path.join(__dirname, "migrations");

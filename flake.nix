@@ -29,6 +29,9 @@
         hqcat-server = final.callPackage ./infra/nixos/pkgs/hqcat-server.nix {
           version = self.rev or self.dirtyRev or "dev";
         };
+        hqcat-bot = final.callPackage ./infra/nixos/pkgs/hqcat-bot.nix {
+          version = self.rev or self.dirtyRev or "dev";
+        };
       };
       pkgs = import nixpkgs {
         system = hostSystem;
@@ -131,7 +134,12 @@
         )
         // {
           ${hostSystem} = {
-            inherit (pkgs) hqc hqchat-node hqcat-server;
+            inherit (pkgs)
+              hqc
+              hqchat-node
+              hqcat-server
+              hqcat-bot
+              ;
             # Deploy's Terraform, pinned by hash (infra/nixos/pkgs/terraform-bin.nix).
             terraform =
               (import nixpkgs {

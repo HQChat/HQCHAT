@@ -1,5 +1,5 @@
+import { logger } from "@hqchat/common/logger";
 import mqtt from "mqtt";
-import { logger } from "../common/logger";
 import { ApnsService, keyProblem, type SendOutcome } from "./apns";
 import { apnsGaps, apnsIntended, apnsSummary } from "./apns-config";
 import { DB } from "./db/api";

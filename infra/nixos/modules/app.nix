@@ -1,4 +1,5 @@
-# The app host's services as hardened systemd units, run from pkgs.hqcat-server:
+# The app host's services as hardened systemd units, run from pkgs.hqcat-server
+# and, for the bot, pkgs.hqcat-bot:
 #
 #   nginx ─► 127.0.0.1:8090 hqcat-server ◄── wg: the broker's authn hooks
 #            hqcat-server ──► wg: EMQX admin API (18083), internal listener (1884)
@@ -70,6 +71,7 @@ let
     {
       description,
       program,
+      package ? server,
       env,
       creds,
       mem,
@@ -96,7 +98,7 @@ let
       serviceConfig =
         cfg.hardenedService
         // {
-          ExecStart = lib.getExe' server program;
+          ExecStart = lib.getExe' package program;
           LoadCredential = map cred creds;
           MemoryMax = mem;
         }
@@ -239,6 +241,7 @@ lib.mkIf (cfg.role == "app") {
 
   systemd.services.hqcat-bot = unit {
     description = "HQChat helper bot";
+    package = pkgs.hqcat-bot;
     program = "hqcat-bot";
     mem = "512M";
     warn = 380;

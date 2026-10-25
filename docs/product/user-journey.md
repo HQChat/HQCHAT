@@ -250,4 +250,4 @@ lowercase; system surfaces keep sentence case.
 | banners, empty states | `Helpers/StatusPresentation.swift` |
 | username rules | `Helpers/UsernameRule.swift` |
 | the engine behind every screen | `Services/ChatStore.swift`, over `../CoreShell/` and the Rust core |
-| the helper bot | `services/server/src/bot/` |
+| the helper bot | `services/bot/src/` |

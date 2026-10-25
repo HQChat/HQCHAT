@@ -7,7 +7,7 @@ last thing that runs before an event leaves the device.
 
 | Target | What it fuzzes | Oracle |
 |---|---|---|
-| `scrub-verdict` | `Redaction.swift` against `src/common/scrub.ts` (`scrub-differential.ts`) | the same redactions and the same sensitive-key decisions |
+| `scrub-verdict` | `Redaction.swift` against `services/common/src/scrub.ts` (`scrub-differential.ts`) | the same redactions and the same sensitive-key decisions |
 
 ```bash
 ./run.sh scrub-verdict

@@ -34,7 +34,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import Module from "node:module";
 import { Readable } from "node:stream";
 import { test } from "node:test";
-import { setLogLevel } from "../../src/common/logger";
+import { setLogLevel } from "@hqchat/common/logger";
 
 setLogLevel("debug"); // the refusal paths log at debug; this file asserts on them
 

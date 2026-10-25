@@ -286,9 +286,7 @@ export const CORE_EXPORTS: readonly (keyof CoreAddon)[] = [
 
 /** Where the addon is loaded from. */
 export function corePath(): string {
-  return (
-    process.env.HQCHAT_NODE ?? path.join(__dirname, "..", "..", "..", "..", "core", "hqchat-node", "hqchat_node.node")
-  );
+  return process.env.HQCHAT_NODE ?? path.join(__dirname, "..", "..", "..", "core", "hqchat-node", "hqchat_node.node");
 }
 
 function load(): CoreAddon {

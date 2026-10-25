@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
 # The Swift half of the scrubber differential: Redaction.swift against
-# services/server/src/common/scrub.ts, driven by
-# services/server/test/fuzz/scrub-differential.ts.
+# services/common/src/scrub.ts, driven by
+# services/common/test/fuzz/scrub-differential.ts.
 #
 #   ./run.sh scrub-verdict              build it
 #

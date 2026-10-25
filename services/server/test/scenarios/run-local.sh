@@ -136,7 +136,7 @@ export SCENARIOS_REQUIRED=1
 step "Helper bot"
 setsid env BASE_URL="$TEST_BASE_URL" MQTT_URL="$TEST_MQTT_URL" BOT_STATE_DIR="$WORK/bot" \
   BOT_USERNAME=helper \
-  npm run bot >"$WORK/bot.log" 2>&1 &
+  npm run bot --prefix "$ROOT/services/bot" >"$WORK/bot.log" 2>&1 &
 BOT_PID=$!
 for _ in $(seq 1 45); do
   grep -q "connected to the broker" "$WORK/bot.log" && break

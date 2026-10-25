@@ -12,7 +12,8 @@
 set -euo pipefail
 
 root="$(git rev-parse --show-toplevel)"
-server="$root/services/server"
+services="$root/services"
+server="$services/server"
 site="$root/apps/site"
 tf_modules=(terraform)
 
@@ -42,8 +43,10 @@ lint() {
   local shell_files
   mapfile -t shell_files < <(git -C "$root" ls-files '*.sh')
 
-  run "typescript" bash -c "cd '$server' && npx tsc --noEmit"
-  run "biome" biome check "$server" "$site/src" "$site/test"
+  for w in common server bot; do
+    run "typescript $w" bash -c "cd '$services/$w' && npx tsc --noEmit"
+  done
+  run "biome" biome check "$services/common" "$server" "$services/bot" "$site/src" "$site/test"
   run "shellcheck" bash -c "cd '$root' && shellcheck -S warning -x ${shell_files[*]}"
   run "shfmt" bash -c "cd '$root' && shfmt -d -i 2 -ci ${shell_files[*]}"
   run "actionlint" bash -c "cd '$root' && actionlint"
@@ -68,7 +71,9 @@ core_addon() {
 
 unit() {
   core_addon
+  run "common unit" bash -c "cd '$services/common' && npm run --silent test:unit"
   run "server unit" bash -c "cd '$server' && npm run --silent test:unit"
+  run "bot unit" bash -c "cd '$services/bot' && npm run --silent test:unit"
   run "envelope fuzz" bash -c "cd '$server' && npx tsx test/fuzz/envelope-v3-invariants.ts --iterations 200000 --seed ${FUZZ_SEED:-1}"
   run "http body fuzz" bash -c "cd '$server' && npx tsx test/fuzz/http-body.ts --iterations 400 --seed ${FUZZ_SEED:-1}"
   run "site" bash -c "cd '$site' && node --test test/*.test.mjs"

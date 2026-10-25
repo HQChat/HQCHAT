@@ -1,6 +1,6 @@
 // The database API, one module per aggregate, behind a single `DB` facade.
 
-import { logger } from "../../common/logger";
+import { logger } from "@hqchat/common/logger";
 import { friends } from "./friends";
 import { disconnect } from "./pg";
 import { prekeys } from "./prekeys";

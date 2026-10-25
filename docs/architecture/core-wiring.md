@@ -249,14 +249,14 @@ active users to open the app once.
 | `parseConnectProof`, `isFreshTimestamp`, `verifyConnectProof`, `isSigningKey`, `MQTT_PROOF_NONCE_TTL_SECONDS` | `protocol/mqtt-proof.ts` in `auth.ts` (`verifyConnect`, `readSigningKey`) |
 | `peerId`, `isPeerId`, `keyMatchesId`, `conversationTopic`, `handshakeTopic`, `PEER_ID_LENGTH` | `protocol/identity.ts`, `topics.ts` in `api.ts`, `emqx.ts`, `db/users.ts`, `scripts/check-push.ts` |
 | `GatewayKeyPair` (its `decapsulate` replaces `gateway/decap-worker.ts`), `HqnSecret`, `HqnGatewayHandshake`, `HqnTransport`, `hqnMsg1Length`, `hqnFrame`, `HQN_VERSION` | `protocol/noise.ts` in `gateway/gateway.ts`, `gateway/keys.ts`; the secret key and shared secrets no longer enter JavaScript |
-| `Engine` (software vault, directory store), with `importLegacy` | `src/client/*` for `hqcat-bot`, through `src/common/core-client.ts` |
+| `Engine` (software vault, directory store), with `importLegacy` | `src/client/*` for `hqcat-bot`, through `services/common/src/core-client.ts` |
 
 ## What goes and what stays
 
 | Where | Deleted once the core is wired in | Kept |
 |---|---|---|
 | `apps/apple/HQChat/Services/` | done: `ChatSession`, `ConversationRouter`, `RatchetSession`, `DoubleRatchet`, `Handshake`, `ConversationEnvelopeV3`, `ConversationFrame`, `NoiseHQN`, `MQTTWireClient`, `MQTTService`, `MQTTConnectProof`, `MQTTTopics`, `PrekeyService`, `InboundQueue`, `AESService`, `HQCKem`, `HQCService`, `AuthService`, `DirectorySync`, `FriendService` logic, `KeyFingerprint` | `ChatStore` (the engine and its `CoreShell`, as the screens read them), `TLSPinning`, `PushManager`, `NotificationService`, `Reachability`, `SecureEnclaveVault` (from `MessageKeyStore`), `FileStore`, the views; the importer under `Migration/` until it is removed |
-| `services/server/src/protocol/`, `src/client/` | done: no production code uses them; they moved to `test/reference/` as the independent implementation the fuzzers and scenarios drive | `src/common/core-client.ts`, the effect loop over the napi `Engine` (fetch, `net`, WebSocket) for the bot |
+| `services/server/src/protocol/`, `src/client/` | done: no production code uses them; they moved to `test/reference/` as the independent implementation the fuzzers and scenarios drive | `services/common/src/core-client.ts`, the effect loop over the napi `Engine` (fetch, `net`, WebSocket) for the bot |
 | `services/server/src/server/`, `gateway/` | done: the koffi loader and `HQC_LIB` | everything else, calling napi |
 | `native/hqc/` | done: the Apple build (`build-apple.sh`, `dist/apple`, `apps/apple/libhqc_wrap.dylib`) | the C wrapper and `prepare-source.sh`, which the Rust build and the Nix package compile |
 

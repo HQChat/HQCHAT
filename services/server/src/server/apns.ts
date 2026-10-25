@@ -1,6 +1,6 @@
 import * as crypto from "node:crypto";
 import * as http2 from "node:http2";
-import { logger } from "../common/logger";
+import { logger } from "@hqchat/common/logger";
 import { apnsGaps, normalizeP8 } from "./apns-config";
 import { DB } from "./db/api";
 

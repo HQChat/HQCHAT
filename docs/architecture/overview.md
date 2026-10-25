@@ -41,7 +41,7 @@ flowchart LR
 | **Site** (`apps/site`) | A Cloudflare Worker serving the marketing, crypto and legal pages |
 | **hqcat-server** (`services/server/src/server`) | One process: `/auth/*` sign-in, the REST API, EMQX's authentication hooks, the push bridge (wakes offline devices through APNs), the broker watch (health checks and expired-row sweeps), `/health` |
 | **hqcat-noise-gw** (`src/gateway`) | Terminates hqn/1, a post-quantum Noise transport, and pipes the decrypted MQTT stream to EMQX |
-| **hqcat-bot** (`src/bot`) | The helper account every new user is befriended to; runs the Rust core's client `Engine`, the one the apps link |
+| **hqcat-bot** (`services/bot`) | The helper account every new user is befriended to; runs the Rust core's client `Engine`, the one the apps link |
 | **EMQX** | The MQTT broker. Every client CONNECT is checked by the server; a static file ACL is the whole topic policy |
 | **Postgres** | Accounts, the friend graph, prekeys, push tokens, sessions, reports. A managed DigitalOcean cluster |
 

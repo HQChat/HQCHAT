@@ -15,7 +15,7 @@
 // The output says so on every row.
 
 import "../src/common/config";
-import { escapeControl } from "../src/common/logger";
+import { escapeControl } from "@hqchat/common/logger";
 import { DB } from "../src/server/db/api";
 import { disconnect } from "../src/server/db/pg";
 import { EMQX } from "../src/server/emqx";

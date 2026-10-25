@@ -17,8 +17,9 @@ Licensed **AGPL-3.0** ([LICENSE](./LICENSE)).
 | `src/server/` | the server (`npm run server`): auth and the EMQX authn hooks, the REST API, the push bridge and the broker watch, in one process on one port |
 | `src/gateway/` | noise-gw (`npm run gateway`), the hqn/1 raw-TCP gateway in front of EMQX |
 | `test/reference/client/` | the reference TypeScript client: sign-in, the typed REST API, conversations, MQTT over WSS or hqn/1 |
-| `src/bot/` | the helper bot (`npm run bot`), built on the client and nothing else |
-| `src/common/` | configuration, logging, scrubbing, Sentry, the health monitor |
+| `src/common/` | the server's configuration and listener; logging, scrubbing, Sentry, the core addon and the health monitor are in [`../common`](../common), shared with the bot |
+
+The helper bot is not here: it is a client of the server, in [`../bot`](../bot) (`npm run bot` there).
 
 EMQX (messaging, the static topic ACL, offline sessions) and Postgres run
 beside it; `infra/` deploys all of it.

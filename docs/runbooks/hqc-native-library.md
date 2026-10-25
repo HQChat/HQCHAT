@@ -10,7 +10,7 @@ core (`core/hqc-sys`), which compiles it for whatever target it is built for.
 | Consumer | Built by | Result |
 |---|---|---|
 | Server, gateway, bot, CI, hosts | `nix build .#hqchat-node` (`core/hqchat-node/package.nix`), which compiles the prepared tree (`.#hqc.source`) into the core's Node addon | `lib/hqchat_node.node`, loaded through `HQCHAT_NODE` |
-| Local server runs and the core's own tests | `core/hqchat-node/build.sh`, inside `nix develop` (`HQC_SOURCE`) | `core/hqchat-node/hqchat_node.node`, found by `src/common/core.ts` when `HQCHAT_NODE` is unset |
+| Local server runs and the core's own tests | `core/hqchat-node/build.sh`, inside `nix develop` (`HQC_SOURCE`) | `core/hqchat-node/hqchat_node.node`, found by `services/common/src/core.ts` when `HQCHAT_NODE` is unset |
 | The standalone library and its self-test | `nix build .#hqc` (`native/hqc/package.nix`) | `lib/libhqc_wrap.so`; no server program loads it any more |
 | The Apple apps and the Swift test slices | `core/hqchat-ffi/build-apple.sh`, inside `nix develop .#apple` | `core/swift/HQChatCore/HQChatCoreFFI.xcframework`, never committed: built on each Mac, and by the Apple release workflow from the commit it ships (`release.sh` refuses any other build) |
 

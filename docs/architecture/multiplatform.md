@@ -127,7 +127,7 @@ Every function, and what it replaces in the Apple app and the server, is in
 ### The server surface
 
 The Node addon (`core/hqchat-node`, packaged by `core/hqchat-node/package.nix`
-and loaded through `src/common/core.ts`, whose types a unit test keeps equal to
+and loaded through `services/common/src/core.ts`, whose types a unit test keeps equal to
 the exports):
 
 | Export | Used by |
@@ -136,7 +136,7 @@ the exports):
 | `parseConnectProof`, `isFreshTimestamp`, `verifyConnectProof`, `isSigningKey`, `MQTT_PROOF_NONCE_TTL_SECONDS` | `/mqtt/authn`, `/auth/verify` and `/auth/refresh` (a registered key must be a canonical, non-small-order Ed25519 point) |
 | `peerId`, `isPeerId`, `keyMatchesId`, `conversationTopic`, `handshakeTopic`, `PEER_ID_LENGTH` | routes, the users table, EMQX revocation |
 | `GatewayKeyPair` (built once at startup from the key seeds; its `decapsulate` runs on the libuv pool and returns an opaque `HqnSecret`), `HqnGatewayHandshake`, `HqnTransport`, `hqnMsg1Length`, `hqnFrame`, `HQN_VERSION` | `hqcat-noise-gw`: the HQC secret key and the shared secrets stay in the core |
-| `hqcKeypairFromSeed`, `deviceKeyFromSeed`, `Engine` with `importLegacy` | `hqcat-bot` (through `src/common/core-client.ts`): its identity and device key derive from its seed, and nothing secret is stored; the core scenario |
+| `hqcKeypairFromSeed`, `deviceKeyFromSeed`, `Engine` with `importLegacy` | `hqcat-bot` (through `services/common/src/core-client.ts`): its identity and device key derive from its seed, and nothing secret is stored; the core scenario |
 | `hqcEncapsulate`, `hqcDecapsulate` | tests only |
 
 TypeScript keeps HTTP, Postgres, EMQX hooks and the push bridge. The bot runs
@@ -244,6 +244,7 @@ main                       releases only
 └─ dev                     everything that is ready together
    ├─ lib/main             the Rust core and these documents ← lib/<feature>
    ├─ server/main          the server on the core   ← server/<feature>
+   ├─ bot/main             the helper bot, a client of the server ← bot/<feature>
    ├─ apple/main           the iOS and macOS shell  ← apple/<feature>
    ├─ android/main         the Android shell        ← android/<feature>
    └─ desktop/main         the Linux and Windows shell ← desktop/<feature>
@@ -264,6 +265,7 @@ main                       releases only
 |---|---|
 | `lib` | **Done, in `lib/main`:** `lib/hqc-sys` → `lib/api-surface` → `lib/protocol-identity-topics` → `lib/protocol-aead-envelope` → `lib/protocol-handshake` → `lib/protocol-ratchet` → `lib/protocol-mqtt-proof` → `lib/protocol-noise` → `lib/protocol-mqtt-codec` → `lib/engine-at-rest` → `lib/engine-auth` → `lib/engine-prekeys-friends` → `lib/engine-mqtt-session` → `lib/engine-conversations` → `lib/node-binding` → `lib/ffi-binding` → `lib/hostile-input` → `lib/ci-core`. **Later:** `lib/vault-desktop` (phase 6), `lib/fuzz-differential` (cargo-fuzz needs a nightly toolchain the dev shell does not pin) |
 | `server` | **Done, in `server/main`:** `server/core-node-package` → `server/differential-rust-ts` → `server/napi-protocol` → `server/napi-gateway` → `server/engine-client` (bot, scenarios) → `server/remove-ts-protocol` → `server/push-inbox-wake` → `server/docs-phase2`. **Later:** `server/push-fcm-unifiedpush` (phase 4) |
+| `bot` | **In `bot/main`:** `bot/secret-hygiene` → `bot/package` (`services/bot` and `services/common`, out of the server) → `bot/haiku` (opt-in AI replies) |
 | `apple` | **Done, merged:** `apple/core-xcframework` → `apple/effect-loop` → `apple/enclave-vault` → `apple/importer` → `apple/views-on-engine` → `apple/remove-swift-protocol` |
 | `android` | `android/scaffold` → `android/effect-loop` → `android/keystore-vault` → `android/push` → `android/ui` → `android/release` |
 | `desktop` | `desktop/scaffold` → `desktop/effect-loop` → `desktop/linux-packaging` → `desktop/windows-msix` |

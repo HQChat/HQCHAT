@@ -1,4 +1,4 @@
-import { logger } from "../common/logger";
+import { logger } from "@hqchat/common/logger";
 import { ping, sweepExpired } from "./db/pg";
 import { emqxApi, emqxApiConfigured } from "./emqx";
 

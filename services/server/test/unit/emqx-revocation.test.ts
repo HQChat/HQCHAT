@@ -42,7 +42,7 @@ import assert from "node:assert/strict";
 import * as crypto from "node:crypto";
 import * as http from "node:http";
 import { test } from "node:test";
-import { setLogLevel } from "../../src/common/logger";
+import { setLogLevel } from "@hqchat/common/logger";
 import { peerId } from "../reference/protocol/identity";
 
 setLogLevel("silent");

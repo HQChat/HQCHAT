@@ -20,7 +20,7 @@ import {
   resetSentryThrottle,
   setLoggerClock,
   setLogLevel,
-} from "../../src/common/logger";
+} from "../../src/logger";
 
 setLogLevel("silent"); // keep the console out of node:test's IPC
 

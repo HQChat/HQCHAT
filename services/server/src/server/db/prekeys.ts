@@ -1,4 +1,4 @@
-import { logger } from "../../common/logger";
+import { logger } from "@hqchat/common/logger";
 import { one, tx } from "./pg";
 
 /** One-time prekeys kept per account; an upload past it drops the oldest. */

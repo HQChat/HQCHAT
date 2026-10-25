@@ -1,5 +1,5 @@
 import * as fs from "node:fs";
-import { core, type GatewayKeyPair } from "../common/core";
+import { core, type GatewayKeyPair } from "@hqchat/common/core";
 
 /**
  * The gateway's static keys.

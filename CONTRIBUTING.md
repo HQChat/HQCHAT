@@ -4,7 +4,7 @@
 
 ```bash
 git clone git@github.com:HQChat/HQCHAT.git && cd HQCHAT
-cd services/server && npm ci      # Node 22
+cd services && npm ci             # Node 22; the server, the bot and common, as workspaces
 open apps/apple/HQChat.xcodeproj # Xcode 26+
 ```
 
@@ -25,7 +25,7 @@ Pull requests target the branch they were cut from.
 |---|---|
 | anything | `nix develop --command scripts/check.sh lint` |
 | `core/` or `native/hqc/` | `nix develop --command scripts/check.sh core`; on a Mac, `apps/apple/verify.sh` too, since the apps link the core |
-| `services/server/` | `scripts/check.sh unit`, `scripts/check.sh integration` (needs `DATABASE_URL`) |
+| `services/` | `scripts/check.sh unit`, `scripts/check.sh integration` (needs `DATABASE_URL`) |
 | the server, the broker config or the hosts | `scripts/check.sh scenarios` (Docker) |
 | `infra/` | `nix develop --command scripts/check.sh infra` |
 | `apps/apple/` | `bash apps/apple/verify.sh`; CI does not build the Apple apps |

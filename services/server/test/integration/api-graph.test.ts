@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import * as crypto from "node:crypto";
 import Module from "node:module";
 import { test } from "node:test";
-import { setLogLevel } from "../../src/common/logger";
+import { setLogLevel } from "@hqchat/common/logger";
 import { q } from "../../src/server/db/pg";
 import { call as request } from "../helpers/http";
 import { closePg, requirePg } from "../pg-helper";

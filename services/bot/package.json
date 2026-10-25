@@ -1,0 +1,25 @@
+{
+  "name": "hqchat-bot",
+  "version": "3.0.0",
+  "private": true,
+  "description": "The helper bot: an ordinary HQChat account on the Rust core. Not part of the server.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/HQChat/HQCHAT.git",
+    "directory": "services/bot"
+  },
+  "license": "AGPL-3.0-only",
+  "scripts": {
+    "bot": "tsx src/bot.ts",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "node --import tsx --test test/unit/*.test.ts"
+  },
+  "dependencies": {
+    "@hqchat/common": "*",
+    "tsx": "^4.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.3",
+    "typescript": "^5.9.3"
+  }
+}

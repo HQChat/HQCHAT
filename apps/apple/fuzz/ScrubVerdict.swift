@@ -3,7 +3,7 @@ import CryptoKit
 
 /// One half of the scrubber differential harness: Swift's redaction of each input.
 ///
-/// WHY THIS TARGET EXISTS. `Redaction.swift` and `services/server/src/common/scrub.ts`
+/// WHY THIS TARGET EXISTS. `Redaction.swift` and `services/common/src/scrub.ts`
 /// are one rule set maintained twice, and each file carries a comment telling
 /// the next person to keep them in step. Nothing enforced that. A divergence is
 /// not cosmetic: it means a shape redacted on one platform ships in the clear

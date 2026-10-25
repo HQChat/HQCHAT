@@ -23,7 +23,7 @@
 import assert from "node:assert/strict";
 import * as crypto from "node:crypto";
 import { test } from "node:test";
-import { setLogLevel } from "../../src/common/logger";
+import { setLogLevel } from "@hqchat/common/logger";
 import type { SendOutcome } from "../../src/server/apns";
 
 setLogLevel("debug");
