@@ -25,7 +25,8 @@
 # Environment secrets: DIGITALOCEAN_TOKEN, CLOUDFLARE_API_TOKEN, R2_ACCESS_KEY_ID,
 # R2_SECRET_ACCESS_KEY, NIX_CACHE_SIGNING_KEY, BOT_SEED, NOISE_KEYS,
 # AGE_IDENTITY_APP, AGE_IDENTITY_MQTT (the hosts' age post-quantum identities) and,
-# optionally, STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, APNS_KEY_P8
+# optionally, STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, APNS_KEY_P8,
+# ANTHROPIC_API_KEY (the helper's AI replies; docs/runbooks/anthropic-key.md)
 # (infra/scripts/init-environment.sh sets the generated ones); for the apple job,
 # ASC_KEY_ID, ASC_ISSUER_ID and ASC_KEY_P8 (an App Store Connect API key).
 name: Deploy
@@ -241,6 +242,7 @@ jobs:
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
           APNS_KEY_P8: ${{ secrets.APNS_KEY_P8 }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           NIX_CACHE_SIGNING_KEY: ${{ secrets.NIX_CACHE_SIGNING_KEY }}
         run: |
           BOT_ID="$(nix shell .#hqcat-bot --command hqcat-bot --print-id)"

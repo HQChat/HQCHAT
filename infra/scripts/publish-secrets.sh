@@ -20,8 +20,8 @@
 #
 # A bundle is a JSON object, file name → content: Terraform's entries (from
 # $TF_OUTPUTS) plus these variables when set: BOT_SEED, BOT_ID,
-# STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, APNS_KEY_P8 (app) and NOISE_KEYS
-# (mqtt). An entry left out is left unchanged on the host.
+# STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, APNS_KEY_P8, ANTHROPIC_API_KEY (app)
+# and NOISE_KEYS (mqtt). An entry left out is left unchanged on the host.
 set -euo pipefail
 
 ENVIRONMENT="${1:?usage: publish-secrets.sh <environment>}"
@@ -46,7 +46,7 @@ extra() {
 
 for role in app mqtt; do
   case "$role" in
-    app) added="$(extra bot_seed bot_id stripe_secret_key stripe_webhook_secret apns_key_p8)" ;;
+    app) added="$(extra bot_seed bot_id stripe_secret_key stripe_webhook_secret apns_key_p8 anthropic_api_key)" ;;
     mqtt) added="$(extra noise_keys)" ;;
   esac
   jq -c --arg r "$role" --argjson add "$added" '.bundle.value[$r] + $add' "$outputs" >"$tmp/$role.json"

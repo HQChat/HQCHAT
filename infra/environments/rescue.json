@@ -30,5 +30,6 @@
     "topicMacos": "martin.rougeron.DissQus"
   },
   "sentryDsn": "https://96c230b3ec97c3e5f802d333c549b083@o4505907327926272.ingest.us.sentry.io/4511834379649024",
-  "donations": null
+  "donations": null,
+  "botAi": null
 }
