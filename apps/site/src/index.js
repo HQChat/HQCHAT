@@ -138,7 +138,7 @@ const CONTACT_EMAIL = "support@martinrougeron.me";
 const ORG_URL = "https://github.com/HQChat/HQCHAT";
 const CLIENT_REPO = `${ORG_URL}/tree/main/apps/apple`;
 const SERVER_REPO = `${ORG_URL}/tree/main/services/server`;
-const LAST_UPDATED = "September 17, 2026";
+const LAST_UPDATED = "October 25, 2026";
 
 /* ── What it costs to run ──────────────────────────────────────────────────
  * Published because the whole argument of this site is that it takes the
@@ -538,6 +538,7 @@ const JSON_LD = `<script type="application/ld+json">${JSON.stringify({
         "safety numbers and QR key verification",
         "published source for the app and the server",
         "AGPL-3.0 server you can run yourself",
+        "opt-in AI replies from the helper account (Claude Haiku, by Anthropic)",
       ],
       privacyPolicy: `${SITE_ORIGIN}/privacy`,
     },
@@ -953,10 +954,40 @@ ${sec(
         <li>invite by exact username</li>
         <li>safety numbers + QR key verification</li>
         <li>push notifications, with no message content in them</li>
+        <li>@helper, with AI replies if you turn them on</li>
       </ul>
       <p class="note">no groups. no calls, photos or voice notes — those were cut when the
       transport moved to MQTT. no read receipts or typing indicators, deliberately. there is
       no web client and there is not going to be one.</p>
+    </div>
+  </div>`,
+)}
+
+${sec(
+  "cat helper.txt <em># the account you start with, and its opt-in AI</em>",
+  `
+  <div class="grid">
+    <div>
+      <p>Every new account starts with one contact, <strong>@helper</strong>, so the first
+      conversation isn't an empty screen. It is an ordinary account on the same protocol, run
+      by us: like any contact, it decrypts what you send it.</p>
+      <p>It can answer with AI — <strong>Claude Haiku, by Anthropic</strong> — but only after you
+      send it <code>/ai on</code>. From then on, the text you send in that one chat goes to
+      Anthropic to write the reply. Your other chats, your contacts and your keys never reach
+      the helper, so they never reach Anthropic either.</p>
+    </div>
+    <div class="card brk"><i></i>
+      <span class="lbl">what /ai on means</span>
+      <ul class="bare">
+        <li>off until you send <code>/ai on</code>; <code>/ai off</code> stops it</li>
+        <li>only the text of your chat with @helper is sent</li>
+        <li>the last few messages are kept in memory, never on disk; <code>/forget</code> clears them</li>
+        <li>a few dozen replies a day each, so nobody can run up the bill</li>
+        <li>AI replies can be wrong</li>
+      </ul>
+      <p class="note">the app marks @helper with an AI badge, from ids pinned in the app rather
+      than told by the server. on a server you run yourself, the AI is off unless you give the
+      bot your own key.</p>
     </div>
   </div>`,
 )}
@@ -1444,11 +1475,12 @@ const privacyPage = shell(
 
   <h2>what we do not collect</h2>
   <ul>
-    <li>No message content — we cannot decrypt it. The single exception is a message
-        <em>you</em> choose to report: see "what we store" above and the
-        <a href="/eula">end-user licence agreement</a>. We would rather carry the asterisk
-        than write a sentence that stops being true the first time somebody reports
-        harassment.</li>
+    <li>No message content — we cannot decrypt it. Two exceptions, both your choice: a
+        message <em>you</em> choose to report (see "what we store" above and the
+        <a href="/eula">end-user licence agreement</a>), and what you write to
+        <strong>@helper</strong>, an account we run (see "the helper and its AI replies"
+        below). We would rather carry the asterisk than write a sentence that stops being
+        true the first time somebody reports harassment.</li>
     <li>No address-book or contact uploads.</li>
     <li>No advertising identifiers, ad networks or third-party ad trackers.</li>
     <li>No behavioural or advertising analytics, and no profiling for marketing. (We do
@@ -1502,10 +1534,23 @@ const privacyPage = shell(
   <p>hqchat is not directed to children under 13 (or the minimum age in your country) and we do
   not knowingly collect their data.</p>
 
+  <h2>the helper and its AI replies</h2>
+  <p>Every new account starts with one contact, <strong>@helper</strong>, an account we run.
+  Like any contact, it decrypts the messages you send it, and only those.</p>
+  <p>It can answer with AI, but only if you send it <code>/ai on</code>. From then on, the text
+  you send in your chat with @helper is sent to <strong>Anthropic</strong> (Claude Haiku) to
+  write the reply. Nothing else is: not your other chats, your contacts, your keys, or your
+  username. The helper keeps the last few messages of that chat in memory to follow the
+  conversation; they are never written to disk, <code>/forget</code> clears them, and
+  <code>/ai off</code> stops AI replies and clears them too. The helper stores only which
+  accounts turned AI on and how many replies each had today. Anthropic processes the text
+  under its own commercial terms and privacy policy. AI replies can be wrong.</p>
+
   <h2>third parties</h2>
-  <p>We use Apple (push notifications), Stripe (donations), Cloudflare (network and edge) and
-  Sentry (crash reporting). Each processes only the limited data described above under their
-  own privacy terms.</p>
+  <p>We use Apple (push notifications), Stripe (donations), Cloudflare (network and edge),
+  Sentry (crash reporting) and, only if you turn on the helper's AI replies, Anthropic (AI
+  replies). Each processes only the limited data described above under their own privacy
+  terms.</p>
 
   <h2>changes</h2>
   <p>We may update this policy; material changes will be reflected by the date above.</p>
@@ -1566,6 +1611,13 @@ const termsPage = shell(
   <p>If you give a name at checkout it is published on the
   <a href="/supporters">supporters</a> page. That is the only thing a donation records on
   this server; write to the address above to have a name removed.</p>
+
+  <h2>the helper's AI replies</h2>
+  <p>If you turn on AI replies from <strong>@helper</strong> (<code>/ai on</code>), its answers
+  are written by an AI model (Claude Haiku, by Anthropic). They can be wrong, they are not
+  advice of any kind, and nothing that matters should rest on them. Do not send the helper
+  anything you would not want sent to Anthropic; see the <a href="/privacy">privacy
+  policy</a>.</p>
 
   <h2>no warranty</h2>
   <p>hqchat is provided "as is", without warranties of any kind. We do not guarantee
