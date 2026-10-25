@@ -1,16 +1,17 @@
 # Credentials generated here and delivered to the hosts: each host's SSH host
 # key (in user data), and in the secret bundles the WireGuard key pairs and
-# preshared key and the EMQX admin-API secret shared by both hosts. A bundle is sealed to the
-# host's age post-quantum identity instead (var.age_identities), which
-# Terraform cannot generate.
+# preshared key and the EMQX admin-API secret shared by the app host and the
+# broker. A bundle is sealed to the host's age post-quantum identity instead
+# (var.age_identities), which Terraform cannot generate.
 
 resource "tls_private_key" "host" {
   for_each  = local.roles
   algorithm = "ED25519"
 }
 
+# The link joins the app host and the broker; the sim node is not on it.
 resource "wireguard_asymmetric_key" "host" {
-  for_each = local.roles
+  for_each = toset(["app", "mqtt"])
 }
 
 # Mixed into the link's handshake on both ends, so the tunnel (authn hook

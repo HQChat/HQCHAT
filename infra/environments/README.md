@@ -10,7 +10,7 @@ One JSON file per deployment environment. Nix (`flake.nix`) and Terraform
 | `apiHost` | Optional. The hostname the apps call (`Deployment.swift` `serverHost`): proxied to the same origin and on its certificate, with no Worker route. |
 | `hqnHost` | DNS-only hostname of the hqn/1 gateway (the broker's reserved IP). |
 | `region`, `vpcRange` | DigitalOcean region and the environment's private network. |
-| `sizes` | Droplet, database and EMQX volume sizes. |
+| `sizes` | Droplet, database and EMQX volume sizes. `sim`, when present, adds the sim node at that droplet size (`docs/runbooks/sim.md`). |
 | `cloudflare` | Account, zone, whether this environment deploys the site Worker and owns the zone-wide settings (TLS, DNSSEC, CAA). Optional: `caaIssuers` (default Let's Encrypt, Google Trust Services, SSL.com) and `rateLimit` (edge rate-limiting rule; needs a plan that allows it). |
 | `cache` | Public URL and bucket of the Nix binary cache, and the key closures are signed with. |
 | `stateBucket` | R2 bucket holding Terraform state (`<name>/terraform.tfstate`). |

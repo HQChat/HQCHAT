@@ -32,29 +32,37 @@ output "hqn_ipv4" {
 output "bundle" {
   description = "role → the secret bundle entries Terraform owns (merged with the GitHub secrets by infra/scripts/publish-secrets.sh)."
   sensitive   = true
-  value = {
-    app = {
-      database_url        = local.database_url
-      database_url_direct = local.database_url_direct
-      pg_ca_cert          = data.digitalocean_database_ca.pg.certificate
-      emqx_api_secret     = random_password.emqx_api_secret.result
-      origin_cert         = cloudflare_origin_ca_certificate.origin.certificate
-      origin_key          = tls_private_key.origin.private_key_pem
-      wireguard = jsonencode({
-        privateKey    = wireguard_asymmetric_key.host["app"].private_key
-        peerPublicKey = wireguard_asymmetric_key.host["mqtt"].public_key
-        peerEndpoint  = digitalocean_droplet.host["mqtt"].ipv4_address_private
-        presharedKey  = random_bytes.wireguard_psk.base64
-      })
-    }
-    mqtt = {
-      emqx_api_secret = random_password.emqx_api_secret.result
-      wireguard = jsonencode({
-        privateKey    = wireguard_asymmetric_key.host["mqtt"].private_key
-        peerPublicKey = wireguard_asymmetric_key.host["app"].public_key
-        peerEndpoint  = digitalocean_droplet.host["app"].ipv4_address_private
-        presharedKey  = random_bytes.wireguard_psk.base64
-      })
-    }
-  }
+  value = merge(
+    {
+      app = {
+        database_url        = local.database_url
+        database_url_direct = local.database_url_direct
+        pg_ca_cert          = data.digitalocean_database_ca.pg.certificate
+        emqx_api_secret     = random_password.emqx_api_secret.result
+        origin_cert         = cloudflare_origin_ca_certificate.origin.certificate
+        origin_key          = tls_private_key.origin.private_key_pem
+        wireguard = jsonencode({
+          privateKey    = wireguard_asymmetric_key.host["app"].private_key
+          peerPublicKey = wireguard_asymmetric_key.host["mqtt"].public_key
+          peerEndpoint  = digitalocean_droplet.host["mqtt"].ipv4_address_private
+          presharedKey  = random_bytes.wireguard_psk.base64
+        })
+      }
+      mqtt = {
+        emqx_api_secret = random_password.emqx_api_secret.result
+        wireguard = jsonencode({
+          privateKey    = wireguard_asymmetric_key.host["mqtt"].private_key
+          peerPublicKey = wireguard_asymmetric_key.host["app"].public_key
+          peerEndpoint  = digitalocean_droplet.host["app"].ipv4_address_private
+          presharedKey  = random_bytes.wireguard_psk.base64
+        })
+      }
+    },
+    local.sim ? {
+      sim = {
+        database_url_sim = local.database_url_sim
+        pg_ca_cert       = data.digitalocean_database_ca.pg.certificate
+      }
+    } : {},
+  )
 }

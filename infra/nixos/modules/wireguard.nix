@@ -3,7 +3,7 @@
 # `{ privateKey, peerPublicKey, peerEndpoint, presharedKey }`, which the Deploy
 # workflow builds from Terraform's keys and the peer's VPC address. The
 # preshared key is mixed into every handshake when the bundle has one; both
-# hosts get it in the same deploy.
+# hosts get it in the same deploy. The sim node is not on the link.
 {
   config,
   lib,
@@ -28,7 +28,7 @@ in
     description = "WireGuard addresses of the app and mqtt hosts.";
   };
 
-  config = lib.mkIf (cfg.role != "base") {
+  config = lib.mkIf (self != null) {
     environment.systemPackages = [ pkgs.wireguard-tools ];
     # Loaded at boot: the link's unit may not load kernel modules.
     boot.kernelModules = [ "wireguard" ];

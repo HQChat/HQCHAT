@@ -25,6 +25,7 @@ let
   entrypoints = {
     server = "src/server/main.ts";
     bot = "src/bot/bot.ts";
+    sim = "src/sim/main.ts";
     noise-gw = "src/gateway/main.ts";
     migrate = "src/server/db/migrate.ts";
     noise-gw-keys = "scripts/noise-gw-keys.ts";
@@ -63,7 +64,7 @@ buildNpmPackage {
   passthru = { inherit entrypoints; };
 
   meta = {
-    description = "HQChat server, helper bot and hqn/1 gateway";
+    description = "HQChat server, helper bot, sim node and hqn/1 gateway";
     license = lib.licenses.agpl3Only;
     platforms = [ "x86_64-linux" ];
     mainProgram = "hqcat-server";

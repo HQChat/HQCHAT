@@ -33,12 +33,10 @@ variable "age_identities" {
 locals {
   env  = jsondecode(file("${path.module}/../environments/${var.environment}.json"))
   name = "hqchat-${local.env.name}"
-  tags = {
-    env  = local.name
-    app  = "${local.name}-app"
-    mqtt = "${local.name}-mqtt"
-  }
-  roles = toset(["app", "mqtt"])
+  # The sim node (docs/runbooks/sim.md) runs only where the environment sizes it.
+  sim   = lookup(local.env.sizes, "sim", null) != null
+  roles = toset(concat(["app", "mqtt"], local.sim ? ["sim"] : []))
+  tags  = merge({ env = local.name }, { for r in local.roles : r => "${local.name}-${r}" })
 }
 
 resource "digitalocean_vpc" "this" {

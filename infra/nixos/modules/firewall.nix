@@ -1,11 +1,13 @@
 # nftables. The app host answers 80/443 to Cloudflare only, the broker host
 # answers hqn/1 on 443, and the two talk over WireGuard inside the
-# environment's VPC. SSH is rate-limited per source address, so a flood from
-# (or spoofed as) other addresses cannot use up the admin's share; everything
-# else is dropped. Only root may reach the metadata service, whose user data
-# holds the host key. Outbound is an allow-list too: DNS, NTP, HTTPS, WireGuard
-# and, from the app host, SSH to the broker and the database inside the VPC;
-# anything else is refused and logged, so a compromised service has no free
+# environment's VPC; the sim node answers SSH alone. SSH is rate-limited per
+# source address, so a flood from (or spoofed as) other addresses cannot use up
+# the admin's share; everything else is dropped. Only root may reach the
+# metadata service, whose user data holds the host key. Outbound is an
+# allow-list too: DNS, NTP, HTTPS, WireGuard and, from the app host, SSH to the
+# broker and the database inside the VPC; the sim node reaches only its
+# database pool there, and the service at its public addresses like any phone.
+# Anything else is refused and logged, so a compromised service has no free
 # channel out. The Cloudflare sets start from cloudflare-ips.nix and refresh
 # daily.
 {
@@ -20,7 +22,8 @@ let
   inherit (cfg) role;
   wg = cfg.wg.addresses;
   perMinute = toString cfg.hqn.newConnectionsPerMinute;
-  wgRules = lib.optionalString (role != "base") (
+  linked = role == "app" || role == "mqtt";
+  wgRules = lib.optionalString linked (
     ''
       ip saddr ${cfg.environment.vpcRange} udp dport 51820 accept
     ''
@@ -41,8 +44,21 @@ let
   '';
   vpc = cfg.environment.vpcRange;
   # DigitalOcean's managed Postgres: 25060 for the cluster, 25061 for pools.
-  egressRules = lib.optionalString (role == "app") ''
-    ip daddr ${vpc} tcp dport { 22, 25060-25061 } accept
+  egressRules =
+    if role == "app" then
+      ''
+        ip daddr ${vpc} tcp dport { 22, 25060-25061 } accept
+      ''
+    else if role == "sim" then
+      ''
+        ip daddr ${vpc} tcp dport 25061 accept
+        ip daddr ${vpc} reject with icmpx type admin-prohibited
+      ''
+    else
+      "";
+  wgEgress = lib.optionalString linked ''
+    oifname "wg0" accept
+    ip daddr ${vpc} udp dport 51820 accept
   '';
   cloudflareRules = lib.optionalString (role == "app") ''
     ip  saddr @cloudflare_v4 tcp dport { 80, 443 } accept
@@ -93,12 +109,11 @@ in
           ip daddr 169.254.169.254 tcp dport 80 accept
           ip protocol icmp accept
           ip6 nexthdr ipv6-icmp accept
-          oifname "wg0" accept
+          ${egressRules}
+          ${wgEgress}
           meta l4proto { tcp, udp } th dport 53 accept
           udp dport 123 accept
           tcp dport 443 accept
-          ip daddr ${vpc} udp dport 51820 accept
-          ${egressRules}
           limit rate 10/minute log prefix "hqcat egress refused: "
           reject with icmpx type admin-prohibited
         }

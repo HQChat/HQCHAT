@@ -1,4 +1,4 @@
-# The two droplets. They boot the environment's base image and read their role,
+# One droplet per role. They boot the environment's base image and read their role,
 # SSH host key and age identity from user data (infra/nixos/hqcat-netconf.sh),
 # then switch to their role's closure. Image, user data and keys are creation-time inputs:
 # changing them later must not replace a running droplet.

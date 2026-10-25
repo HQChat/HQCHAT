@@ -6,8 +6,9 @@
 #   ci        the full CI suite, the two-VM stack test included; skipped when
 #             this exact commit already passed CI (push to main), so a deploy
 #             does not pay for the same suite twice
-#   build     both host closures and the environment's image, signed, pushed to the
-#             cache; warns first if the server or app Sentry DSN is empty
+#   build     each role's host closure (app, mqtt and, where the environment
+#             sizes one, sim) and the environment's image, signed, pushed to
+#             the cache; warns first if the server or app Sentry DSN is empty
 #   infra     Terraform (guarded), then each host's secret bundle
 #   release   move channels/<environment>/<role>, signed with the cache key;
 #             hosts switch within minutes
@@ -24,8 +25,9 @@
 #
 # Environment secrets: DIGITALOCEAN_TOKEN, CLOUDFLARE_API_TOKEN, R2_ACCESS_KEY_ID,
 # R2_SECRET_ACCESS_KEY, NIX_CACHE_SIGNING_KEY, BOT_SEED, NOISE_KEYS,
-# AGE_IDENTITY_APP, AGE_IDENTITY_MQTT (the hosts' age post-quantum identities) and,
-# optionally, STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, APNS_KEY_P8
+# AGE_IDENTITY_APP, AGE_IDENTITY_MQTT (the hosts' age post-quantum identities),
+# with a sim node SIM_SEEDS and AGE_IDENTITY_SIM, and, optionally,
+# STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, APNS_KEY_P8
 # (infra/scripts/init-environment.sh sets the generated ones); for the apple job,
 # ASC_KEY_ID, ASC_ISSUER_ID and ASC_KEY_P8 (an App Store Connect API key).
 name: Deploy
@@ -124,6 +126,7 @@ jobs:
     outputs:
       app: ${{ steps.build.outputs.app }}
       mqtt: ${{ steps.build.outputs.mqtt }}
+      sim: ${{ steps.build.outputs.sim }}
       image_url: ${{ steps.image.outputs.url }}
       image_name: ${{ steps.image.outputs.name }}
       cache_url: ${{ steps.env.outputs.cache_url }}
@@ -157,7 +160,9 @@ jobs:
       - name: Build the closures and the image
         id: build
         run: |
-          for role in app mqtt; do
+          roles=(app mqtt)
+          [[ "$(jq -r '.sizes.sim // ""' "infra/environments/$ENVIRONMENT.json")" == "" ]] || roles+=(sim)
+          for role in "${roles[@]}"; do
             nix build ".#toplevel-$ENVIRONMENT-$role" --print-build-logs --out-link "result-$role"
             echo "$role=$(readlink -f "result-$role")" >>"$GITHUB_OUTPUT"
           done
@@ -169,12 +174,16 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
         run: |
           umask 077
-          printf '%s' "$SIGNING_KEY" >"$RUNNER_TEMP/cache.key"
           # ./ makes them paths: a bare word is read as a flake registry name.
-          nix store sign --key-file "$RUNNER_TEMP/cache.key" --recursive ./result-app ./result-mqtt
+          closures=()
+          for role in app mqtt sim; do
+            [[ ! -e "result-$role" ]] || closures+=("./result-$role")
+          done
+          printf '%s' "$SIGNING_KEY" >"$RUNNER_TEMP/cache.key"
+          nix store sign --key-file "$RUNNER_TEMP/cache.key" --recursive "${closures[@]}"
           rm -f "$RUNNER_TEMP/cache.key"
           nix copy --to "s3://${{ steps.env.outputs.bucket }}?endpoint=${{ steps.env.outputs.endpoint }}&region=auto" \
-            ./result-app ./result-mqtt
+            "${closures[@]}"
       - name: Upload the image
         id: image
         run: |
@@ -206,6 +215,7 @@ jobs:
       ALLOW_REPLACE: ${{ inputs.allow_replace }}
       AGE_IDENTITY_APP: ${{ secrets.AGE_IDENTITY_APP }}
       AGE_IDENTITY_MQTT: ${{ secrets.AGE_IDENTITY_MQTT }}
+      AGE_IDENTITY_SIM: ${{ secrets.AGE_IDENTITY_SIM }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -225,7 +235,7 @@ jobs:
           echo "TF_OUTPUTS=$TF_OUTPUTS" >>"$GITHUB_ENV"
           export TF_OUTPUTS
           # Handed to a new droplet in its user data; the bundles are sealed to them.
-          TF_VAR_age_identities="$(jq -cn '{app: env.AGE_IDENTITY_APP, mqtt: env.AGE_IDENTITY_MQTT} | with_entries(select(.value != ""))')"
+          TF_VAR_age_identities="$(jq -cn '{app: env.AGE_IDENTITY_APP, mqtt: env.AGE_IDENTITY_MQTT, sim: env.AGE_IDENTITY_SIM} | with_entries(select(.value != ""))')"
           export TF_VAR_age_identities
           # The Terraform pinned by hash in the flake, not a download trusted on TLS alone.
           nix shell .#terraform --command infra/scripts/terraform.sh "$ENVIRONMENT" apply
@@ -238,6 +248,7 @@ jobs:
         env:
           BOT_SEED: ${{ secrets.BOT_SEED }}
           NOISE_KEYS: ${{ secrets.NOISE_KEYS }}
+          SIM_SEEDS: ${{ secrets.SIM_SEEDS }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
           APNS_KEY_P8: ${{ secrets.APNS_KEY_P8 }}
@@ -259,6 +270,7 @@ jobs:
     outputs:
       app_previous: ${{ steps.move.outputs.app_previous }}
       mqtt_previous: ${{ steps.move.outputs.mqtt_previous }}
+      sim_previous: ${{ steps.move.outputs.sim_previous }}
     env:
       R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -272,7 +284,8 @@ jobs:
         env:
           APP: ${{ needs.build.outputs.app }}
           MQTT: ${{ needs.build.outputs.mqtt }}
-        run: infra/scripts/release.sh "$ENVIRONMENT" promote "$APP" "$MQTT"
+          SIM: ${{ needs.build.outputs.sim }}
+        run: infra/scripts/release.sh "$ENVIRONMENT" promote "$APP" "$MQTT" "$SIM"
 
   verify:
     needs: [build, infra, release]
@@ -371,7 +384,8 @@ jobs:
         env:
           APP: ${{ needs.release.outputs.app_previous }}
           MQTT: ${{ needs.release.outputs.mqtt_previous }}
-        run: infra/scripts/release.sh "$ENVIRONMENT" rollback "$APP" "$MQTT"
+          SIM: ${{ needs.release.outputs.sim_previous }}
+        run: infra/scripts/release.sh "$ENVIRONMENT" rollback "$APP" "$MQTT" "$SIM"
 
   # The apps ship only against a server that verify has just proven live.
   apple:

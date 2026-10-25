@@ -41,6 +41,7 @@
       roles = [
         "app"
         "mqtt"
+        "sim"
       ];
 
       mkSystem =

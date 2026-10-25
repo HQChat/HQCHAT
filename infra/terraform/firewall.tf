@@ -7,6 +7,8 @@
 #         key-only on the host)
 #   mqtt  443 (hqn/1) from anywhere; 22 from the app host only
 #   both  WireGuard from each other
+#   sim   22 as the app host; no service port. Out: HTTPS (the public front
+#         door, as a phone reaches it), DNS, NTP and its database pool
 
 data "cloudflare_ip_ranges" "edge" {}
 
@@ -130,6 +132,50 @@ resource "digitalocean_firewall" "mqtt" {
     protocol         = "udp"
     port_range       = "51820"
     destination_tags = [digitalocean_tag.this["app"].name]
+  }
+  outbound_rule {
+    protocol              = "icmp"
+    destination_addresses = local.anywhere
+  }
+}
+
+resource "digitalocean_firewall" "sim" {
+  count = local.sim ? 1 : 0
+  name  = "${local.name}-sim"
+  tags  = [digitalocean_tag.this["sim"].name]
+
+  inbound_rule {
+    protocol         = "tcp"
+    port_range       = "22"
+    source_addresses = local.ssh_sources
+  }
+  inbound_rule {
+    protocol         = "icmp"
+    source_addresses = local.anywhere
+  }
+
+  outbound_rule {
+    protocol              = "tcp"
+    port_range            = "443"
+    destination_addresses = local.anywhere
+  }
+  dynamic "outbound_rule" {
+    for_each = ["tcp", "udp"]
+    content {
+      protocol              = outbound_rule.value
+      port_range            = "53"
+      destination_addresses = local.anywhere
+    }
+  }
+  outbound_rule {
+    protocol              = "udp"
+    port_range            = "123"
+    destination_addresses = local.anywhere
+  }
+  outbound_rule {
+    protocol              = "tcp"
+    port_range            = "25061"
+    destination_addresses = [local.env.vpcRange]
   }
   outbound_rule {
     protocol              = "icmp"

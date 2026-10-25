@@ -10,12 +10,14 @@ in
         "base"
         "app"
         "mqtt"
+        "sim"
       ];
       default = "base";
       description = ''
         `base` is the image every droplet first boots: it learns its role from
         user data and switches to that role's closure. `app` runs nginx and the
-        services; `mqtt` runs EMQX and the hqn/1 gateway.
+        services; `mqtt` runs EMQX and the hqn/1 gateway; `sim` runs the sim
+        node's synthetic accounts (docs/runbooks/sim.md).
       '';
     };
 

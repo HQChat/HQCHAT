@@ -56,14 +56,16 @@ for testing; shared vector files pin the two byte for byte
 ## Hosts
 
 Each environment (`infra/environments/<name>.json`) is two droplets from one
-NixOS image, a VPC, a managed database and Cloudflare records:
+NixOS image (three where it sizes a sim node), a VPC, a managed database and
+Cloudflare records:
 
 | Host | Public | Private (WireGuard) |
 |---|---|---|
 | **app** | 80/443 from Cloudflare only (TLS 1.3, hybrid X25519MLKEM768); SSH, rate-limited per source and optionally limited to `adminSshSources` | nginx → hqcat-server on 8090; the bot |
 | **mqtt** (broker) | 443 (hqn/1); SSH from the app host only | EMQX WebSocket 8083, internal listener 1884, admin API 18083; gateway keys on 8081 |
+| **sim** (where `sizes.sim` is set) | SSH as the app host; no service port. Reaches the service at its public addresses, like a phone | none; only its own database pool in the VPC ([sim runbook](../runbooks/sim.md)) |
 
-The two hosts reach each other only over WireGuard (with a preshared key)
+The app and broker hosts reach each other only over WireGuard (with a preshared key)
 inside the VPC, and reach out only on the ports they use. Each host learns its
 role and addresses at boot from the DigitalOcean metadata service. SSH accepts
 only hybrid post-quantum key exchange; EMQX's Erlang distribution is bound to
@@ -88,7 +90,7 @@ the broker, and [emqx-acl.md](emqx-acl.md) for the topic policy.
 ## Delivery
 
 One **Deploy** workflow (`.github/workflows/deploy.yml`) takes an environment
-from nothing to a verified release: CI, a Nix build of both host closures and
+from nothing to a verified release: CI, a Nix build of each host's closure and
 the disk image, Terraform, encrypted secret bundles, a channel move that hosts
 pull within two minutes, and a verification that runs the functional scenarios
 against the live environment, rolling back on failure. Hosts are never

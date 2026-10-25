@@ -48,7 +48,7 @@ require() {
       re='^([0-9]{1,3}\.){3}[0-9]{1,3}$'
       ;;
     mac) re='^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$' ;;
-    role) re='^(app|mqtt|base)$' ;;
+    role) re='^(app|mqtt|sim|base)$' ;;
     *) re='^$' ;;
   esac
   if [[ ! "$value" =~ $re ]]; then

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # shellcheck source-path=SCRIPTDIR
 # Builds each host's secret bundle, seals it with age to the host's
-# post-quantum recipient (ML-KEM-768 + X25519, derived from AGE_IDENTITY_APP or
-# AGE_IDENTITY_MQTT, an `age-keygen -pq` identity), and uploads it to
+# post-quantum recipient (ML-KEM-768 + X25519, derived from AGE_IDENTITY_APP,
+# AGE_IDENTITY_MQTT or AGE_IDENTITY_SIM, an `age-keygen -pq` identity), and
+# uploads it to
 # <cache bucket>/secrets/<environment>/<role>.age with, beside it in
 # <role>.age.sig, the statement
 #
@@ -20,8 +21,10 @@
 #
 # A bundle is a JSON object, file name → content: Terraform's entries (from
 # $TF_OUTPUTS) plus these variables when set: BOT_SEED, BOT_ID,
-# STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, APNS_KEY_P8 (app) and NOISE_KEYS
-# (mqtt). An entry left out is left unchanged on the host.
+# STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, APNS_KEY_P8 (app), NOISE_KEYS
+# (mqtt), SIM_SEEDS and BOT_ID (sim). An entry left out is left unchanged on
+# the host. The roles are those Terraform built a bundle for: the sim node's
+# only where the environment has one.
 set -euo pipefail
 
 ENVIRONMENT="${1:?usage: publish-secrets.sh <environment>}"
@@ -44,10 +47,16 @@ extra() {
   printf '%s' "$json"
 }
 
-for role in app mqtt; do
+mapfile -t roles < <(jq -r '.bundle.value | keys[]' "$outputs")
+for role in "${roles[@]}"; do
   case "$role" in
     app) added="$(extra bot_seed bot_id stripe_secret_key stripe_webhook_secret apns_key_p8)" ;;
     mqtt) added="$(extra noise_keys)" ;;
+    sim) added="$(extra sim_seeds bot_id)" ;;
+    *)
+      echo "no bundle recipe for role $role" >&2
+      exit 1
+      ;;
   esac
   jq -c --arg r "$role" --argjson add "$added" '.bundle.value[$r] + $add' "$outputs" >"$tmp/$role.json"
   identity_var="AGE_IDENTITY_${role^^}"
