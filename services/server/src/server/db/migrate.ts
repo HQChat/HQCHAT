@@ -2,8 +2,9 @@
  * Applies `migrations/*.sql` in filename order, each in its own transaction,
  * recording them in `schema_migrations`; applied files are never re-run.
  * Connects to DATABASE_URL_DIRECT (DDL bypasses the transaction pooler), else
- * DATABASE_URL. `${APP_ROLE}` in a file is replaced with APP_ROLE, defaulting
- * to the connecting user.
+ * DATABASE_URL. `${APP_ROLE}` and `${SIM_ROLE}` in a file are replaced with
+ * APP_ROLE and SIM_ROLE (the sim node's role), each defaulting to the
+ * connecting user.
  */
 
 import "../../common/config";
@@ -24,7 +25,7 @@ function roles(fallback: string) {
     }
     return v;
   };
-  return { APP_ROLE: named("APP_ROLE") };
+  return { APP_ROLE: named("APP_ROLE"), SIM_ROLE: named("SIM_ROLE") };
 }
 
 async function main() {
@@ -63,7 +64,7 @@ async function main() {
     if (applied.has(file)) continue;
     const sql = fs
       .readFileSync(path.join(DIR, file), "utf8")
-      .replace(/\$\{(APP_ROLE)\}/g, (_, k: keyof typeof subs) => subs[k]);
+      .replace(/\$\{(APP_ROLE|SIM_ROLE)\}/g, (_, k: keyof typeof subs) => subs[k]);
 
     logger.startup(`[migrate] applying ${file}`);
     try {

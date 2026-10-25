@@ -29,6 +29,7 @@ export class CoreClient {
   private readonly conns = new Map<number, Conn>();
   private timer: NodeJS.Timeout | null = null;
   private stopped = false;
+  private unreachable = false;
   private readonly messageHandlers: ((m: CoreMessage) => void)[] = [];
   private readonly effectHandlers: ((e: CoreEffect) => void)[] = [];
 
@@ -78,6 +79,18 @@ export class CoreClient {
     this.handle(effects);
   }
 
+  /**
+   * false acts as a device that lost its network: every dial and request
+   * fails, so what friends send waits in the broker's offline queue; true
+   * brings it back the way a network change would, without the backoff.
+   */
+  setReachable(reachable: boolean): void {
+    if (this.unreachable === !reachable) return;
+    this.unreachable = !reachable;
+    const network = reachable ? (this.o.network ?? "server") : "unreachable";
+    this.run(() => this.engine.onNetworkChanged(network, Date.now()));
+  }
+
   /** Closes every connection and stops the timer; the engine keeps its state. */
   stop(): void {
     this.stopped = true;
@@ -104,10 +117,13 @@ export class CoreClient {
   private carryOut(e: CoreEffect): void {
     switch (e.kind) {
       case "http":
-        void this.http(e);
+        if (this.unreachable) setImmediate(() => this.run(() => this.engine.onHttp(e.req!, 0, NO_BODY, Date.now())));
+        else void this.http(e);
         return;
       case "open":
-        if (!this.stopped) this.open(e);
+        if (this.stopped) return;
+        if (this.unreachable) setImmediate(() => this.run(() => this.engine.onClosed(e.conn!, "failed", Date.now())));
+        else this.open(e);
         return;
       case "write":
         this.conns.get(e.conn!)?.write(e.body ?? NO_BODY);

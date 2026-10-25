@@ -18,7 +18,7 @@ export function sentryEnabled(): boolean {
 }
 
 /** Which process is reporting; tags every Sentry event. */
-export type Component = "server" | "bot" | "noise-gw";
+export type Component = "server" | "bot" | "sim" | "noise-gw";
 
 /** Initialises Sentry and the crash handlers once per process. */
 export function initObservability(component: Component): void {

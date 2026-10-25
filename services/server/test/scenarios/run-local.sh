@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Starts a complete local stack (Postgres, EMQX with the deployment's config and
 # ACL, the server, noise-gw, the helper bot) and runs the functional scenarios
-# against it, then, on macOS, the Swift client.
+# against it, then, on macOS, the Swift client (APPLE=0 skips it).
 #
-#   bash services/server/test/scenarios/run-local.sh        # LOAD=1 adds the load test
+#   bash services/server/test/scenarios/run-local.sh        # LOAD=1 adds the load test, SIM=1 the sim node
 #
 # Needs Docker and the core's Node addon (built with Nix when HQCHAT_NODE is
 # unset).
@@ -32,7 +32,7 @@ fi
 
 cleanup() {
   step "Tearing down"
-  for pid in "${SERVER_PID:-}" "${GW_PID:-}" "${BOT_PID:-}"; do
+  for pid in "${SERVER_PID:-}" "${GW_PID:-}" "${BOT_PID:-}" "${SIM_PID:-}"; do
     [ -n "$pid" ] || continue
     kill -- -"$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
   done
@@ -153,7 +153,7 @@ npm run --silent test:scenarios || {
   exit 1
 }
 
-if [ "$(uname)" = "Darwin" ] && command -v xcrun >/dev/null; then
+if [ "${APPLE:-1}" != 0 ] && [ "$(uname)" = "Darwin" ] && command -v xcrun >/dev/null; then
   step "The app's store over hqn/1 and WSS"
   bash "$ROOT/apps/apple/e2e/hqn-live/run.sh"
 fi
@@ -161,4 +161,26 @@ fi
 if [ -n "${LOAD:-}" ]; then
   step "Load"
   npm run --silent test:load
+fi
+
+if [ -n "${SIM:-}" ]; then
+  windows="${SIM_WINDOWS:-1}"
+  step "Sim node (three sims, $windows one-minute reports)"
+  setsid env BASE_URL="$TEST_BASE_URL" MQTT_URL="$TEST_MQTT_URL" BOT_ID="$BOT_ID" \
+    SIM_COUNT=3 SIM_REPORT_MS=60000 SIM_STATE_DIR="$WORK/sim" \
+    npm run sim >"$WORK/sim.log" 2>&1 &
+  SIM_PID=$!
+  report() { docker exec "$NAME_PG" psql -U hqcat -d hqcat -tAc "$1"; }
+  for _ in $(seq 1 $((60 * windows + 90))); do
+    [ "$(report "SELECT count(*) FROM sim_reports WHERE sim = 'all'")" -ge "$windows" ] && break
+    sleep 1
+  done
+  kill -- -"$SIM_PID" 2>/dev/null || true
+  report "SELECT hour, sim, metrics->'counts', metrics->>'uptimePct' FROM sim_reports ORDER BY hour, sim"
+  report "SELECT hour, metrics->'ms' FROM sim_reports WHERE sim = 'all' ORDER BY hour"
+  [ "$(report "SELECT count(*) FROM sim_reports WHERE sim = 'all' AND (metrics->'counts'->>'connects')::int >= 3")" -ge 1 ] || {
+    tail -n 40 "$WORK/sim.log"
+    exit 1
+  }
+  [ "$(report "SELECT count(*) FROM sim_reports WHERE metrics->'counts' ? 'corrupted'")" -eq 0 ]
 fi

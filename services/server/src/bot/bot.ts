@@ -51,9 +51,9 @@ const WELCOME = (name: string) =>
     "try /help for what i can do, or just say hello.",
   ].join("\n");
 
-/** The identity seed: BOT_SEED, else the one saved in `dir`, else a new one saved there. */
-export function loadSeed(dir: string): Buffer {
-  if (process.env.BOT_SEED) return Buffer.from(process.env.BOT_SEED.trim(), "hex");
+/** The identity seed: `given` (BOT_SEED for the bot), else the one saved in `dir`, else a new one saved there. */
+export function loadSeed(dir: string, given: string | null = process.env.BOT_SEED || null): Buffer {
+  if (given) return Buffer.from(given.trim(), "hex");
   const file = path.join(dir, "seed");
   try {
     return Buffer.from(fs.readFileSync(file, "utf8").trim(), "hex");
@@ -77,9 +77,9 @@ export function idOfSeed(seed: Buffer): string {
 }
 
 /**
- * The bot's client on the core: the engine under `dir/core`, sealed to a
- * device key derived from the seed (in production a credential, not in
- * `dir`), so a copy of `dir` opens nothing. A first start builds the profile
+ * The bot's client on the core (or a sim's, under its own `profileId`): the
+ * engine under `dir/core`, sealed to a device key derived from the seed (in
+ * production a credential, not in `dir`), so a copy of `dir` opens nothing. A first start builds the profile
  * from the seed, importing the friends, sessions and prekeys the TS client
  * left in `state.json`. A `device-key` file from a build that stored the key
  * is deleted, with the store it sealed, and the profile is built again.
@@ -87,8 +87,9 @@ export function idOfSeed(seed: Buffer): string {
 export function openBot(
   dir: string,
   seed: Buffer,
-  opts: Omit<CoreClientOptions, "dir" | "deviceKey" | "profileId">,
+  opts: Omit<CoreClientOptions, "dir" | "deviceKey" | "profileId"> & { profileId?: string },
 ): CoreClient {
+  const { profileId = "bot", ...rest } = opts;
   const coreDir = path.join(dir, "core");
   const deviceKey = core.deviceKeyFromSeed(seed);
   const stored = path.join(dir, "device-key");
@@ -97,18 +98,20 @@ export function openBot(
     fs.rmSync(stored, { force: true });
   }
   if (fs.existsSync(path.join(coreDir, "state"))) {
-    return new CoreClient({ ...opts, profileId: "bot", dir: coreDir, deviceKey });
+    return new CoreClient({ ...rest, profileId, dir: coreDir, deviceKey });
   }
   fs.mkdirSync(dir, { recursive: true });
   fs.rmSync(coreDir, { recursive: true, force: true });
-  const client = new CoreClient({ ...opts, profileId: "bot", dir: coreDir, deviceKey });
+  const client = new CoreClient({ ...rest, profileId, dir: coreDir, deviceKey });
   const legacy = [path.join(dir, "state.json"), path.join(dir, "state.json.imported")].find((f) => fs.existsSync(f));
   const imported = client.engine.importLegacy(seed, legacy ? fs.readFileSync(legacy, "utf8") : null, Date.now());
   for (const id of imported.unreadable) {
-    logger.warn(`[bot] the session with ${id.slice(0, 12)}… could not be read; the next message opens a new one`);
+    logger.warn(
+      `[${profileId}] the session with ${id.slice(0, 12)}… could not be read; the next message opens a new one`,
+    );
   }
   if (legacy?.endsWith("state.json")) fs.renameSync(legacy, `${legacy}.imported`);
-  logger.startup(`[bot] moved to the core${legacy ? ` with the state in ${path.basename(legacy)}` : ""}`);
+  logger.startup(`[${profileId}] moved to the core${legacy ? ` with the state in ${path.basename(legacy)}` : ""}`);
   return client;
 }
 
