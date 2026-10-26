@@ -17,7 +17,7 @@ import * as http2 from "node:http2";
 import Module from "node:module";
 import type { AddressInfo } from "node:net";
 import { test } from "node:test";
-import { logger, setLogLevel } from "../../src/common/logger";
+import { logger, setLogLevel } from "@hqchat/common/logger";
 
 setLogLevel("debug");
 
@@ -164,7 +164,7 @@ async function withApns(
     (console as any)[k] = (...a: unknown[]) => log.push(a.map(String).join(" "));
   }
 
-  // What this module PASSES to the logger, before src/common/scrub.ts redacts it.
+  // What this module PASSES to the logger, before services/common/src/scrub.ts redacts it.
   // Asserting on the console output alone proves nothing about this file: the
   // scrubber already masks a 64-hex device token, so an `[apns]` line that
   // interpolated one would still come out clean. Verified — that exact

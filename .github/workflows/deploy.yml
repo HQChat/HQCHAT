@@ -243,7 +243,7 @@ jobs:
           APNS_KEY_P8: ${{ secrets.APNS_KEY_P8 }}
           NIX_CACHE_SIGNING_KEY: ${{ secrets.NIX_CACHE_SIGNING_KEY }}
         run: |
-          BOT_ID="$(nix shell .#hqcat-server --command hqcat-bot --print-id)"
+          BOT_ID="$(nix shell .#hqcat-bot --command hqcat-bot --print-id)"
           export BOT_ID
           nix shell --inputs-from . nixpkgs#age nixpkgs#awscli2 nixpkgs#openssl --command infra/scripts/publish-secrets.sh "$ENVIRONMENT"
       - name: Remove the Terraform outputs
@@ -302,8 +302,8 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: services/server/package-lock.json
-      - run: npm ci --prefix services/server
+          cache-dependency-path: services/package-lock.json
+      - run: npm ci --prefix services
       - name: Wait for this commit to serve, with a healthy broker
         run: |
           for _ in $(seq 1 120); do

@@ -41,7 +41,9 @@ server sees the graph, topic names, sizes and timing, never plaintext.
 |---|---|
 | `apps/apple/` | Xcode project: macOS and iOS targets over shared Swift sources, test slices, `verify.sh` |
 | `apps/site/` | Cloudflare Worker: the website, the crypto write-up, legal pages, the donate page |
-| `services/server/` | the server, the hqn/1 gateway, the reference TypeScript client and the helper bot built on it |
+| `services/server/` | the server, the hqn/1 gateway and the reference TypeScript client |
+| `services/bot/` | the helper bot: an ordinary account on the core, run beside the server and not part of it |
+| `services/common/` | what the server and the bot share: the core addon and its client, logging, scrubbing, Sentry, the health monitor |
 | `core/` | the Rust core: HQC, the protocol, the client engine, and its bindings for Node (the server, gateway and bot) and Swift (the apps); Kotlin bindings for the coming Android and desktop apps ([multiplatform](docs/architecture/multiplatform.md), [core wiring](docs/architecture/core-wiring.md)) |
 | `native/hqc/` | the HQC-256 wrapper (C), built from a pinned upstream commit into the Rust core (every platform) and the standalone Nix package |
 | `infra/environments/` | one JSON file per environment: domain, region, sizes, non-secret configuration |
@@ -70,7 +72,7 @@ bash apps/apple/verify.sh                  # the full Apple gate: the core packa
 
 ```bash
 core/hqchat-node/build.sh                                    # the core's Node addon the server loads
-cd services/server && npm ci && npm run test:unit
+cd services && npm ci && npm run test:unit --workspaces
 scripts/check.sh lint|unit|integration|scenarios|infra|core  # each CI layer, from the repo root
 bash services/server/test/scenarios/run-local.sh             # the full stack locally (needs Docker)
 ```

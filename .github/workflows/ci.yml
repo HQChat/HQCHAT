@@ -61,8 +61,8 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-          cache-dependency-path: services/server/package-lock.json
-      - run: npm ci --prefix services/server
+          cache-dependency-path: services/package-lock.json
+      - run: npm ci --prefix services
       - run: npm ci --prefix apps/site
       - uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
         with:
@@ -94,8 +94,8 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-          cache-dependency-path: services/server/package-lock.json
-      - run: npm ci --prefix services/server
+          cache-dependency-path: services/package-lock.json
+      - run: npm ci --prefix services
       - uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
         with:
           extra_nix_config: |
@@ -142,9 +142,9 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-          cache-dependency-path: services/server/package-lock.json
-      - name: Install server dependencies
-        run: npm ci --prefix services/server
+          cache-dependency-path: services/package-lock.json
+      - name: Install services dependencies
+        run: npm ci --prefix services
       - name: Static analysis
         run: nix develop --command scripts/check.sh lint
       - name: Actions are pinned by commit SHA
@@ -179,7 +179,7 @@ jobs:
               - 'flake.lock'
               - 'infra/nixos/**'
               - 'infra/emqx/**'
-              - 'services/server/**'
+              - 'services/**'
 
   stack:
     needs: changes

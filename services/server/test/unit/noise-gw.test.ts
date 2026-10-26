@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import * as crypto from "node:crypto";
 import * as net from "node:net";
 import { after, test } from "node:test";
-import { core, type GatewayKeyPair, type HqnSecret } from "../../src/common/core";
+import { core, type GatewayKeyPair, type HqnSecret } from "@hqchat/common/core";
 import { createGateway, type GatewayEvent, type GatewayLimits } from "../../src/gateway/gateway";
 import { parseKeySeeds } from "../../src/gateway/keys";
 import { connectClientId } from "../../src/gateway/mqtt-connect";

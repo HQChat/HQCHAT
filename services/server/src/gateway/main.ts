@@ -17,10 +17,10 @@
 import "../common/config";
 import * as http from "node:http";
 import * as os from "node:os";
-import { startHealthMonitor } from "../common/health-monitor";
+import { startHealthMonitor } from "@hqchat/common/health-monitor";
+import { logger } from "@hqchat/common/logger";
+import { initObservability } from "@hqchat/common/observability";
 import { listenOn, parseHosts } from "../common/listen";
-import { logger } from "../common/logger";
-import { initObservability } from "../common/observability";
 import { DecapPool } from "./decap-pool";
 import { createGateway } from "./gateway";
 import { loadServerKeys, publicKeys, readKeySeeds } from "./keys";

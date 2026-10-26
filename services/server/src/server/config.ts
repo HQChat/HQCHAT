@@ -1,5 +1,5 @@
+import { logger } from "@hqchat/common/logger";
 import { assertConfig } from "../common/config";
-import { logger } from "../common/logger";
 import { donationSummary, donationsDead, resolvePrices } from "./donations-config";
 
 /** Validates the server's configuration at boot; exits on what cannot work. */

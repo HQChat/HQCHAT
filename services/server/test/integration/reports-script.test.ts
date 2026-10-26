@@ -21,8 +21,8 @@
 import assert from "node:assert/strict";
 import * as crypto from "node:crypto";
 import { test } from "node:test";
+import { setLogLevel } from "@hqchat/common/logger";
 import { DISPOSITIONS, type Enforcement, queue, resolve } from "../../scripts/reports";
-import { setLogLevel } from "../../src/common/logger";
 import { DB } from "../../src/server/db/api";
 import { q } from "../../src/server/db/pg";
 import { topicId } from "../helpers/fixtures";

@@ -1,10 +1,10 @@
 import "../common/config";
 import * as crypto from "node:crypto";
 import * as http from "node:http";
-import { startHealthMonitor } from "../common/health-monitor";
+import { startHealthMonitor } from "@hqchat/common/health-monitor";
+import { logger } from "@hqchat/common/logger";
+import { initObservability } from "@hqchat/common/observability";
 import { listenOn, parseHosts } from "../common/listen";
-import { logger } from "../common/logger";
-import { initObservability } from "../common/observability";
 import { createApiHandler } from "./api";
 import { createAuthHandler, INTERNAL_MQTT_USER } from "./auth";
 import { assertServerConfig } from "./config";

@@ -4,8 +4,8 @@
  * page. No email address reaches this server.
  */
 
+import { logger } from "@hqchat/common/logger";
 import Stripe from "stripe";
-import { logger } from "../common/logger";
 import { resolvePrices } from "./donations-config";
 
 let _stripe: Stripe | null = null;

@@ -15,13 +15,13 @@
 //   one until someone reads an event in Sentry.
 //
 // `@sentry/node` is stubbed — initialising the real SDK installs its own signal
-// handlers and opens a transport. `src/common/scrub.ts` is NOT stubbed: the point of
+// handlers and opens a transport. `src/scrub.ts` is NOT stubbed: the point of
 // asserting `beforeSend` is that it actually redacts, which a stub cannot show.
 
 import assert from "node:assert/strict";
 import Module from "node:module";
 import { test } from "node:test";
-import { logger, registerSentrySink, resetSentryThrottle, setLogLevel } from "../../src/common/logger";
+import { logger, registerSentrySink, resetSentryThrottle, setLogLevel } from "../../src/logger";
 
 setLogLevel("debug");
 
@@ -83,8 +83,8 @@ const sentryPath = require.resolve("@sentry/node");
   require.cache[sentryPath] = m;
 }
 
-const obsPath = require.resolve("../../src/common/observability");
-type Obs = typeof import("../../src/common/observability");
+const obsPath = require.resolve("../../src/observability");
+type Obs = typeof import("../../src/observability");
 
 // --- running one initialisation in isolation -------------------------------------------
 

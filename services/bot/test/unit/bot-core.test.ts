@@ -1,4 +1,4 @@
-// The bot's move to the core (src/bot/bot.ts openBot): the first start
+// The bot's move to the core (src/bot.ts openBot): the first start
 // imports the seed and the TS client's state file, saves the device key and
 // keeps the old file as a backup; later starts reopen the same profile.
 
@@ -8,9 +8,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
-import { idOfSeed, openBot } from "../../src/bot/bot";
-import { core } from "../../src/common/core";
-import { FileStore } from "../reference/client/store";
+import { core } from "@hqchat/common/core";
+import { idOfSeed, openBot } from "../../src/bot";
 
 const OPTS = { serverUrl: "https://hqchat.test", hqn: false };
 
@@ -30,10 +29,14 @@ test("the first start imports the TS state under the seed's id, and later starts
     const seed = crypto.randomBytes(32);
     const friend = core.hqcKeypairFromSeed(crypto.randomBytes(32));
     const friendId = core.peerId(friend.pk.toString("hex"));
-    new FileStore(path.join(dir, "state.json")).save({
-      peers: { [friendId]: { id: friendId, username: "alice", pk: friend.pk.toString("hex") } },
-      prekeys: null,
-    });
+    // The TS client's state file, as it wrote one with a friend and no session.
+    fs.writeFileSync(
+      path.join(dir, "state.json"),
+      JSON.stringify({
+        peers: { [friendId]: { id: friendId, username: "alice", pk: friend.pk.toString("hex") } },
+        prekeys: null,
+      }),
+    );
 
     const first = openBot(dir, seed, OPTS);
     assert.equal(core.peerId(signInKey(first)), idOfSeed(seed), "same id as before the move");

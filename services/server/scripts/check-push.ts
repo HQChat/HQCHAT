@@ -11,7 +11,7 @@
 // was reachable.
 
 import "../src/common/config";
-import { isPeerId } from "../src/common/core";
+import { isPeerId } from "@hqchat/common/core";
 import { keyProblem } from "../src/server/apns";
 import { apnsGaps, apnsSummary } from "../src/server/apns-config";
 import { DB } from "../src/server/db/api";

@@ -5,8 +5,8 @@
  * effort: failures are logged and never fail the operation that triggered them.
  */
 
-import { core } from "../common/core";
-import { logger } from "../common/logger";
+import { core } from "@hqchat/common/core";
+import { logger } from "@hqchat/common/logger";
 
 function credentials(): { key: string; secret: string } | null {
   const key = process.env.EMQX_API_KEY || "";

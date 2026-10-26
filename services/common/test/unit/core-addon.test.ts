@@ -1,10 +1,10 @@
-// The core addon as the server loads it (src/common/core.ts): the declared
+// The core addon as the server loads it (src/core.ts): the declared
 // exports match the addon's, and HQC gives the shipped known answers.
 
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
-import { CORE_EXPORTS, core } from "../../src/common/core";
+import { CORE_EXPORTS, core } from "../../src/core";
 
 const sha = (b: Buffer) => createHash("sha256").update(b).digest("hex");
 

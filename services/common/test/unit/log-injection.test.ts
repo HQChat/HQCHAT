@@ -23,7 +23,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { escapeControl, logger, setLogLevel } from "../../src/common/logger";
+import { escapeControl, logger, setLogLevel } from "../../src/logger";
 
 /** Anything `escapeControl` is supposed to have removed. Spelled out rather than
  *  imported: a test that reads the rule from the implementation cannot catch the

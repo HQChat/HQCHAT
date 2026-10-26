@@ -1,7 +1,7 @@
 import * as crypto from "node:crypto";
 import type * as http from "node:http";
-import { core } from "../common/core";
-import { logger } from "../common/logger";
+import { core } from "@hqchat/common/core";
+import { logger } from "@hqchat/common/logger";
 import { DB } from "./db/api";
 import { EMQX } from "./emqx";
 import { bearer, clientIp, HttpError, type JsonBody, readJson, send, textField } from "./http";

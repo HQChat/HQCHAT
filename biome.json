@@ -2,7 +2,7 @@
   "$schema": "https://biomejs.dev/schemas/2.4.15/schema.json",
   "files": {
     "includes": [
-      "services/server/**",
+      "services/**",
       "apps/site/**",
       "!**/node_modules",
       "!**/coverage",
@@ -37,7 +37,7 @@
   "overrides": [
     {
       "includes": [
-        "services/server/test/**"
+        "services/*/test/**"
       ],
       "linter": {
         "rules": {

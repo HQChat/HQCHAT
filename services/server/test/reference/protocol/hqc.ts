@@ -1,5 +1,5 @@
 import * as crypto from "node:crypto";
-import { core, corePath } from "../../../src/common/core";
+import { core, corePath } from "@hqchat/common/core";
 import type { Kem } from "./ratchet";
 
 /** HQC-256 sizes, in bytes. */

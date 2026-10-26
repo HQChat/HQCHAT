@@ -1,5 +1,11 @@
 import * as net from "node:net";
-import { core, type GatewayKeyPair, type HqnGatewayHandshake, type HqnSecret, type HqnTransport } from "../common/core";
+import {
+  core,
+  type GatewayKeyPair,
+  type HqnGatewayHandshake,
+  type HqnSecret,
+  type HqnTransport,
+} from "@hqchat/common/core";
 import { Admission } from "./admission";
 import { connectClientId } from "./mqtt-connect";
 

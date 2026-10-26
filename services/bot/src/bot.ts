@@ -1,6 +1,6 @@
 /**
  * The helper bot: an ordinary HQChat account on the Rust core (the same Engine
- * the apps link, through src/common/core-client.ts), so it uses nothing a
+ * the apps link, through services/common/src/core-client.ts), so it uses nothing a
  * third-party client could not. It accepts every invite, greets each new
  * friend once and answers messages (replies.ts).
  *
@@ -23,15 +23,15 @@
  * the core imported on its first start, kept as a backup.
  */
 
-import "../common/config";
+import "@hqchat/common/file-env";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { core } from "../common/core";
-import { CoreClient, type CoreClientOptions } from "../common/core-client";
-import { startHealthMonitor } from "../common/health-monitor";
-import { logger } from "../common/logger";
-import { initObservability } from "../common/observability";
+import { core } from "@hqchat/common/core";
+import { CoreClient, type CoreClientOptions } from "@hqchat/common/core-client";
+import { startHealthMonitor } from "@hqchat/common/health-monitor";
+import { logger } from "@hqchat/common/logger";
+import { initObservability } from "@hqchat/common/observability";
 import { reply } from "./replies";
 
 const BASE_URL = (process.env.BASE_URL || "http://127.0.0.1:8090").replace(/\/$/, "");

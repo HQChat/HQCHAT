@@ -6,8 +6,8 @@
  * use named prepared statements.
  */
 
+import { logger } from "@hqchat/common/logger";
 import { Pool, type PoolClient, type QueryResult, type QueryResultRow } from "pg";
-import { logger } from "../../common/logger";
 import { tls, withoutSslMode } from "./ssl";
 
 /** Client connections per process; keep within the pooler's `pool_size`. */

@@ -1,7 +1,7 @@
 // The PII / secret scrubber, with no Sentry in it.
 //
 // WHY THIS IS ITS OWN FILE. These rules are one half of a pair: the other is
-// services/server/src/common/scrub.ts, and both files carry a comment saying they must
+// services/common/src/scrub.ts, and both files carry a comment saying they must
 // stay in step. A divergence is not cosmetic — it means an event redacted on one
 // platform ships the same secret in the clear from the other, which for a
 // messenger whose server never sees plaintext is the whole product failing at
@@ -15,14 +15,14 @@
 // possible; Observability.swift keeps the two `scrub(Event)`/`scrub(Breadcrumb)`
 // adapters that genuinely do need the SDK.
 //
-// Keep in sync with services/server/src/common/scrub.ts.
+// Keep in sync with services/common/src/scrub.ts.
 
 import Foundation
 
 enum Redaction {
 
     // Ordered redactors, most-specific → least-specific, mirroring the server's
-    // src/common/scrub.ts so an event looks the same whichever side reports it. Each
+    // services/common/src/scrub.ts so an event looks the same whichever side reports it. Each
     // replaces a sensitive shape with a typed placeholder. Best-effort defence:
     // prefer not logging a secret over relying on this, but this is the net for
     // when an unexpected error string or SDK breadcrumb carries one.
@@ -31,7 +31,7 @@ enum Redaction {
         // invalid under ICU — a bad rule must not take the whole app down at
         // launch. NSRegularExpression uses ICU, which is stricter than JS regex:
         // e.g. a literal `[` inside a character class must be escaped (`\[`).
-        // Mirror the server's src/common/scrub.ts shapes but keep them ICU-valid.
+        // Mirror the server's services/common/src/scrub.ts shapes but keep them ICU-valid.
         func re(_ p: String, _ template: String) -> (NSRegularExpression, String)? {
             guard let r = try? NSRegularExpression(pattern: p, options: [.caseInsensitive]) else {
                 #if DEBUG
@@ -44,7 +44,7 @@ enum Redaction {
         // PORTABILITY: no \b and no \s anywhere below, deliberately.
         //
         // Both are engine-defined, and this rule set is mirrored in the server's
-        // src/common/scrub.ts, which runs on V8 rather than ICU:
+        // services/common/src/scrub.ts, which runs on V8 rather than ICU:
         //
         //   \b  JS defines word characters as [A-Za-z0-9_]; ICU uses the Unicode
         //       property. "𝔘t=1614556800,v1=…" has a boundary before `t` in JS
@@ -55,7 +55,7 @@ enum Redaction {
         //
         // Spelled out as explicit ASCII classes, the two engines agree by
         // construction rather than by coincidence. Found by
-        // services/server/test/fuzz/scrub-differential.ts.
+        // services/common/test/fuzz/scrub-differential.ts.
         let wb0 = "(?<![A-Za-z0-9_])"   // start-of-word boundary, ASCII
         let wb1 = "(?![A-Za-z0-9_])"    // end-of-word boundary, ASCII
         let ws  = " \\t\\n\\r\\f\\x0B"  // ASCII whitespace, inside a class
@@ -73,7 +73,7 @@ enum Redaction {
             // Stripe secrets / publishable keys (bodies contain underscores).
             re("\(wb0)(?:sk|rk|whsec|pk)_[A-Za-z0-9_]{10,}\(wb1)", "[stripe-key]"),
             // Stripe webhook signature header (t=…,v1=…). Kept in sync with the
-            // server's src/common/scrub.ts [stripe-sig] rule — see the sync note there.
+            // server's services/common/src/scrub.ts [stripe-sig] rule — see the sync note there.
             re("\(wb0)t=\\d{10},v1=[a-f0-9]{16,}\(wb1)", "[stripe-sig]"),
             // Emails.
             re("\(wb0)[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\(wb1)", "[email]"),
@@ -101,14 +101,14 @@ enum Redaction {
 
     /// Redact known-sensitive shapes from a single string.
     /// Cap on how much of one string is scanned. Mirrors MAX_STRING in
-    /// src/common/scrub.ts — a runaway input must not make scrubbing the thing that
+    /// services/common/src/scrub.ts — a runaway input must not make scrubbing the thing that
     /// stalls, and both sides must stall at the same point.
     static let maxString = 8192
 
     static func redact(_ input: String?) -> String? {
         guard let input, !input.isEmpty else { return input }
         // Cap the blast radius of a pathological input.
-        // Capped in UNICODE SCALARS, matching src/common/scrub.ts.
+        // Capped in UNICODE SCALARS, matching services/common/src/scrub.ts.
         //
         // `.count` is GRAPHEME CLUSTERS and JS's `.length` is UTF-16 code units,
         // so "𝔘" is 1 here and 2 there and a long string was cut in a different
@@ -129,7 +129,7 @@ enum Redaction {
     /// Deep-scrub an arbitrary [String: Any] bag (extra / breadcrumb data):
     /// redact strings and drop values under sensitive-named keys. Word-aware
     /// (not substring) so "recipient"/"description" don't trip on "ip"/"sig" —
-    /// mirrors isSensitiveKey() in the server's src/common/scrub.ts.
+    /// mirrors isSensitiveKey() in the server's services/common/src/scrub.ts.
     static let sensitiveWords: Set<String> = [
         "authorization", "auth", "bearer", "cookie", "token", "secret", "password",
         "passwd", "pwd", "apikey", "dsn", "session", "signature", "sig", "credential",
@@ -145,7 +145,7 @@ enum Redaction {
             of: "([a-z0-9])([A-Z])", with: "$1 $2",
             options: .regularExpression
         )
-        // Split on anything outside [A-Za-z0-9] — matching src/common/scrub.ts's
+        // Split on anything outside [A-Za-z0-9] — matching services/common/src/scrub.ts's
         // `.split(/[^A-Za-z0-9]+/)` exactly, including its treatment of
         // non-ASCII letters as SEPARATORS.
         //

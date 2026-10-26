@@ -1,26 +1,9 @@
-import * as fs from "node:fs";
+// Resolves the `*_FILE` convention before any module below reads the environment.
+import "@hqchat/common/file-env";
 import { apnsGaps, apnsIntended, apnsSummary } from "../server/apns-config";
 import { clusterCa, isLocal } from "../server/db/ssl";
 import { donationGaps, donationSummary, resolvePrices } from "../server/donations-config";
 import { TRUSTED_PROXY_MODES } from "../server/http";
-
-/**
- * Process configuration. Importing this module resolves the `*_FILE`
- * convention: for every `FOO_FILE` naming a readable file, `FOO` is set to its
- * trimmed contents unless `FOO` is already set. systemd hands credentials to the
- * services this way (`FOO_FILE=$CREDENTIALS_DIRECTORY/foo`).
- */
-for (const key of Object.keys(process.env)) {
-  if (!key.endsWith("_FILE")) continue;
-  const base = key.slice(0, -"_FILE".length);
-  const path = process.env[key];
-  if (process.env[base] || !path) continue;
-  try {
-    process.env[base] = fs.readFileSync(path, "utf8").trim();
-  } catch (err) {
-    console.error(`config: ${key}=${path} could not be read: ${(err as Error).message}`);
-  }
-}
 
 /** Whether this deployment takes donations through Stripe. */
 export const DONATIONS_ENABLED = /^(1|true|yes)$/i.test(process.env.DONATIONS_ENABLED || "");

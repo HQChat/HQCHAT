@@ -11,8 +11,8 @@ paths = [
   '''infra/nixos/tests/stack\.nix''',
 
   # Credential shapes the scrubbers must recognise, in both implementations.
-  '''services/server/test/fuzz/scrub-differential\.ts''',
-  '''services/server/test/unit/scrub\.test\.ts''',
+  '''services/common/test/fuzz/scrub-differential\.ts''',
+  '''services/common/test/unit/scrub\.test\.ts''',
   '''apps/apple/tests/RedactionTests\.swift''',
 
   # EC keys generated at test time.

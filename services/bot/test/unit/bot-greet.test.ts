@@ -1,4 +1,4 @@
-// The bot's welcome (src/bot/bot.ts Bot): the server befriends a new account
+// The bot's welcome (src/bot.ts Bot): the server befriends a new account
 // before its app publishes prekeys, so the first welcome fails; the bot sends
 // the same message again until the broker takes it, and greets once.
 
@@ -7,9 +7,9 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
-import { Bot, Greeted } from "../../src/bot/bot";
-import type { CoreEffect } from "../../src/common/core";
-import type { CoreClient } from "../../src/common/core-client";
+import type { CoreEffect } from "@hqchat/common/core";
+import type { CoreClient } from "@hqchat/common/core-client";
+import { Bot, Greeted } from "../../src/bot";
 
 function fakeClient() {
   let emit: (e: CoreEffect) => void = () => {};

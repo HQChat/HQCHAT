@@ -103,14 +103,14 @@ TEST_RUNNER_HQCAT_UNSIGNED=1 \
 
 # 5. The scrubber, against its TypeScript twin.
 #
-#     src/common/scrub.ts and Redaction.swift are one rule set maintained twice, and
+#     services/common/src/scrub.ts and Redaction.swift are one rule set maintained twice, and
 #     each file asks the next person to keep them in step. This is what checks
 #     whether anyone did. It has already found a ReDoS that hung both engines and
 #     a key-name split that made the CLIENT — the side holding plaintext — redact
 #     less than the server.
 step "Scrubber differential fuzz (Swift ↔ TypeScript)"
 bash fuzz/run.sh scrub-verdict
-(cd ../../services/server &&
+(cd ../../services/common &&
   npx tsx test/fuzz/scrub-differential.ts \
     --iterations "${FUZZ_SCRUB_ITERATIONS:-20000}" --seed "${FUZZ_SEED:-$RANDOM}" --mode redact &&
   npx tsx test/fuzz/scrub-differential.ts \

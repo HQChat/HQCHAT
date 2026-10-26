@@ -1,4 +1,4 @@
-import type { GatewayKeyPair, HqnSecret } from "../common/core";
+import type { GatewayKeyPair, HqnSecret } from "@hqchat/common/core";
 
 /**
  * A BOUNDED queue in front of HQC decapsulation.

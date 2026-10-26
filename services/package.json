@@ -1,0 +1,14 @@
+{
+  "name": "hqchat-services",
+  "private": true,
+  "description": "The server, the helper bot and the code they share, as npm workspaces.",
+  "license": "AGPL-3.0-only",
+  "workspaces": [
+    "common",
+    "server",
+    "bot"
+  ],
+  "overrides": {
+    "qs": "^6.16.0"
+  }
+}

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { assess, createAlerter, type Thresholds, thresholdsFromEnv } from "../../src/common/health-monitor";
+import { assess, createAlerter, type Thresholds, thresholdsFromEnv } from "../../src/health-monitor";
 
 const T: Thresholds = {
   loopWarnMs: 100,

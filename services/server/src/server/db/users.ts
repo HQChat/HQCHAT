@@ -1,5 +1,5 @@
+import { isPeerId } from "@hqchat/common/core";
 import type { PoolClient } from "pg";
-import { isPeerId } from "../../common/core";
 import { one, q, tx } from "./pg";
 
 const RESERVED_USERNAMES = new Set([

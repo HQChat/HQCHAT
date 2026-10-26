@@ -9,7 +9,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { setLogLevel } from "../../src/common/logger";
+import { setLogLevel } from "@hqchat/common/logger";
 import { DB } from "../../src/server/db/api";
 import { q } from "../../src/server/db/pg";
 import { closePg, requirePg } from "../pg-helper";

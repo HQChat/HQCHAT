@@ -21,7 +21,7 @@
 import assert from "node:assert/strict";
 import Module from "node:module";
 import { test } from "node:test";
-import { setLogLevel } from "../../src/common/logger";
+import { setLogLevel } from "@hqchat/common/logger";
 
 setLogLevel("debug");
 

@@ -27,7 +27,8 @@ updates:
         patterns: ["*"]
 
   - package-ecosystem: npm
-    directory: /services/server
+    # The workspace root: one lockfile for common, server and bot.
+    directory: /services
     schedule:
       interval: monthly
     open-pull-requests-limit: 2

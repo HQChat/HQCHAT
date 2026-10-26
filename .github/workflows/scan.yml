@@ -69,7 +69,7 @@ jobs:
       # Reads the lock files only; nothing is installed or run.
       - name: npm audit
         run: |
-          for dir in services/server apps/site; do
+          for dir in services apps/site; do
             npm audit --prefix "$dir" --omit=dev --audit-level=moderate
             npm audit --prefix "$dir" --audit-level=high
           done
