@@ -128,9 +128,16 @@ conversation starts with something in it. A contact with no session reads
 ### 3.7 The helper bot
 
 Every new account is befriended by **@helper**, which sends a welcome once the
-conversation is open. It answers `/help`, `/support`, `/game prc`,
-`/game guess <n>` and echoes anything else. To the design it is an ordinary
-contact: no special bubble or badge.
+conversation is open. It answers `/help`, `/support`, `/game prc` and
+`/game guess <n>` itself.
+
+Where the deployment gives it a key, it can also answer anything else with AI
+(Claude Haiku, by Anthropic), but only after the user sends `/ai on`. The
+welcome says so, `/ai` explains what is shared (only the text sent in that
+chat), `/forget` clears what it remembers (in memory, never on disk) and
+`/ai off` stops it. Until then, other text gets a pointer to `/ai`; without a
+key, it is echoed. Replies are limited per user and per day for everyone. The
+app marks the helper with an "AI" badge, from ids pinned in the app.
 
 ### 3.8 The conversation
 
