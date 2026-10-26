@@ -21,6 +21,9 @@ let
   server = pkgs.hqcat-server;
   secrets = cfg.secretsDir;
   inherit (env) donations;
+  # The helper's AI replies: null, or { dailyLimit } once the environment's
+  # ANTHROPIC_API_KEY secret is set.
+  botAi = env.botAi or null;
 
   bundleEntries = [
     "database_url"
@@ -32,6 +35,7 @@ let
     "emqx_api_secret"
     "bot_seed"
     "bot_id"
+    "anthropic_api_key"
   ];
 
   cred = name: "${name}:${secrets}/${name}";
@@ -246,13 +250,19 @@ lib.mkIf (cfg.role == "app") {
     mem = "512M";
     warn = 380;
     crit = 460;
-    creds = [ "bot_seed" ];
+    # The Anthropic key goes to this unit alone, never the server's.
+    creds = [ "bot_seed" ] ++ lib.optional (botAi != null) "anthropic_api_key";
     env = {
       BASE_URL = botBaseUrl;
       MQTT_URL = "ws://${wg.mqtt}:8083/mqtt";
       BOT_USERNAME = "helper";
       BOT_STATE_DIR = "/var/lib/hqcat-bot";
       BOT_SEED_FILE = "%d/bot_seed";
+    }
+    // lib.optionalAttrs (botAi != null) {
+      # A path the bot reads itself, not a *_FILE: the key stays out of the environment.
+      ANTHROPIC_API_KEY_PATH = "%d/anthropic_api_key";
+      BOT_AI_DAILY_LIMIT = toString botAi.dailyLimit;
     };
     afterUnits = [ "hqcat-server.service" ];
     extra = {

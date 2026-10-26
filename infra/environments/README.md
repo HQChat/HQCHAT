@@ -16,6 +16,7 @@ One JSON file per deployment environment. Nix (`flake.nix`) and Terraform
 | `stateBucket` | R2 bucket holding Terraform state (`<name>/terraform.tfstate`). |
 | `apns`, `sentryDsn` | Non-secret push and error-reporting configuration. `sentryDsn` is embedded in the server, gateway and bot units; Deploy warns when it (or the app's `Deployment.sentryDSN`) is empty. |
 | `donations` | Stripe price ids, or `null` to run without donations. |
+| `botAi` | Optional. `{ "dailyLimit": <n> }` turns on the helper's opt-in AI replies, at most `n` a day for everyone together; `null` or absent, they are off. Needs the `ANTHROPIC_API_KEY` secret first ([runbook](../../docs/runbooks/anthropic-key.md)). |
 | `adminSshSources` | Optional. The CIDRs the DigitalOcean firewall admits to the app host's SSH (the broker's is reachable from the app host only). Without it SSH is open to any address, rate-limited per source and key-only on the host. |
 
 Secrets are not here. Each environment has a GitHub Environment of the same

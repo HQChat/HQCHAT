@@ -91,7 +91,7 @@ setting, no rebuild. No secret is committed.
 | an **Apple** engineer | [user journey](docs/product/user-journey.md) · [core wiring](docs/architecture/core-wiring.md) · `apps/apple/HQChat/Services/ChatStore.swift` |
 | a **Rust** engineer | [`core/README.md`](core/README.md) · [core wiring](docs/architecture/core-wiring.md) · [multiplatform](docs/architecture/multiplatform.md) |
 | a **designer** | [design system](docs/product/design-system.md) · [user journey](docs/product/user-journey.md) |
-| **operations** | [deploy](docs/runbooks/deploy.md) · [debugging](docs/runbooks/debugging.md) · [moderation](docs/runbooks/moderation.md) |
+| **operations** | [deploy](docs/runbooks/deploy.md) · [debugging](docs/runbooks/debugging.md) · [moderation](docs/runbooks/moderation.md) · [the helper's Anthropic key](docs/runbooks/anthropic-key.md) |
 | **security** | [security policy](SECURITY.md) · [pentest scope](docs/pentest-scope.md) · [protocol](docs/architecture/e2ee-protocol.md) |
 
 ## Security
