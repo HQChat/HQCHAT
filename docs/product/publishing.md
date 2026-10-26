@@ -158,7 +158,9 @@ Two answers a reviewer may want, both stated on `/eula`:
 - **User ID**: the username and public key.
 - **Identifiers → Device ID**: the push token.
 - **User Content → Other User Content**: a reported message's text, uploaded only
-  when the user files a report.
+  when the user files a report; and the text a user sends @helper after turning
+  on its AI replies (`/ai on`), which the helper sends to Anthropic to write the
+  reply and keeps in memory only.
 
 **Data not linked to the user:**
 
@@ -169,8 +171,9 @@ Two answers a reviewer may want, both stated on `/eula`:
 
 **Not collected:** contact info, location, photos, contacts, browsing,
 purchases (donations happen on the website), usage analytics, advertising
-data. Message content is not collected: it is end-to-end encrypted, and leaves
-the device in readable form only in a report.
+data. Message content is not collected: it is end-to-end encrypted, and is
+readable outside the two devices only in a report, or in a chat with @helper,
+an account the operator runs (and, after `/ai on`, Anthropic).
 
 **Tracking:** no. No ad SDK, no third-party trackers.
 
