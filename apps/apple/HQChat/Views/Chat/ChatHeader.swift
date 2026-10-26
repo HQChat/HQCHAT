@@ -61,11 +61,16 @@ struct ChatHeader: View {
 
                 HQAvatar(name: friend.username, size: 38, glow: HQColor.purple, isOnline: friend.isOnline)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(friend.username)
-                        .font(HQFont.ui(16, weight: .semibold))
-                        .foregroundColor(HQColor.textPrimary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
+                    HStack(spacing: 6) {
+                        Text(friend.username)
+                            .font(HQFont.ui(16, weight: .semibold))
+                            .foregroundColor(HQColor.textPrimary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                        if Deployment.isHelper(friend.peerID) {
+                            HelperAIBadge()
+                        }
+                    }
                     SessionStatus(friend: friend, onVerify: onVerify)
                 }
             }

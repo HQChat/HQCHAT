@@ -55,6 +55,9 @@ struct ContactRow: View {
                     Text(friend.username)
                         .font(HQFont.ui(16, weight: .semibold))
                         .foregroundColor(HQColor.textPrimary)
+                    if Deployment.isHelper(friend.peerID) {
+                        HelperAIBadge()
+                    }
                     if style == .contact {
                         // ID stamp: the same at-a-glance identity check the
                         // search rows show, so a contact is never just a name.
@@ -266,5 +269,52 @@ struct UserSearchRow: View {
                 .accessibilityLabel("add @\(user.username)")
             }
         }
+    }
+}
+
+/// "AI" beside the helper's name: its replies come from Claude once the user
+/// sends it `/ai on`. Tapping it says what that shares, in the words the
+/// helper's `/ai` and the privacy policy use.
+struct HelperAIBadge: View {
+    @State private var explaining = false
+
+    var body: some View {
+        Button { explaining = true } label: {
+            Text("AI")
+                .font(HQFont.mono(9.5, weight: .bold))
+                .foregroundColor(HQColor.purpleLight)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1.5)
+                .overlay(RoundedRectangle(cornerRadius: 3).stroke(HQColor.purpleLight.opacity(0.6), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("AI assistant")
+        .accessibilityHint("explains what the helper's AI replies share")
+        .sheet(isPresented: $explaining) { HelperAISheet() }
+    }
+}
+
+private struct HelperAISheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HQSubScreenHeader(path: "contacts/helper/ai") { dismiss() }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("the helper can answer with AI: Claude Haiku, by Anthropic. it's off until you send /ai on.")
+                    Text("when on, only the text you send in this chat goes to Anthropic to write a reply — never your other chats, contacts or keys. the helper keeps the last few messages in memory to follow along; nothing is saved to disk, and /forget clears it. /ai off stops it.")
+                    Text("AI replies can be wrong.")
+                    Link("privacy policy", destination: Deployment.privacyURL)
+                        .foregroundColor(HQColor.green)
+                }
+                .font(HQFont.ui(15))
+                .foregroundColor(HQColor.textPrimary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding()
+            }
+        }
+        .background(HQScreenBackground())
+        .sheetSizing()
     }
 }
