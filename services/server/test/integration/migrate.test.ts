@@ -51,11 +51,11 @@ async function withScratchDatabase(fn: (url: string) => Promise<void>): Promise<
   }
 }
 
-function migrate(url: string): string {
+function migrate(url: string, env: Record<string, string> = {}): string {
   return execFileSync("npx", ["tsx", "src/server/db/migrate.ts"], {
     cwd: ROOT,
     encoding: "utf8",
-    env: { ...process.env, DATABASE_URL: url, DATABASE_URL_DIRECT: url },
+    env: { ...process.env, DATABASE_URL: url, DATABASE_URL_DIRECT: url, ...env },
     stdio: ["ignore", "pipe", "pipe"],
   });
 }
@@ -88,6 +88,35 @@ test("a fresh database migrates, and every migration is recorded", async () => {
       ],
     );
   });
+});
+
+test("the sim role gets sim_reports when it exists, and its absence does not stop the migration", async () => {
+  // The role is made by Terraform, which a fresh host or the NixOS stack test
+  // does not run first: the migration must not fail on a role that is not there.
+  const role = `hqcat_sim_${crypto.randomBytes(4).toString("hex")}`;
+  const root = new Client({ connectionString: adminUrl()! });
+  await root.connect();
+  try {
+    await withScratchDatabase(async (url) => {
+      migrate(url, { SIM_ROLE: role });
+      const [none] = await query<{ n: number }>(url, `SELECT count(*)::int AS n FROM schema_migrations`);
+      assert.equal(none!.n, 5, "every migration ran without the role");
+    });
+    await root.query(`CREATE ROLE ${role}`);
+    await withScratchDatabase(async (url) => {
+      migrate(url, { SIM_ROLE: role });
+      const [p] = await query<{ ins: boolean; sel: boolean; upd: boolean }>(
+        url,
+        `SELECT has_table_privilege('${role}', 'sim_reports', 'INSERT') AS ins,
+                has_table_privilege('${role}', 'sim_reports', 'SELECT') AS sel,
+                has_table_privilege('${role}', 'sim_reports', 'UPDATE') AS upd`,
+      );
+      assert.deepEqual(p, { ins: true, sel: true, upd: false });
+    });
+  } finally {
+    await root.query(`DROP ROLE IF EXISTS ${role}`);
+    await root.end();
+  }
 });
 
 test("the schema a fresh migrate produces can hold a user", async () => {
