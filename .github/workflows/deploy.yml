@@ -27,7 +27,7 @@
 # R2_SECRET_ACCESS_KEY, NIX_CACHE_SIGNING_KEY, BOT_SEED, NOISE_KEYS,
 # AGE_IDENTITY_APP, AGE_IDENTITY_MQTT (the hosts' age post-quantum identities),
 # with a sim node SIM_SEEDS and AGE_IDENTITY_SIM, and, optionally,
-# STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, APNS_KEY_P8
+# STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, APNS_KEY_P8, ASC_SALES_KEY_P8
 # (infra/scripts/init-environment.sh sets the generated ones); for the apple job,
 # ASC_KEY_ID, ASC_ISSUER_ID and ASC_KEY_P8 (an App Store Connect API key).
 name: Deploy
@@ -252,6 +252,7 @@ jobs:
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
           APNS_KEY_P8: ${{ secrets.APNS_KEY_P8 }}
+          ASC_SALES_KEY_P8: ${{ secrets.ASC_SALES_KEY_P8 }}
           NIX_CACHE_SIGNING_KEY: ${{ secrets.NIX_CACHE_SIGNING_KEY }}
         run: |
           BOT_ID="$(nix shell .#hqcat-server --command hqcat-bot --print-id)"

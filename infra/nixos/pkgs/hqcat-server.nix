@@ -31,6 +31,7 @@ let
     noise-gw-keys = "scripts/noise-gw-keys.ts";
     reports = "scripts/reports.ts";
     check-push = "scripts/check-push.ts";
+    usage = "scripts/usage.ts";
   };
 in
 buildNpmPackage {
