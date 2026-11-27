@@ -13,6 +13,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import * as crypto from "node:crypto";
+import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
 import { Client } from "pg";
@@ -21,6 +22,9 @@ import { closePg, requirePg } from "../pg-helper";
 test.before(requirePg);
 
 const ROOT = path.join(__dirname, "..", "..");
+const MIGRATIONS = fs
+  .readdirSync(path.join(ROOT, "src", "server", "db", "migrations"))
+  .filter((f) => f.endsWith(".sql"));
 
 /** Admin connection, for CREATE/DROP DATABASE — they cannot run in a transaction. */
 function adminUrl(): string | null {
@@ -100,7 +104,7 @@ test("the sim role gets sim_reports when it exists, and its absence does not sto
     await withScratchDatabase(async (url) => {
       migrate(url, { SIM_ROLE: role });
       const [none] = await query<{ n: number }>(url, `SELECT count(*)::int AS n FROM schema_migrations`);
-      assert.equal(none!.n, 5, "every migration ran without the role");
+      assert.equal(none!.n, MIGRATIONS.length, "every migration ran without the role");
     });
     await root.query(`CREATE ROLE ${role}`);
     await withScratchDatabase(async (url) => {
