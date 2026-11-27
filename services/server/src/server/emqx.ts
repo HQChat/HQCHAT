@@ -35,6 +35,13 @@ export async function emqxApi(method: string, path: string, body?: unknown): Pro
   });
 }
 
+/** Clients asked for per page when counting who is online. */
+const ONLINE_PAGE = 1000;
+/** Pages read before the count is given up as too large to page through. */
+const ONLINE_MAX_PAGES = 50;
+/** An account's client id; service clients (the push bridge) are named otherwise. */
+const ACCOUNT_CLIENT_ID = /^[0-9a-f]{64}$/;
+
 export const EMQX = {
   /** Whether an admin credential is configured. */
   get enabled(): boolean {
@@ -77,6 +84,41 @@ export const EMQX = {
     } catch (e) {
       logger.error(`[emqx] unsubscribe failed: ${(e as Error).message}`);
       return false;
+    }
+  },
+
+  /**
+   * How many accounts are connected now, leaving out `exclude` (the bot and
+   * the sims) and every client that is not an account. Null when the API is
+   * not configured, a page fails, or there are too many clients to page
+   * through: no number rather than a wrong one.
+   */
+  async onlineCount(exclude: ReadonlySet<string>): Promise<number | null> {
+    if (!EMQX.enabled) return null;
+    const online = new Set<string>();
+    try {
+      for (let page = 1; page <= ONLINE_MAX_PAGES; page++) {
+        const res = await emqxApi("GET", `clients?page=${page}&limit=${ONLINE_PAGE}&fields=clientid`);
+        if (!res.ok) {
+          logger.warn(`[emqx] client list page ${page} → ${res.status}`);
+          return null;
+        }
+        const body = (await res.json()) as { data?: unknown; meta?: { hasnext?: unknown } };
+        if (!Array.isArray(body.data)) {
+          logger.warn(`[emqx] client list page ${page} has no data array`);
+          return null;
+        }
+        for (const c of body.data) {
+          const id = (c as { clientid?: unknown } | null)?.clientid;
+          if (typeof id === "string" && ACCOUNT_CLIENT_ID.test(id) && !exclude.has(id)) online.add(id);
+        }
+        if (body.meta?.hasnext !== true) return online.size;
+      }
+      logger.warn(`[emqx] more than ${ONLINE_MAX_PAGES * ONLINE_PAGE} clients; online count skipped`);
+      return null;
+    } catch (e) {
+      logger.warn(`[emqx] client list failed: ${(e as Error).message}`);
+      return null;
     }
   },
 

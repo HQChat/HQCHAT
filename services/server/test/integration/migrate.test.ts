@@ -84,6 +84,7 @@ test("a fresh database migrates, and every migration is recorded", async () => {
         "003_banned_ids.sql",
         "004_ended_friendships.sql",
         "005_sim_reports.sql",
+        "006_usage_counts.sql",
       ],
     );
   });

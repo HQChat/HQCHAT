@@ -124,8 +124,18 @@ function readSigningKey(body: JsonBody): Buffer {
   return raw;
 }
 
+/** Counts the account as active today; a failure is logged and never fails the sign-in. */
+async function markActive(id: string): Promise<void> {
+  try {
+    await DB.markActive(id);
+  } catch (e) {
+    logger.warn(`[auth] usage count failed for ${id.slice(0, 12)}…: ${(e as Error).message}`);
+  }
+}
+
 async function signingKeyFields(id: string, signingKey: Buffer) {
   const { keyId, expiresAt } = await DB.registerMqttKey(id, signingKey);
+  await markActive(id);
   return { serverTime: Math.floor(Date.now() / 1000), mqttKeyId: keyId, mqttKeyExpiresAt: expiresAt };
 }
 
