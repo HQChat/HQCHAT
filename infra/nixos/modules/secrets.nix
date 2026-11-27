@@ -94,7 +94,9 @@ let
       printf '%s\n' "$release" >"$state"
 
       if [[ "$changed" == 1 ]]; then
-        for unit in ${lib.escapeShellArgs cfg.secretConsumers}; do
+        # An array, so a role with a single consumer is not a one-word loop (SC2043).
+        units=(${lib.escapeShellArgs cfg.secretConsumers})
+        for unit in "''${units[@]}"; do
           systemctl cat "$unit" >/dev/null 2>&1 && systemctl restart "$unit" || true
         done
       fi
