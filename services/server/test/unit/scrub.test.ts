@@ -41,10 +41,7 @@ describe("redact()", () => {
   });
 
   it("redacts Anthropic API keys whole", () => {
-    assert.strictEqual(
-      redact("401 for sk-ant-api03-PLACEHOLDER_0000-placeholder-AAAA"),
-      "401 for [anthropic-key]",
-    );
+    assert.strictEqual(redact("401 for sk-ant-api03-PLACEHOLDER_0000-placeholder-AAAA"), "401 for [anthropic-key]");
     assert.strictEqual(redact("sk-ant-short"), "sk-ant-short");
   });
 

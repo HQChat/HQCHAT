@@ -53,7 +53,7 @@ export const usage = {
   /**
    * Turns every finished day in `active_today` into `usage_daily.active` and
    * deletes its rows, in one statement, so a row is counted exactly when it
-   * is deleted. Sims, and ids no longer naming an account, are left out of
+   * is deleted. Sims, and ids that name no account, are left out of
    * the count. Returns the days rolled up.
    *
    * A sign-in that read the date just before midnight and commits just after
