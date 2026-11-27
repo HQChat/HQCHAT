@@ -2,6 +2,10 @@
 -- and window, plus the fleet's `all` row. Counts and milliseconds only: no
 -- message text, no peer ids. The sim connects as ${SIM_ROLE}, which may only
 -- add rows and read them back; the app role has no business here.
+--
+-- The role is created outside migrations (infra/terraform/database.tf), so it
+-- may not exist yet when this runs: then nothing is granted here, and the app
+-- host's hqcat-sim-grant grants it on a later run once the role exists.
 
 CREATE TABLE sim_reports (
   hour     timestamptz NOT NULL,
@@ -10,4 +14,10 @@ CREATE TABLE sim_reports (
   PRIMARY KEY (hour, sim)
 );
 
-GRANT SELECT, INSERT ON sim_reports TO ${SIM_ROLE};
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${SIM_ROLE}') THEN
+    GRANT SELECT, INSERT ON sim_reports TO ${SIM_ROLE};
+  END IF;
+END
+$$;
