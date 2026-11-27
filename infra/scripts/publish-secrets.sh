@@ -21,7 +21,7 @@
 #
 # A bundle is a JSON object, file name → content: Terraform's entries (from
 # $TF_OUTPUTS) plus these variables when set: BOT_SEED, BOT_ID,
-# STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, APNS_KEY_P8 (app), NOISE_KEYS
+# STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, APNS_KEY_P8, ASC_SALES_KEY_P8 (app), NOISE_KEYS
 # (mqtt), SIM_SEEDS and BOT_ID (sim). An entry left out is left unchanged on
 # the host. The roles are those Terraform built a bundle for: the sim node's
 # only where the environment has one.
@@ -50,7 +50,7 @@ extra() {
 mapfile -t roles < <(jq -r '.bundle.value | keys[]' "$outputs")
 for role in "${roles[@]}"; do
   case "$role" in
-    app) added="$(extra bot_seed bot_id stripe_secret_key stripe_webhook_secret apns_key_p8)" ;;
+    app) added="$(extra bot_seed bot_id stripe_secret_key stripe_webhook_secret apns_key_p8 asc_sales_key_p8)" ;;
     mqtt) added="$(extra noise_keys)" ;;
     sim) added="$(extra sim_seeds bot_id)" ;;
     *)

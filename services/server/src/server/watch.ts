@@ -1,17 +1,21 @@
 import { logger } from "../common/logger";
 import { ping, sweepExpired } from "./db/pg";
-import { emqxApi, emqxApiConfigured } from "./emqx";
+import { usage } from "./db/usage";
+import { EMQX, emqxApi, emqxApiConfigured } from "./emqx";
 
 /**
  * Watches what the Node services cannot see from inside: EMQX's authentication
  * and authorization links, the settings the conversation ACL depends on, and
  * Postgres. Failures are escalated to the log (and so Sentry) on transition and
- * re-alerted while they last; expired rows are swept on their own interval.
+ * re-alerted while they last; expired rows are swept on their own interval,
+ * and the usage counts (db/usage.ts) are rolled up and sampled on theirs.
  */
 
 const INTERVAL_MS = Number(process.env.BROKER_WATCH_INTERVAL_MS || 30_000);
 const REALERT_MS = Number(process.env.BROKER_WATCH_REALERT_MS || 30 * 60_000);
 const SWEEP_MS = Number(process.env.PG_SWEEP_INTERVAL_MS || 5 * 60_000);
+/** How often the online count is sampled for today's peak. */
+const PEAK_SAMPLE_MS = Number(process.env.USAGE_PEAK_SAMPLE_MS || 60_000);
 
 /** One health check result. */
 export interface Check {
@@ -133,7 +137,7 @@ export async function checkPostgres(): Promise<Check> {
   }
 }
 
-/** Deletes expired rows; never throws. */
+/** Deletes expired rows and rolls finished days of usage into counts; never throws. */
 export async function sweep(): Promise<void> {
   try {
     const removed = await sweepExpired();
@@ -141,6 +145,22 @@ export async function sweep(): Promise<void> {
     if (total) logger.debug(`[watch] swept ${total} expired rows: ${JSON.stringify(removed)}`);
   } catch (e) {
     logger.warn(`[watch] sweep failed: ${(e as Error).message}`);
+  }
+  try {
+    const days = await usage.rollupUsage();
+    if (days) logger.debug(`[watch] rolled up ${days} day(s) of usage`);
+  } catch (e) {
+    logger.warn(`[watch] usage rollup failed: ${(e as Error).message}`);
+  }
+}
+
+/** Raises today's peak with the accounts online now; never throws. */
+export async function samplePeakOnline(): Promise<void> {
+  try {
+    const n = await EMQX.onlineCount(await usage.serviceIds());
+    if (n !== null) await usage.notePeakOnline(n);
+  } catch (e) {
+    logger.warn(`[watch] online sample failed: ${(e as Error).message}`);
   }
 }
 
@@ -218,4 +238,5 @@ export function startWatch(): void {
   setInterval(() => void tick(), INTERVAL_MS).unref();
   void sweep();
   setInterval(() => void sweep(), SWEEP_MS).unref();
+  setInterval(() => void samplePeakOnline(), PEAK_SAMPLE_MS).unref();
 }

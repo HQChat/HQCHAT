@@ -1465,6 +1465,9 @@ const privacyPage = shell(
     <li><strong>Who you have blocked</strong> — a row naming the two accounts, so a block
         holds across your devices and cannot be walked around by adding you again. Deleted
         with your account.</li>
+    <li><strong>A daily count of active accounts</strong> — how many accounts signed in each
+        day and how many were connected at once. We keep the numbers, not who: the list
+        today's count is made from is deleted when the day ends.</li>
     <li><strong>A supporter name, if you type one</strong> — donations are optional and
         processed by Stripe. If you choose to put a name on the
         <a href="/supporters">supporters</a> page, that name is stored on its own: no email,

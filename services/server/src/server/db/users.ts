@@ -37,6 +37,7 @@ async function deleteAccountRows(c: PoolClient, id: string): Promise<void> {
   await c.query(`DELETE FROM invites WHERE to_id = $1 OR from_id = $1`, [id]);
   await c.query(`DELETE FROM mqtt_session_keys WHERE id = $1`, [id]);
   await c.query(`DELETE FROM sessions WHERE id = $1`, [id]);
+  await c.query(`DELETE FROM active_today WHERE id = $1`, [id]);
   await c.query(`DELETE FROM push_tokens WHERE id = $1`, [id]);
   await c.query(`DELETE FROM prekeys_medium WHERE id = $1`, [id]);
   await c.query(`DELETE FROM prekeys_onetime WHERE id = $1`, [id]);

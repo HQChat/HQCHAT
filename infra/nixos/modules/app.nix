@@ -60,6 +60,7 @@ let
     "emqx_api_secret"
     "bot_seed"
     "bot_id"
+    "asc_sales_key_p8"
   ];
 
   inherit (cfg.service) unit;
@@ -123,10 +124,23 @@ let
       APNS_KEY_P8_FILE = "%d/apns_key_p8";
     };
 
-  # Operator tools (scripts/reports.ts, scripts/check-push.ts) run as a
-  # transient unit with the server's environment, credentials and sandbox:
+  # App Store Connect sales reports, read by `hqcat-ops usage` only: the key
+  # (Sales role) is handed to the operator unit, never to the server.
+  sales = env.appStoreSales or null;
+  salesEnv = lib.optionalAttrs (sales != null) {
+    ASC_SALES_KEY_ID = sales.keyId;
+    ASC_SALES_ISSUER_ID = sales.issuerId;
+    ASC_VENDOR_NUMBER = sales.vendorNumber;
+    ASC_SALES_START = sales.start;
+    ASC_SALES_KEY_P8_FILE = "%d/asc_sales_key_p8";
+  };
+  opsCreds = serverCreds ++ lib.optional (sales != null) "asc_sales_key_p8";
+
+  # Operator tools (scripts/reports.ts, scripts/check-push.ts, scripts/usage.ts)
+  # run as a transient unit with the server's environment, credentials and sandbox:
   #   hqcat-ops reports [<report-id> <disposition>]
   #   hqcat-ops check-push <username>
+  #   hqcat-ops usage
   sandboxProp = v: if builtins.isBool v then (if v then "yes" else "no") else toString v;
   sandboxArgs = lib.concatStringsSep " " (
     lib.concatLists (
@@ -148,7 +162,7 @@ let
       "export ${k}=${lib.escapeShellArg v}\n";
 
   opsEnv = pkgs.writeShellScript "hqcat-ops-env" ''
-    ${lib.concatStrings (lib.mapAttrsToList exportLine (common // serverEnv))}
+    ${lib.concatStrings (lib.mapAttrsToList exportLine (common // serverEnv // salesEnv))}
     tool="$1"
     shift
     exec ${server}/bin/hqcat-"$tool" "$@"
@@ -157,17 +171,17 @@ let
   ops = pkgs.writeShellApplication {
     name = "hqcat-ops";
     text = ''
-      tool="''${1:?usage: hqcat-ops reports|check-push [args...]}"
+      tool="''${1:?usage: hqcat-ops reports|check-push|usage [args...]}"
       shift
       case "$tool" in
-        reports | check-push) ;;
+        reports | check-push | usage) ;;
         *)
           echo "unknown tool: $tool" >&2
           exit 2
           ;;
       esac
       exec systemd-run --pty --wait --collect --quiet ${sandboxArgs} \
-        ${lib.concatMapStringsSep " " (c: "-p LoadCredential=${cred c}") serverCreds} \
+        ${lib.concatMapStringsSep " " (c: "-p LoadCredential=${cred c}") opsCreds} \
         ${opsEnv} "$tool" "$@"
     '';
   };

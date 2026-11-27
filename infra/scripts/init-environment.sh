@@ -19,7 +19,8 @@
 #
 # The Cloudflare token needs Zone (DNS, Zone Settings, Workers Routes, SSL and
 # Certificates: Edit), Account (Workers Scripts, R2: Edit). Optional secrets
-# set by hand afterwards: STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, APNS_KEY_P8.
+# set by hand afterwards: STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, APNS_KEY_P8,
+# ASC_SALES_KEY_P8 (docs/runbooks/usage.md).
 set -euo pipefail
 
 ENVIRONMENT="${1:?usage: init-environment.sh <environment>}"

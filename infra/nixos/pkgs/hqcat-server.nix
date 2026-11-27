@@ -31,6 +31,7 @@ let
     noise-gw-keys = "scripts/noise-gw-keys.ts";
     reports = "scripts/reports.ts";
     check-push = "scripts/check-push.ts";
+    usage = "scripts/usage.ts";
   };
 in
 buildNpmPackage {
@@ -39,7 +40,7 @@ buildNpmPackage {
   inherit src;
 
   nodejs = nodejs_22;
-  npmDepsHash = "sha256-Ugs/4nNUnrGyAdkh2EdVkhCHIzUQeq6HBNXLKFCZgk4=";
+  npmDepsHash = "sha256-3+ERdhFxGComNvqj3yVNhbFRUy5msHngiQBUdOdpv2Y=";
 
   dontNpmBuild = true;
 

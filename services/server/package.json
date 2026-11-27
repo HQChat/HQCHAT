@@ -10,6 +10,7 @@
     "migrate": "tsx src/server/db/migrate.ts",
     "check-push": "tsx scripts/check-push.ts",
     "reports": "tsx scripts/reports.ts",
+    "usage": "tsx scripts/usage.ts",
     "typecheck": "tsc --noEmit",
     "test:unit": "node --import tsx --test test/unit/*.test.ts",
     "test:integration": "node --import tsx --test --test-concurrency=1 test/integration/*.test.ts",
@@ -36,6 +37,6 @@
     "typescript": "^5.9.3"
   },
   "overrides": {
-    "qs": "^6.16.0"
+    "qs": "^6.17.1"
   }
 }
