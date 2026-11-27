@@ -12,8 +12,8 @@ struct HQChatIOSApp: App {
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
-        // Init Sentry crash reporting + memory-pressure early warning before any
-        // app code runs, so a crash during startup is still captured.
+        // Crash reports, if the user turned them on, before any app code runs,
+        // so a crash during startup is still captured.
         Observability.start()
     }
 

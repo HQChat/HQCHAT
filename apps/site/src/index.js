@@ -138,7 +138,7 @@ const CONTACT_EMAIL = "support@martinrougeron.me";
 const ORG_URL = "https://github.com/HQChat/HQCHAT";
 const CLIENT_REPO = `${ORG_URL}/tree/main/apps/apple`;
 const SERVER_REPO = `${ORG_URL}/tree/main/services/server`;
-const LAST_UPDATED = "October 25, 2026";
+const LAST_UPDATED = "November 27, 2026";
 
 /* ── What it costs to run ──────────────────────────────────────────────────
  * Published because the whole argument of this site is that it takes the
@@ -1486,19 +1486,21 @@ const privacyPage = shell(
         true the first time somebody reports harassment.</li>
     <li>No address-book or contact uploads.</li>
     <li>No advertising identifiers, ad networks or third-party ad trackers.</li>
-    <li>No behavioural or advertising analytics, and no profiling for marketing. (We do
-        collect crash and hang reports — see below.)</li>
+    <li>No behavioural or advertising analytics, and no profiling for marketing. The app
+        sends crash reports only if you turn them on — see below.</li>
     <li>No selling or sharing of personal data, ever.</li>
   </ul>
 
   <h2>crash reports and diagnostics</h2>
-  <p>We use <strong>Sentry</strong> (Functional Software, Inc.) for crash reporting. The app
-  sends a report only when it crashes, hangs for two seconds or more, or is stopped by the
-  system for using too much memory. A report may contain the app and OS version, device
-  model, language and region; the crash or hang itself, including stack traces; and up to
-  50 of the app's events before it (memory warnings, which screen was open), with
-  usernames, ids and key-shaped strings removed on the device. It contains no performance tracing, no record of network requests, no screenshots
-  or screen recordings, and no user or installation identifier. On the server only, a
+  <p>We use <strong>Sentry</strong> (Functional Software, Inc.) for crash reporting, and in
+  the app it is <strong>off unless you turn it on</strong> in Settings → send crash reports.
+  Until you do, the app installs no crash reporter and sends nothing. When it is on, the app
+  sends a report only after it crashes: the crash itself with its stack traces, the app and
+  OS version and the device model, with usernames, ids and key-shaped strings removed on the
+  device. It contains no hangs or memory warnings, no record of what you did before the
+  crash, no usage sessions, no performance tracing, no record of network requests,
+  no screenshots or screen recordings, and no user or installation identifier. Turning the
+  setting off deletes any report not yet sent. On the server only, a
   report may include your username or public key when that is needed to reproduce a
   routing error.</p>
   <p>Your encrypted messages are <strong>never</strong> included and remain unreadable to us
@@ -1584,8 +1586,8 @@ const termsPage = shell(
   history — for anyone, under any circumstances.</p>
 
   <h2>reliability and diagnostics</h2>
-  <p>To keep the service running and to fix problems, we collect crash and hang reports via
-  Sentry, as described in our
+  <p>To keep the service running and to fix problems, the app can send crash reports via
+  Sentry if you turn them on, as described in our
   <a href="/privacy">privacy policy</a>. This never includes the content of your messages.</p>
 
   <h2>acceptable use</h2>

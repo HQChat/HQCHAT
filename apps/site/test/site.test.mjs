@@ -514,9 +514,11 @@ test("the copy states how long the broker holds undelivered messages", async () 
   }
 });
 
-/** Observability.swift sends crash and hang reports only. */
+/** Observability.swift sends crash reports only, and only once the user opts in. */
 test("the privacy policy describes what Sentry receives", async () => {
   const body = await (await get("/privacy")).text();
+  assert.match(body, /off unless you turn it on/i, "crash reports are opt-in");
+  assert.doesNotMatch(body, /hangs for two seconds/i, "the app sends no hang reports");
   assert.doesNotMatch(body, /performance (diagnostics|signals)/i, "the app sends no performance data");
   assert.match(body, /no user or installation identifier/i, "reports carry no user or installation id");
   assert.match(body, /no screenshots\s+or screen recordings/i, "and no screen images");

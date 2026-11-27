@@ -2,7 +2,7 @@ import SwiftUI
 import SwiftData
 
 /// Settings root: the profile header, the pushed screens (account, security,
-/// diagnostics), the published pages and the version.
+/// diagnostics), the published pages, the crash-report switch and the version.
 struct SettingsView: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.dismiss) private var dismiss
@@ -14,6 +14,8 @@ struct SettingsView: View {
     /// Value-based navigation, so something outside this screen can push into
     /// it — the "username taken" banner sends people straight to Account.
     @State private var path = NavigationPath()
+
+    @State private var crashReportsOn = Observability.isEnabled
 
     private enum Route: Hashable { case account, security, diagnostics }
 
@@ -64,6 +66,10 @@ struct SettingsView: View {
                     menu
 
                     privacyStanceCard
+
+                    if Observability.isAvailable {
+                        crashReportsCard
+                    }
 
                     Text("hqchat \(appVersion)")
                         .font(HQFont.mono(11))
@@ -196,6 +202,32 @@ struct SettingsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .hqCard()
+    }
+
+    /// Crash reports are off until the user turns them on here; turning them
+    /// off again deletes whatever was not sent (Observability.setEnabled).
+    private var crashReportsCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle(isOn: Binding(
+                get: { crashReportsOn },
+                set: { on in
+                    crashReportsOn = on
+                    Observability.setEnabled(on)
+                }
+            )) {
+                HQFieldLabel(text: "send crash reports", tint: HQColor.textMuted)
+            }
+            .tint(HQColor.purple)
+            Text("Off unless you turn it on. When the app crashes, the next launch sends Sentry the crash itself, "
+                 + "the app and OS version and the device model. Never messages, contacts, usernames or ids. "
+                 + "Turning this off deletes any report not yet sent.")
+                .font(HQFont.ui(12.5))
+                .foregroundColor(HQColor.textMuted)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
