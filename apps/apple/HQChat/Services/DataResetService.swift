@@ -156,7 +156,12 @@ class DataResetService {
         for key in keys {
             UserDefaults.standard.removeObject(forKey: key)
         }
-        
+
+        // Unlike the terms, consent to send crash reports does not survive a
+        // reset: it goes back to off, and unsent reports are deleted with it.
+        Observability.setEnabled(false)
+        UserDefaults.standard.removeObject(forKey: Observability.enabledKey)
+
         UserDefaults.standard.synchronize()
         return true
     }

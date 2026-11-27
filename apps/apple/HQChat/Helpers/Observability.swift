@@ -1,16 +1,13 @@
 // HQChat (shared macOS + iOS)
 //
-// Sentry crash reporting + a lightweight "coming crash" early-warning signal,
-// mirroring what the relay server does. On Apple platforms the crash a user
-// actually hits under stress is usually one of:
-//   - an uncaught Swift error / signal (SIGABRT/SIGSEGV)      → Sentry crash handler
-//   - a UI hang long enough for the watchdog to kill the app  → App Hang tracking
-//   - the OS jetsam killing us for memory                     → watchdog-termination
-//     tracking + our own memory-pressure breadcrumb/alert (the leading indicator,
-//     analogous to the server's rss/event-loop early warning).
+// Crash reports, sent to Sentry only when the user has turned them on in
+// Settings. Off by default: until then the SDK is never started, so no crash
+// handler is installed and nothing is written or sent. When on, a report is
+// the crash alone (stack, OS, device model, app version): no hangs, memory
+// terminations, breadcrumbs, sessions or performance data.
 //
 // Wired from the app entry points (HQChatApp / HQChatIOSApp) via
-// Observability.start(). Safe to call more than once.
+// Observability.start(), and from Settings via Observability.setEnabled(_:).
 //
 // Build note: the Sentry SPM package (getsentry/sentry-cocoa, product "Sentry")
 // is declared in the Xcode project for both app targets. This file is a shared
@@ -21,35 +18,57 @@ import Foundation
 import Sentry
 
 enum Observability {
+    /// The user's choice, stored on this device only. Absent means off.
+    static let enabledKey = "crashReportsEnabled"
+
     /// Send-only client DSN, embedded per deployment (see Deployment.sentryDSN);
     /// the Info.plist "SENTRY_DSN" key overrides it for one build.
     /// Empty = Sentry off, which is logged at startup rather than failing quietly.
     private static let defaultDSN = Deployment.sentryDSN
 
-    private static var started = false
-    private static var memoryPressureSource: DispatchSourceMemoryPressure?
+    private static var running = false
 
-    /// Report a non-fatal failure that has no sensible UI to show it in — a
-    /// local persistence error, say. Use instead of `try?`, which drops the
-    /// error entirely, or `dlog`, which compiles out in Release.
-    static func capture(_ error: Error, context: String) {
-        Log.app.warning("[\(String(describing: context))] ⚠️ \(String(describing: error))")
-        guard started else { return }
-        SentrySDK.capture(error: error) { scope in
-            scope.setTag(value: context, key: "context")
+    /// Whether the user has turned crash reports on.
+    static var isEnabled: Bool { UserDefaults.standard.bool(forKey: enabledKey) }
+
+    /// Whether this build can send reports at all (a DSN is configured).
+    static var isAvailable: Bool { !resolvedDSN().isEmpty }
+
+    /// Call once at launch, before any app code runs, so a crash during startup
+    /// is still captured. Starts Sentry only when the user opted in.
+    static func start() {
+        removeLegacyCaches()
+        guard isEnabled else {
+            Log.app.info("🛰️ crash reports off")
+            return
+        }
+        startSDK()
+    }
+
+    /// The Settings toggle. Turning it off stops the SDK and deletes every
+    /// report it had not sent yet.
+    static func setEnabled(_ on: Bool) {
+        UserDefaults.standard.set(on, forKey: enabledKey)
+        if on {
+            startSDK()
+        } else {
+            if running {
+                SentrySDK.close()
+                running = false
+            }
+            removeCache()
+            Log.app.info("🛰️ crash reports turned off; unsent reports deleted")
         }
     }
 
-    /// Starts Sentry when a DSN is configured; a no-op otherwise or when already started.
-    static func start() {
-        guard !started else { return }
-        started = true
-
+    private static func startSDK() {
+        guard !running else { return }
         let dsn = resolvedDSN()
         guard !dsn.isEmpty else {
-            Log.app.info("🛰️ Sentry disabled (no DSN)")
+            Log.app.info("🛰️ crash reports on, but this build has no DSN")
             return
         }
+        running = true
 
         SentrySDK.start { options in
             options.dsn = dsn
@@ -57,12 +76,14 @@ enum Observability {
             if let release = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String {
                 options.releaseName = "hqchat@\(release)"
             }
-            configureStability(options)
+            options.cacheDirectoryPath = cacheURL.path
+            configureCrashOnly(options)
             configurePrivacy(options)
             configureReplay(options)
             #if DEBUG
             // Local debug builds send nothing unless asked to.
             options.enabled = ProcessInfo.processInfo.environment["SENTRY_ENABLE_DEBUG"] != nil
+            options.debug = true
             #endif
         }
 
@@ -74,31 +95,27 @@ enum Observability {
             #endif
         }
 
-        startMemoryPressureWatch()
-        Log.app.info("🛰️ Sentry enabled (env=\(String(describing: Self.environment())))")
+        Log.app.info("🛰️ crash reports on (env=\(String(describing: Self.environment())))")
     }
 
-    /// Crashes, hangs reported before a watchdog kill, and memory terminations
-    /// reconstructed on the next launch. No performance tracing: a span names
-    /// the request it timed (`/peer/<id>/key` is a friend), and no scrubber
-    /// sees spans.
-    private static func configureStability(_ options: Options) {
+    /// The crash handler and nothing else. Every other feature is set off
+    /// explicitly so an SDK upgrade cannot flip a default: no hang or
+    /// memory-termination reports, no release-health sessions (one per launch
+    /// is a usage record), no client reports, no tracing.
+    private static func configureCrashOnly(_ options: Options) {
         options.enableCrashHandler = true
         options.attachStacktrace = true
-        options.enableAppHangTracking = true
-        options.appHangTimeoutInterval = 2.0
-        options.enableWatchdogTerminationTracking = true
+        options.enableAppHangTracking = false
+        options.enableWatchdogTerminationTracking = false
+        options.enableAutoSessionTracking = false
+        options.sendClientReports = false
         options.tracesSampleRate = 0.0
         options.enableAutoPerformanceTracing = false
-        #if DEBUG
-        options.debug = true
-        #endif
     }
 
     /// Every field that leaves the device is treated as world-readable: no IP,
-    /// no screenshot or view hierarchy, bounded breadcrumbs, and every event and
-    /// breadcrumb scrubbed before sending. Set explicitly so an SDK upgrade cannot
-    /// flip a default.
+    /// no screenshot or view hierarchy, no breadcrumbs, and every event scrubbed
+    /// before sending.
     private static func configurePrivacy(_ options: Options) {
         options.sendDefaultPii = false
         #if os(iOS)
@@ -114,9 +131,11 @@ enum Observability {
         options.enableCaptureFailedRequests = false
         options.tracePropagationTargets = []
         options.beforeSendSpan = { _ in nil }
-        options.maxBreadcrumbs = 50
+        // No trail of what the user did before the crash.
+        options.enableAutoBreadcrumbTracking = false
+        options.maxBreadcrumbs = 0
+        options.beforeBreadcrumb = { _ in nil }
         options.beforeSend = { event in Observability.scrub(event) }
-        options.beforeBreadcrumb = { crumb in Observability.scrub(crumb) }
     }
 
     /// No session replay: even masked, frames of a messenger's screens show
@@ -131,54 +150,28 @@ enum Observability {
         #endif
     }
 
-    // MARK: - Coming-crash early warning (memory pressure)
-
-    /// Watch OS memory-pressure notifications. warning → breadcrumb; critical →
-    /// a Sentry warning event, so you get an alert BEFORE jetsam kills the app —
-    /// the client-side analogue of the server's rss/event-loop early warning.
-    private static func startMemoryPressureWatch() {
-        let source = DispatchSource.makeMemoryPressureSource(
-            eventMask: [.warning, .critical],
-            queue: .global(qos: .utility)
-        )
-        source.setEventHandler {
-            let event = source.data
-            if event.contains(.critical) {
-                SentrySDK.addBreadcrumb(Self.crumb("memory pressure: critical", level: .error))
-                SentrySDK.capture(message: "[early-warning] memory pressure CRITICAL — jetsam risk") { scope in
-                    scope.setLevel(.warning)
-                }
-            } else if event.contains(.warning) {
-                SentrySDK.addBreadcrumb(Self.crumb("memory pressure: warning", level: .warning))
-            }
-        }
-        source.resume()
-        memoryPressureSource = source
-    }
-
-    private static func crumb(_ message: String, level: SentryLevel) -> Breadcrumb {
-        let b = Breadcrumb()
-        b.level = level
-        b.category = "device.memory"
-        b.message = message
-        return b
-    }
-
     // MARK: - Scrubbing (PII / secret redaction)
     //
     // The rules themselves live in Redaction.swift, which imports only
     // Foundation so a test slice and the differential fuzzer can compile them.
     // What stays here is the part that genuinely needs the SDK: mapping those
-    // rules over a Sentry Event and Breadcrumb.
+    // rules over a Sentry Event.
 
     /// Redact known-sensitive shapes from a single string.
     static func redact(_ input: String?) -> String? { Redaction.redact(input) }
 
-    /// Deep-scrub an arbitrary bag: redact strings, drop sensitive-named keys.
-    private static func scrubDeep(_ value: Any) -> Any { Redaction.scrubDeep(value) }
+    /// The context fields a crash report keeps; everything else the SDK
+    /// gathers (boot time, free memory and disk, locale, screen) is dropped,
+    /// since together they single out a device.
+    private static let keptContext: [String: Set<String>] = [
+        "os": ["name", "version", "build"],
+        "device": ["family", "model", "arch", "simulator"],
+        "app": ["app_version", "app_build"],
+    ]
 
     /// Scrub a Sentry event before it leaves the device: drop network/topology
-    /// identifiers, then redact message + exception strings + breadcrumbs + bags.
+    /// identifiers and most of the device context, then redact message and
+    /// exception strings.
     static func scrub(_ event: Event) -> Event {
         // Structural drops — never ship these. No user at all: the SDK fills
         // in a persistent installation id, which links every report from one
@@ -186,6 +179,16 @@ enum Observability {
         event.serverName = nil
         event.request = nil
         event.user = nil
+        event.breadcrumbs = nil
+        event.extra = nil
+        if let context = event.context {
+            var kept: [String: [String: Any]] = [:]
+            for (name, fields) in context {
+                guard let allowed = keptContext[name] else { continue }
+                kept[name] = fields.filter { allowed.contains($0.key) }
+            }
+            event.context = kept
+        }
         // Message. `formatted` is read-only on SentryMessage, so rebuild it.
         if let m = event.message {
             let nm = SentryMessage(formatted: redact(m.formatted) ?? m.formatted)
@@ -197,24 +200,38 @@ enum Observability {
         if let exceptions = event.exceptions {
             for ex in exceptions { ex.value = redact(ex.value) ?? ex.value }
         }
-        // Breadcrumbs carried on the event.
-        if let crumbs = event.breadcrumbs {
-            for c in crumbs { _ = scrub(c) }
-        }
-        // Structured bags.
-        if let extra = event.extra {
-            event.extra = scrubDeep(extra) as? [String: Any]
-        }
         return event
     }
 
-    /// Scrub a single breadcrumb (message + data bag).
-    static func scrub(_ crumb: Breadcrumb) -> Breadcrumb {
-        crumb.message = redact(crumb.message)
-        if let data = crumb.data, let scrubbed = scrubDeep(data) as? [String: Any] {
-            for key in data.keys { crumb.setData(value: scrubbed[key], key: key) }
+    // MARK: - Report cache
+
+    /// The SDK's own folder: unsent envelopes and the crash recorder's files
+    /// both live under it, so deleting it removes every report not yet sent.
+    private static var cacheURL: URL {
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        return caches.appendingPathComponent("crash-reports", isDirectory: true)
+    }
+
+    private static func removeCache() {
+        remove(cacheURL)
+    }
+
+    /// Before crash reports were opt-in, the SDK kept its files at the top of
+    /// Caches. Anything left there was gathered without consent: delete it.
+    private static func removeLegacyCaches() {
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        for name in ["io.sentry", "SentryCrash"] {
+            remove(caches.appendingPathComponent(name, isDirectory: true))
         }
-        return crumb
+    }
+
+    private static func remove(_ url: URL) {
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        do {
+            try FileManager.default.removeItem(at: url)
+        } catch {
+            Log.storage.error("🛰️ could not delete \(url.lastPathComponent, privacy: .public): \(String(describing: error))")
+        }
     }
 
     // MARK: - Helpers
